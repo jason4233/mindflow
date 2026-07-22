@@ -1,7 +1,8 @@
 /**
  * 頂部三膠囊工具列：綁定 action registry、文件標題與 undo/redo 狀態。
  */
-import { runAction } from './actions.js'
+import { hasAction, runAction } from './actions.js'
+import { dispatchGlobalShortcut, findShortcutBinding } from './keyboard.js'
 import { strings } from '../strings.js'
 
 export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
@@ -50,6 +51,12 @@ export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
   bindAction('#fullscreen-button', 'toggleFullscreen')
 
   title.addEventListener('keydown', event => {
+    const shortcut = findShortcutBinding(event)
+    if (shortcut?.action === 'save') title.blur()
+    if (dispatchGlobalShortcut(event, { formMode: true })) {
+      event.stopPropagation()
+      return
+    }
     event.stopPropagation()
     if (event.key === 'Enter') {
       event.preventDefault()
@@ -72,6 +79,7 @@ export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
 }
 
 function bindAction(selector, action) {
+  if (!hasAction(action)) throw new Error(`工具列 action「${action}」尚未註冊`)
   document.querySelector(selector)?.addEventListener('click', () => runAction(action))
 }
 

@@ -1,0 +1,152 @@
+- generic [active] [ref=e1]:
+  - banner:
+    - generic [ref=e2]:
+      - link "返回首頁" [ref=e3] [cursor=pointer]:
+        - /url: index.html
+        - text: ←
+      - textbox "文件名稱" [ref=e4]: 未命名心智圖
+      - generic [ref=e6]: 已保存 03:14
+    - generic "編輯工具列" [ref=e7]:
+      - button "復原" [disabled] [ref=e8]: ↶
+      - button "重做" [disabled] [ref=e9]: ↷
+      - button "插入子節點" [ref=e11] [cursor=pointer]: ↳
+      - button "插入同級節點" [ref=e12] [cursor=pointer]: ＋
+      - button "↰" [ref=e13] [cursor=pointer]
+      - button "▰" [ref=e14] [cursor=pointer]
+      - button "T" [ref=e15] [cursor=pointer]
+      - button "⊕" [ref=e16] [cursor=pointer]
+      - 'button "}" [ref=e17] [cursor=pointer]'
+      - button "⌁" [ref=e18] [cursor=pointer]
+      - button "✦" [ref=e19] [cursor=pointer]
+      - button "▷" [ref=e20] [cursor=pointer]
+      - button "AI" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - button "分享" [ref=e23]
+      - button "匯出" [ref=e24] [cursor=pointer]: ⇧
+      - button "···" [ref=e25] [cursor=pointer]
+      - button [ref=e26]
+  - main [ref=e27]:
+    - region "心智圖畫布" [ref=e28]:
+      - generic:
+        - generic:
+          - generic [ref=e29]: 中心主題
+          - generic [ref=e31]: 分支主題
+          - generic [ref=e33]: 分支主題
+          - generic [ref=e35]: 分支主題
+          - generic [ref=e37]: 分支主題
+      - generic [ref=e39]:
+        - button "−" [ref=e40] [cursor=pointer]
+        - button "重設縮放" [ref=e41] [cursor=pointer]: 100%
+        - button "+" [ref=e42] [cursor=pointer]
+        - button "適應畫布" [ref=e43] [cursor=pointer]: 適應
+        - button "⛶" [ref=e44] [cursor=pointer]
+    - complementary "樣式面板" [ref=e45]:
+      - generic [ref=e46]:
+        - navigation "面板分頁" [ref=e47]:
+          - button "樣式" [ref=e48]
+          - button "主題" [ref=e49]
+          - button "佈局" [ref=e50]
+          - button "圖示" [ref=e51]
+        - button "關閉面板" [ref=e52] [cursor=pointer]: ×
+        - heading "樣式" [level=2] [ref=e53]
+      - generic [ref=e55]:
+        - generic [ref=e56]:
+          - heading "形狀 Shape" [level=3] [ref=e57]
+          - generic [ref=e58]:
+            - button "小圓角矩形" [ref=e59]
+            - button "大圓角矩形" [ref=e60]
+            - button "窄藥丸" [ref=e61]
+            - button "寬藥丸" [ref=e62]
+            - button "大圓角卡片" [ref=e63]
+            - button "底線" [ref=e64]
+            - button "圓形" [ref=e65]
+            - button "橢圓" [ref=e66]
+            - button "菱形" [ref=e67]
+            - button "平行四邊形" [ref=e68]
+          - generic [ref=e69]:
+            - generic [ref=e70]: 填色
+            - button "開啟色票" [ref=e73]
+        - generic [ref=e74]:
+          - heading "圓角 Radius" [level=3] [ref=e75]
+          - generic [ref=e76]:
+            - slider [ref=e77]: "6"
+            - status [ref=e78]: 6px
+        - generic [ref=e79]:
+          - heading "邊框 Border" [level=3] [ref=e80]
+          - generic [ref=e81]:
+            - generic [ref=e82]: 線型
+            - combobox [ref=e83]:
+              - option "實線" [selected]
+              - option "細點虛線"
+              - option "中段虛線"
+              - option "點劃線"
+              - option "長虛點劃線"
+          - generic [ref=e84]:
+            - generic [ref=e85]: 顏色
+            - button "開啟色票" [ref=e88]
+            - generic [ref=e89]: 寬度
+            - combobox [ref=e90]:
+              - option "0px" [selected]
+              - option "1px"
+              - option "2px"
+              - option "3px"
+              - option "4px"
+              - option "5px"
+        - generic [ref=e91]:
+          - heading "連接線 Line" [level=3] [ref=e92]
+          - generic [ref=e93]:
+            - generic [ref=e94]: 形狀
+            - combobox [ref=e95]:
+              - option "曲線" [selected]
+              - option "直線"
+              - option "直角"
+          - generic [ref=e96]:
+            - generic [ref=e97]: 線型
+            - combobox [ref=e98]:
+              - option "實線" [selected]
+              - option "細點虛線"
+              - option "中段虛線"
+              - option "點劃線"
+              - option "長虛點劃線"
+          - generic [ref=e99]:
+            - generic [ref=e100]: 顏色
+            - button "開啟色票" [ref=e103]
+            - generic [ref=e104]: 寬度
+            - combobox [ref=e105]:
+              - option "0px"
+              - option "1px"
+              - option "2px"
+              - option "3px" [selected]
+              - option "4px"
+              - option "5px"
+        - generic [ref=e106]:
+          - heading "結構 Structure" [level=3] [ref=e107]
+          - generic [ref=e108]:
+            - button "平衡心智圖" [ref=e109]: ⇆
+            - button "向右樹狀" [ref=e110]: ⇢
+            - button "組織圖" [ref=e111]: ⌄
+            - button "目錄樹" [ref=e112]: ☷
+            - button "魚骨圖" [ref=e113]: ≪
+            - button "時間軸" [ref=e114]: ↦
+          - generic [ref=e115]:
+            - generic [ref=e116]: 方向
+            - combobox [ref=e117]:
+              - option "向右"
+              - option "向左"
+              - option "平衡" [selected]
+        - generic [ref=e118]:
+          - heading "節點間距" [level=3] [ref=e119]
+          - generic [ref=e120]:
+            - generic [ref=e121]: 水平
+            - slider [ref=e122]: "30"
+            - status [ref=e123]: "30"
+          - generic [ref=e124]:
+            - generic [ref=e125]: 垂直
+            - slider [ref=e126]: "30"
+            - status [ref=e127]: "30"
+          - generic [ref=e128]:
+            - generic [ref=e129]: 範圍
+            - combobox [ref=e130]:
+              - option "所有節點" [selected]
+              - option "目前分支"
+              - option "選中節點"

@@ -1,0 +1,44 @@
+- generic [active] [ref=e1]:
+  - link "跳到主要內容" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - link "MindFlow 首頁" [ref=e4] [cursor=pointer]:
+      - /url: index.html
+      - generic [ref=e11]: MindFlow
+    - button "範本庫 16+" [ref=e12] [cursor=pointer]:
+      - text: 範本庫
+      - generic [ref=e13]: 16+
+    - search [ref=e14]:
+      - generic [ref=e18]: 搜尋文件標題與節點內容
+      - searchbox "搜尋文件標題與節點內容" [ref=e19]
+    - button "設定（即將推出）" [ref=e20] [cursor=pointer]
+  - generic [ref=e24]:
+    - complementary "文件庫導覽" [ref=e25]:
+      - button "新增文檔" [ref=e26] [cursor=pointer]
+      - navigation "文件分類" [ref=e30]:
+        - button "最近編輯" [ref=e31] [cursor=pointer]
+        - button "我的心智圖" [ref=e36] [cursor=pointer]
+        - button "團隊協作 即將推出" [disabled] [ref=e41]:
+          - generic [ref=e46]: 團隊協作
+          - generic [ref=e47]: 即將推出
+        - button "我的分享 即將推出" [disabled] [ref=e48]:
+          - generic [ref=e54]: 我的分享
+          - generic [ref=e55]: 即將推出
+        - button "我的收藏 0" [ref=e56] [cursor=pointer]:
+          - generic [ref=e59]: 我的收藏
+          - generic [ref=e60]: "0"
+        - button "資源回收筒 0" [ref=e61] [cursor=pointer]:
+          - generic [ref=e64]: 資源回收筒
+          - generic [ref=e65]: "0"
+      - generic [ref=e66]:
+        - text: 需要一點靈感？
+        - button "瀏覽 17 個範本" [ref=e67] [cursor=pointer]
+    - main [ref=e68]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - paragraph [ref=e71]: 你的工作空間
+          - heading "最近編輯" [level=1] [ref=e72]
+          - paragraph [ref=e73]: 快速接續最近的思考。
+        - generic [ref=e74]: 0 份文件
+      - region "最近編輯" [ref=e75]:
+        - button "新增空白心智圖" [ref=e77] [cursor=pointer]

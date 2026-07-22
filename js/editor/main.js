@@ -16,6 +16,9 @@ import { initializeSidepanel } from './sidepanel.js'
 import { initializeContextMenu } from './contextmenu.js'
 import { initializeOutline } from './outline.js'
 
+// === PHASE-B INIT (DELTA import) ===
+import { initializeDelta } from './attachments.js'
+
 const elements = {
   canvas: document.querySelector('#canvas'),
   world: document.querySelector('#world'),
@@ -112,6 +115,20 @@ new DragDropController({
 
 initializeContextMenu()
 initializeOutline()
+
+// === PHASE-B INIT (每流一行) ===
+initializeDelta({
+  doc,
+  manager,
+  selection,
+  viewport,
+  edit,
+  sidepanel,
+  elements,
+  getPositions: () => positions,
+  renderAll
+})
+
 bindZoomControls()
 renderAll()
 selection.set([doc.root.id])

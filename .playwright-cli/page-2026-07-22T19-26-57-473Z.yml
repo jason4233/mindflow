@@ -1,0 +1,172 @@
+- generic [ref=f5e1]:
+  - banner:
+    - generic [ref=f5e2]:
+      - link "返回首頁" [ref=f5e3] [cursor=pointer]:
+        - /url: index.html
+        - text: ←
+      - textbox "文件名稱" [ref=f5e4]: 未命名心智圖
+      - generic [ref=f5e6]: 已保存 03:26
+    - generic "編輯工具列" [ref=f5e7]:
+      - button "復原" [ref=f5e8] [cursor=pointer]: ↶
+      - button "重做" [disabled] [ref=f5e9]: ↷
+      - button "插入子節點" [ref=f5e11] [cursor=pointer]: ↳
+      - button "插入同級節點" [ref=f5e12] [cursor=pointer]: ＋
+      - button "↰" [ref=f5e13] [cursor=pointer]
+      - button "▰" [ref=f5e14] [cursor=pointer]
+      - button "T" [ref=f5e15] [cursor=pointer]
+      - button "⊕" [ref=f5e16] [cursor=pointer]
+      - 'button "}" [ref=f5e17] [cursor=pointer]'
+      - button "⌁" [ref=f5e18] [cursor=pointer]
+      - button "✦" [ref=f5e19] [cursor=pointer]
+      - button "▷" [ref=f5e20] [cursor=pointer]
+      - button "AI" [ref=f5e21] [cursor=pointer]
+    - generic [ref=f5e22]:
+      - button "分享" [ref=f5e23]
+      - button "匯出" [ref=f5e24] [cursor=pointer]: ⇧
+      - button "···" [ref=f5e25] [cursor=pointer]
+      - button [ref=f5e26]
+  - main [ref=f5e27]:
+    - region "心智圖畫布" [active] [ref=f5e28]:
+      - generic:
+        - img:
+          - generic: 依賴關係
+          - generic: 雙擊輸入
+        - generic:
+          - generic [ref=f5e159]:
+            - generic [ref=f5e160]: 中心主題（官網）
+            - generic [ref=f5e161]:
+              - button "編輯備註" [ref=f5e162] [cursor=pointer]: 📄
+              - link "開啟連結 https://www.example.com/path" [ref=f5e163] [cursor=pointer]:
+                - /url: https://www.example.com/path
+                - text: ↗ https://www.example.com/path
+          - generic [ref=f5e164]:
+            - generic [ref=f5e166]: 分支完成
+            - generic:
+              - generic:
+                - img:
+                  - generic: "4"
+              - img "公事包"
+          - generic [ref=f5e167]: 分支完成
+          - generic [ref=f5e169]:
+            - generic [ref=f5e170]: 懸浮主題
+            - text: 懸浮
+          - generic [ref=f5e171]: 分支完成
+          - generic [ref=f5e173]: 分支完成
+          - button "概要" [ref=f5e175] [cursor=pointer]
+      - generic [ref=f5e52]:
+        - button "−" [ref=f5e53] [cursor=pointer]
+        - button "重設縮放" [ref=f5e54] [cursor=pointer]: 100%
+        - button "+" [ref=f5e55] [cursor=pointer]
+        - button "適應畫布" [ref=f5e56] [cursor=pointer]: 適應
+        - button "⛶" [ref=f5e57] [cursor=pointer]
+    - complementary "樣式面板" [ref=f5e58]:
+      - generic [ref=f5e59]:
+        - navigation "面板分頁" [ref=f5e60]:
+          - button "樣式" [ref=f5e61]
+          - button "主題" [ref=f5e62]
+          - button "佈局" [ref=f5e63]
+          - button "圖示" [ref=f5e64]
+        - button "關閉面板" [ref=f5e65] [cursor=pointer]: ×
+        - heading "樣式" [level=2] [ref=f5e66]
+      - generic [ref=f5e68]:
+        - generic [ref=f5e69]:
+          - heading "形狀 Shape" [level=3] [ref=f5e70]
+          - generic [ref=f5e71]:
+            - button "小圓角矩形" [ref=f5e72]
+            - button "大圓角矩形" [ref=f5e73]
+            - button "窄藥丸" [ref=f5e74]
+            - button "寬藥丸" [ref=f5e75]
+            - button "大圓角卡片" [ref=f5e76]
+            - button "底線" [ref=f5e77]
+            - button "圓形" [ref=f5e78]
+            - button "橢圓" [ref=f5e79]
+            - button "菱形" [ref=f5e80]
+            - button "平行四邊形" [ref=f5e81]
+          - generic [ref=f5e82]:
+            - generic [ref=f5e83]: 填色
+            - button "開啟色票" [ref=f5e86]
+        - generic [ref=f5e87]:
+          - heading "圓角 Radius" [level=3] [ref=f5e88]
+          - generic [ref=f5e89]:
+            - slider [ref=f5e90]: "6"
+            - status [ref=f5e91]: 6px
+        - generic [ref=f5e92]:
+          - heading "邊框 Border" [level=3] [ref=f5e93]
+          - generic [ref=f5e94]:
+            - generic [ref=f5e95]: 線型
+            - combobox [ref=f5e96]:
+              - option "實線" [selected]
+              - option "細點虛線"
+              - option "中段虛線"
+              - option "點劃線"
+              - option "長虛點劃線"
+          - generic [ref=f5e97]:
+            - generic [ref=f5e98]: 顏色
+            - button "開啟色票" [ref=f5e101]
+            - generic [ref=f5e102]: 寬度
+            - combobox [ref=f5e103]:
+              - option "0px"
+              - option "1px" [selected]
+              - option "2px"
+              - option "3px"
+              - option "4px"
+              - option "5px"
+        - generic [ref=f5e104]:
+          - heading "連接線 Line" [level=3] [ref=f5e105]
+          - generic [ref=f5e106]:
+            - generic [ref=f5e107]: 形狀
+            - combobox [ref=f5e108]:
+              - option "曲線" [selected]
+              - option "直線"
+              - option "直角"
+          - generic [ref=f5e109]:
+            - generic [ref=f5e110]: 線型
+            - combobox [ref=f5e111]:
+              - option "實線" [selected]
+              - option "細點虛線"
+              - option "中段虛線"
+              - option "點劃線"
+              - option "長虛點劃線"
+          - generic [ref=f5e112]:
+            - generic [ref=f5e113]: 顏色
+            - button "開啟色票" [ref=f5e116]
+            - generic [ref=f5e117]: 寬度
+            - combobox [ref=f5e118]:
+              - option "0px"
+              - option "1px"
+              - option "2px"
+              - option "3px" [selected]
+              - option "4px"
+              - option "5px"
+        - generic [ref=f5e119]:
+          - heading "結構 Structure" [level=3] [ref=f5e120]
+          - generic [ref=f5e121]:
+            - button "平衡心智圖" [ref=f5e122]: ⇆
+            - button "向右樹狀" [ref=f5e123]: ⇢
+            - button "組織圖" [ref=f5e124]: ⌄
+            - button "目錄樹" [ref=f5e125]: ☷
+            - button "魚骨圖" [ref=f5e126]: ≪
+            - button "時間軸" [ref=f5e127]: ↦
+          - generic [ref=f5e128]:
+            - generic [ref=f5e129]: 方向
+            - combobox [ref=f5e130]:
+              - option "向右"
+              - option "向左"
+              - option "平衡" [selected]
+        - generic [ref=f5e131]:
+          - heading "節點間距" [level=3] [ref=f5e132]
+          - generic [ref=f5e133]:
+            - generic [ref=f5e134]: 水平
+            - slider [ref=f5e135]: "30"
+            - status [ref=f5e136]: "30"
+          - generic [ref=f5e137]:
+            - generic [ref=f5e138]: 垂直
+            - slider [ref=f5e139]: "30"
+            - status [ref=f5e140]: "30"
+          - generic [ref=f5e141]:
+            - generic [ref=f5e142]: 範圍
+            - combobox [ref=f5e143]:
+              - option "所有節點" [selected]
+              - option "目前分支"
+              - option "選中節點"
+  - generic [ref=f5e144]: 請點選關聯線的目標節點

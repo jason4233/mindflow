@@ -267,11 +267,20 @@ function svgConnection(parent, child, appearance) {
   const endX = goesRight ? child.x : child.x + child.w
   const startY = parent.y + parent.h / 2
   const endY = child.y + child.h / 2
-  const controlOffset = Math.max(20, Math.abs(endX - startX) * 0.5)
-  const cp1X = goesRight ? startX + controlOffset : startX - controlOffset
-  const cp2X = goesRight ? endX - controlOffset : endX + controlOffset
+  const middleX = (startX + endX) / 2
+  let pathData
+  if (appearance.shape === 'straight') {
+    pathData = `M ${formatNumber(startX)} ${formatNumber(startY)} L ${formatNumber(endX)} ${formatNumber(endY)}`
+  } else if (appearance.shape === 'orthogonal') {
+    pathData = `M ${formatNumber(startX)} ${formatNumber(startY)} H ${formatNumber(middleX)} V ${formatNumber(endY)} H ${formatNumber(endX)}`
+  } else {
+    const controlOffset = Math.max(20, Math.abs(endX - startX) * 0.5)
+    const cp1X = goesRight ? startX + controlOffset : startX - controlOffset
+    const cp2X = goesRight ? endX - controlOffset : endX + controlOffset
+    pathData = `M ${formatNumber(startX)} ${formatNumber(startY)} C ${formatNumber(cp1X)} ${formatNumber(startY)}, ${formatNumber(cp2X)} ${formatNumber(endY)}, ${formatNumber(endX)} ${formatNumber(endY)}`
+  }
   const dash = strokeDasharray(appearance.style)
-  return `<path d="M ${formatNumber(startX)} ${formatNumber(startY)} C ${formatNumber(cp1X)} ${formatNumber(startY)}, ${formatNumber(cp2X)} ${formatNumber(endY)}, ${formatNumber(endX)} ${formatNumber(endY)}" fill="none" stroke="${escapeXml(appearance.color)}" stroke-width="${formatNumber(appearance.width)}"${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="round"/>`
+  return `<path d="${pathData}" fill="none" stroke="${escapeXml(appearance.color)}" stroke-width="${formatNumber(appearance.width)}"${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="round"/>`
 }
 
 function svgRelations(relations, positions) {
@@ -303,17 +312,27 @@ function svgNode(node, position, appearance, branchColor, textLayout) {
   const borderWidth = finiteNumber(appearance.borderWidth, appearance.shape === 'underline' ? 0 : 1, 0, 30)
   const fill = safeString(appearance.fill || 'transparent')
   const pieces = [`<g data-node-id="${escapeXml(node.id)}">`]
+  const borderDash = strokeDasharray(appearance.borderStyle)
+  const strokeAttrs = `stroke="${escapeXml(borderColor)}" stroke-width="${formatNumber(borderWidth)}"${borderDash ? ` stroke-dasharray="${borderDash}"` : ''}`
 
-  if (appearance.shape === 'ellipse') {
-    pieces.push(`<ellipse cx="${formatNumber(x + w / 2)}" cy="${formatNumber(y + h / 2)}" rx="${formatNumber(w / 2)}" ry="${formatNumber(h / 2)}" fill="${escapeXml(fill)}" stroke="${escapeXml(borderColor)}" stroke-width="${formatNumber(borderWidth)}"/>`)
+  if (appearance.shape === 'circle') {
+    pieces.push(`<circle cx="${formatNumber(x + w / 2)}" cy="${formatNumber(y + h / 2)}" r="${formatNumber(Math.min(w, h) / 2)}" fill="${escapeXml(fill)}" ${strokeAttrs}/>`)
+  } else if (appearance.shape === 'ellipse') {
+    pieces.push(`<ellipse cx="${formatNumber(x + w / 2)}" cy="${formatNumber(y + h / 2)}" rx="${formatNumber(w / 2)}" ry="${formatNumber(h / 2)}" fill="${escapeXml(fill)}" ${strokeAttrs}/>`)
+  } else if (appearance.shape === 'diamond') {
+    pieces.push(`<polygon points="${formatNumber(x + w / 2)},${formatNumber(y)} ${formatNumber(x + w)},${formatNumber(y + h / 2)} ${formatNumber(x + w / 2)},${formatNumber(y + h)} ${formatNumber(x)},${formatNumber(y + h / 2)}" fill="${escapeXml(fill)}" ${strokeAttrs}/>`)
+  } else if (appearance.shape === 'parallelogram') {
+    const offset = Math.min(w * 0.12, h)
+    pieces.push(`<polygon points="${formatNumber(x + offset)},${formatNumber(y)} ${formatNumber(x + w)},${formatNumber(y)} ${formatNumber(x + w - offset)},${formatNumber(y + h)} ${formatNumber(x)},${formatNumber(y + h)}" fill="${escapeXml(fill)}" ${strokeAttrs}/>`)
   } else if (appearance.shape === 'underline') {
     if (fill !== 'transparent') pieces.push(`<rect x="${formatNumber(x)}" y="${formatNumber(y)}" width="${formatNumber(w)}" height="${formatNumber(h)}" fill="${escapeXml(fill)}"/>`)
-    pieces.push(`<line x1="${formatNumber(x)}" y1="${formatNumber(y + h - 1)}" x2="${formatNumber(x + w)}" y2="${formatNumber(y + h - 1)}" stroke="${escapeXml(branchColor)}" stroke-width="${formatNumber(Math.max(1, borderWidth))}"/>`)
+    pieces.push(`<line x1="${formatNumber(x)}" y1="${formatNumber(y + h - 1)}" x2="${formatNumber(x + w)}" y2="${formatNumber(y + h - 1)}" stroke="${escapeXml(branchColor)}" stroke-width="${formatNumber(Math.max(1, borderWidth))}"${borderDash ? ` stroke-dasharray="${borderDash}"` : ''}/>`)
   } else {
-    const radius = appearance.shape === 'pill'
+    const shapeRadius = ({ rounded: 4, 'rounded-large': 10, 'soft-rect': 16 })[appearance.shape]
+    const radius = appearance.shape === 'pill' || appearance.shape.startsWith('pill-')
       ? h / 2
-      : appearance.shape === 'rect' ? 0 : finiteNumber(appearance.radius, 6, 0, Math.min(w, h) / 2)
-    pieces.push(`<rect x="${formatNumber(x)}" y="${formatNumber(y)}" width="${formatNumber(w)}" height="${formatNumber(h)}" rx="${formatNumber(radius)}" fill="${escapeXml(fill)}" stroke="${escapeXml(borderColor)}" stroke-width="${formatNumber(borderWidth)}"/>`)
+      : appearance.shape === 'rect' ? 0 : finiteNumber(appearance.hasCustomRadius ? appearance.radius : (shapeRadius ?? appearance.radius), 6, 0, Math.min(w, h) / 2)
+    pieces.push(`<rect x="${formatNumber(x)}" y="${formatNumber(y)}" width="${formatNumber(w)}" height="${formatNumber(h)}" rx="${formatNumber(radius)}" fill="${escapeXml(fill)}" ${strokeAttrs}/>`)
   }
 
   if (node.image?.src && String(node.image.src).startsWith('data:image/')) {

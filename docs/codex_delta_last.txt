@@ -1,0 +1,11 @@
+DELTA 工作流已完成，未實作匯出功能、未執行 git 操作。
+
+- 完成關聯線、概要、備註、連結、圖片、圖示、36 張貼紙、懸浮節點、格式刷、尋找取代、兩式右鍵選單與快捷鍵面板。
+- 僅透過 `registerAction`、`registerOverlay` 及 `PHASE-B INIT` 掛接。
+- DELTA 測試新增於 [delta.test.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\tests\delta.test.mjs)。
+- 全部測試：`51/51 passed`。
+- 瀏覽器實測完成，reload 持久化正常，console `0 errors / 0 warnings`。
+- 自測瀏覽器及本輪 HTTP server 均已關閉。
+- 完整實作、schema、驗證結果與已知邊界記錄於 [CODEX_DELTA_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_DELTA_NOTES.md)。
+
+已知邊界：核心 layout 尚未計入圖片高度，大圖可能與鄰近節點視覺重疊；受禁止修改 `render.js` 的邊界限制，本輪未侵入排版引擎。

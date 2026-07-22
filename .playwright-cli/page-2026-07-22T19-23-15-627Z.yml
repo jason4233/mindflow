@@ -1,0 +1,200 @@
+- generic [ref=f4e1]:
+  - banner:
+    - generic [ref=f4e2]:
+      - link "返回首頁" [ref=f4e3] [cursor=pointer]:
+        - /url: index.html
+        - text: ←
+      - textbox "文件名稱" [ref=f4e4]: 未命名心智圖
+      - generic [ref=f4e6]: 已保存 03:23
+    - generic "編輯工具列" [ref=f4e7]:
+      - button "復原" [ref=f4e8] [cursor=pointer]: ↶
+      - button "重做" [disabled] [ref=f4e9]: ↷
+      - button "插入子節點" [ref=f4e11] [cursor=pointer]: ↳
+      - button "插入同級節點" [ref=f4e12] [cursor=pointer]: ＋
+      - button "↰" [ref=f4e13] [cursor=pointer]
+      - button "▰" [ref=f4e14] [cursor=pointer]
+      - button "T" [ref=f4e15] [cursor=pointer]
+      - button "⊕" [ref=f4e16] [cursor=pointer]
+      - 'button "}" [ref=f4e17] [cursor=pointer]'
+      - button "⌁" [ref=f4e18] [cursor=pointer]
+      - button "✦" [ref=f4e19] [cursor=pointer]
+      - button "▷" [ref=f4e20] [cursor=pointer]
+      - button "AI" [ref=f4e21] [cursor=pointer]
+    - generic [ref=f4e22]:
+      - button "分享" [ref=f4e23]
+      - button "匯出" [ref=f4e24] [cursor=pointer]: ⇧
+      - button "···" [ref=f4e25] [cursor=pointer]
+      - button [ref=f4e26]
+  - main [ref=f4e27]:
+    - region "心智圖畫布" [ref=f4e28]:
+      - generic:
+        - img:
+          - generic: 依賴關係
+        - generic:
+          - generic [ref=f4e507]:
+            - generic [ref=f4e508]: 中心主題（官網）
+            - generic [ref=f4e509]:
+              - button "編輯備註" [ref=f4e510] [cursor=pointer]: 📄
+              - link "開啟連結 https://www.example.com/path" [ref=f4e511] [cursor=pointer]:
+                - /url: https://www.example.com/path
+                - text: ↗ https://www.example.com/path
+          - generic [ref=f4e512]:
+            - generic "拖曳調整圖片大小" [ref=f4e514]
+            - generic [ref=f4e515]: 分支主題
+            - generic:
+              - generic:
+                - img:
+                  - generic: "4"
+              - img "公事包"
+          - generic [ref=f4e516]: 分支主題
+          - generic [ref=f4e518]: 分支主題
+          - generic [ref=f4e520]: 分支主題
+          - button "概要" [ref=f4e522] [cursor=pointer]
+      - generic [ref=f4e48]:
+        - button "−" [ref=f4e49] [cursor=pointer]
+        - button "重設縮放" [ref=f4e50] [cursor=pointer]: 100%
+        - button "+" [ref=f4e51] [cursor=pointer]
+        - button "適應畫布" [ref=f4e52] [cursor=pointer]: 適應
+        - button "⛶" [ref=f4e53] [cursor=pointer]
+    - complementary "樣式面板" [ref=f4e54]:
+      - generic [ref=f4e55]:
+        - navigation "面板分頁" [ref=f4e56]:
+          - button "樣式" [ref=f4e57]
+          - button "主題" [ref=f4e58]
+          - button "佈局" [ref=f4e59]
+          - button "圖示" [ref=f4e60]
+        - button "關閉面板" [ref=f4e61] [cursor=pointer]: ×
+        - heading "樣式" [level=2] [ref=f4e62]
+      - generic [ref=f4e198]:
+        - generic [ref=f4e199]:
+          - button "圖示" [ref=f4e200]
+          - button "貼紙" [ref=f4e201]
+        - generic [ref=f4e372]:
+          - generic [ref=f4e373]: 36 張原創貼紙 · 36 張已載入
+          - generic [ref=f4e374]:
+            - generic [ref=f4e375]:
+              - heading "商務" [level=3] [ref=f4e376]
+              - generic [ref=f4e377]:
+                - button "公事包 公事包" [active] [ref=f4e378] [cursor=pointer]:
+                  - img "公事包" [ref=f4e379]
+                  - generic [ref=f4e380]: 公事包
+                - button "獎盃 獎盃" [ref=f4e381] [cursor=pointer]:
+                  - img "獎盃" [ref=f4e382]
+                  - generic [ref=f4e383]: 獎盃
+                - button "握手 握手" [ref=f4e384] [cursor=pointer]:
+                  - img "握手" [ref=f4e385]
+                  - generic [ref=f4e386]: 握手
+                - button "簡報 簡報" [ref=f4e387] [cursor=pointer]:
+                  - img "簡報" [ref=f4e388]
+                  - generic [ref=f4e389]: 簡報
+                - button "行事曆 行事曆" [ref=f4e390] [cursor=pointer]:
+                  - img "行事曆" [ref=f4e391]
+                  - generic [ref=f4e392]: 行事曆
+                - button "目標 目標" [ref=f4e393] [cursor=pointer]:
+                  - img "目標" [ref=f4e394]
+                  - generic [ref=f4e395]: 目標
+            - generic [ref=f4e396]:
+              - heading "教育" [level=3] [ref=f4e397]
+              - generic [ref=f4e398]:
+                - button "書本 書本" [ref=f4e399] [cursor=pointer]:
+                  - img "書本" [ref=f4e400]
+                  - generic [ref=f4e401]: 書本
+                - button "學士帽 學士帽" [ref=f4e402] [cursor=pointer]:
+                  - img "學士帽" [ref=f4e403]
+                  - generic [ref=f4e404]: 學士帽
+                - button "顯微鏡 顯微鏡" [ref=f4e405] [cursor=pointer]:
+                  - img "顯微鏡" [ref=f4e406]
+                  - generic [ref=f4e407]: 顯微鏡
+                - button "鉛筆 鉛筆" [ref=f4e408] [cursor=pointer]:
+                  - img "鉛筆" [ref=f4e409]
+                  - generic [ref=f4e410]: 鉛筆
+                - button "地球儀 地球儀" [ref=f4e411] [cursor=pointer]:
+                  - img "地球儀" [ref=f4e412]
+                  - generic [ref=f4e413]: 地球儀
+                - button "算盤 算盤" [ref=f4e414] [cursor=pointer]:
+                  - img "算盤" [ref=f4e415]
+                  - generic [ref=f4e416]: 算盤
+            - generic [ref=f4e417]:
+              - heading "科技" [level=3] [ref=f4e418]
+              - generic [ref=f4e419]:
+                - button "火箭 火箭" [ref=f4e420] [cursor=pointer]:
+                  - img "火箭" [ref=f4e421]
+                  - generic [ref=f4e422]: 火箭
+                - button "機器人 機器人" [ref=f4e423] [cursor=pointer]:
+                  - img "機器人" [ref=f4e424]
+                  - generic [ref=f4e425]: 機器人
+                - button "筆記型電腦 筆記型電腦" [ref=f4e426] [cursor=pointer]:
+                  - img "筆記型電腦" [ref=f4e427]
+                  - generic [ref=f4e428]: 筆記型電腦
+                - button "齒輪 齒輪" [ref=f4e429] [cursor=pointer]:
+                  - img "齒輪" [ref=f4e430]
+                  - generic [ref=f4e431]: 齒輪
+                - button "衛星 衛星" [ref=f4e432] [cursor=pointer]:
+                  - img "衛星" [ref=f4e433]
+                  - generic [ref=f4e434]: 衛星
+                - button "電路板 電路板" [ref=f4e435] [cursor=pointer]:
+                  - img "電路板" [ref=f4e436]
+                  - generic [ref=f4e437]: 電路板
+            - generic [ref=f4e438]:
+              - heading "表情" [level=3] [ref=f4e439]
+              - generic [ref=f4e440]:
+                - button "開心 開心" [ref=f4e441] [cursor=pointer]:
+                  - img "開心" [ref=f4e442]
+                  - generic [ref=f4e443]: 開心
+                - button "喜愛 喜愛" [ref=f4e444] [cursor=pointer]:
+                  - img "喜愛" [ref=f4e445]
+                  - generic [ref=f4e446]: 喜愛
+                - button "驚訝 驚訝" [ref=f4e447] [cursor=pointer]:
+                  - img "驚訝" [ref=f4e448]
+                  - generic [ref=f4e449]: 驚訝
+                - button "睏倦 睏倦" [ref=f4e450] [cursor=pointer]:
+                  - img "睏倦" [ref=f4e451]
+                  - generic [ref=f4e452]: 睏倦
+                - button "酷 酷" [ref=f4e453] [cursor=pointer]:
+                  - img "酷" [ref=f4e454]
+                  - generic [ref=f4e455]: 酷
+                - button "眨眼 眨眼" [ref=f4e456] [cursor=pointer]:
+                  - img "眨眼" [ref=f4e457]
+                  - generic [ref=f4e458]: 眨眼
+            - generic [ref=f4e459]:
+              - heading "旅行" [level=3] [ref=f4e460]
+              - generic [ref=f4e461]:
+                - button "飛機 飛機" [ref=f4e462] [cursor=pointer]:
+                  - img "飛機" [ref=f4e463]
+                  - generic [ref=f4e464]: 飛機
+                - button "行李箱 行李箱" [ref=f4e465] [cursor=pointer]:
+                  - img "行李箱" [ref=f4e466]
+                  - generic [ref=f4e467]: 行李箱
+                - button "指南針 指南針" [ref=f4e468] [cursor=pointer]:
+                  - img "指南針" [ref=f4e469]
+                  - generic [ref=f4e470]: 指南針
+                - button "相機 相機" [ref=f4e471] [cursor=pointer]:
+                  - img "相機" [ref=f4e472]
+                  - generic [ref=f4e473]: 相機
+                - button "熱氣球 熱氣球" [ref=f4e474] [cursor=pointer]:
+                  - img "熱氣球" [ref=f4e475]
+                  - generic [ref=f4e476]: 熱氣球
+                - button "地圖定位 地圖定位" [ref=f4e477] [cursor=pointer]:
+                  - img "地圖定位" [ref=f4e478]
+                  - generic [ref=f4e479]: 地圖定位
+            - generic [ref=f4e480]:
+              - heading "天氣" [level=3] [ref=f4e481]
+              - generic [ref=f4e482]:
+                - button "太陽 太陽" [ref=f4e483] [cursor=pointer]:
+                  - img "太陽" [ref=f4e484]
+                  - generic [ref=f4e485]: 太陽
+                - button "雨雲 雨雲" [ref=f4e486] [cursor=pointer]:
+                  - img "雨雲" [ref=f4e487]
+                  - generic [ref=f4e488]: 雨雲
+                - button "彩虹 彩虹" [ref=f4e489] [cursor=pointer]:
+                  - img "彩虹" [ref=f4e490]
+                  - generic [ref=f4e491]: 彩虹
+                - button "雪花 雪花" [ref=f4e492] [cursor=pointer]:
+                  - img "雪花" [ref=f4e493]
+                  - generic [ref=f4e494]: 雪花
+                - button "雷雨 雷雨" [ref=f4e495] [cursor=pointer]:
+                  - img "雷雨" [ref=f4e496]
+                  - generic [ref=f4e497]: 雷雨
+                - button "月亮與星星 月亮與星星" [ref=f4e498] [cursor=pointer]:
+                  - img "月亮與星星" [ref=f4e499]
+                  - generic [ref=f4e500]: 月亮與星星

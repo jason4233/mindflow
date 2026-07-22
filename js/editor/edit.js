@@ -2,6 +2,7 @@
  * contenteditable 編輯生命週期與文字浮動工具列：Enter 確認、Esc 還原、Shift+Enter 換行。
  */
 import { runAction } from './actions.js'
+import { dispatchGlobalShortcut, findShortcutBinding } from './keyboard.js'
 
 export class EditController {
   constructor({ nodesLayer, onCommit }) {
@@ -49,6 +50,13 @@ export class EditController {
     this.showToolbar(nodeElement)
 
     const keydown = event => {
+      const shortcut = findShortcutBinding(event)
+      // Ctrl+S 先提交目前 session，確保存下的是畫面上正在編輯的內容。
+      if (shortcut?.action === 'save') this.commit()
+      if (dispatchGlobalShortcut(event, { formMode: true })) {
+        event.stopPropagation()
+        return
+      }
       event.stopPropagation()
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -85,10 +93,17 @@ export class EditController {
     const richHtml = normalizeRichHtml(textElement.innerHTML)
     const richChanged = richHtml !== normalizeRichHtml(originalHtml)
     this.cleanup()
-    if (next !== original) this.onCommit(id, next)
-    if (richChanged || hasRichFormatting(richHtml)) runAction('setRichText', hasRichFormatting(richHtml) ? richHtml : '')
-    if (Object.keys(pendingStyle).length > 0) runAction('applyStyle', pendingStyle)
-    if (Object.keys(pendingMetadata).length > 0) runAction('setStyleMetadata', pendingMetadata)
+    const richText = hasRichFormatting(richHtml) ? richHtml : null
+    const committed = runAction('commitTextEdit', {
+      id,
+      text: next,
+      richText,
+      richChanged,
+      pendingStyle,
+      pendingMetadata
+    })
+    // 保留舊注入點供獨立使用 EditController 的呼叫端；主編輯器由 batch action 接管。
+    if (committed === false && next !== original && typeof this.onCommit === 'function') this.onCommit(id, next)
     return true
   }
 

@@ -126,14 +126,16 @@ function buildViews(content) {
 
 function mountStyleControls(view) {
   view.querySelectorAll('[data-shape]').forEach(button => button.addEventListener('click', () => runAction('setShape', button.dataset.shape)))
-  mountPicker(view.querySelector('[data-picker="fill"]'), { value: '#ffffff', defaultColor: 'transparent', onChange: color => runAction('applyStyle', { fill: color }) })
-  mountPicker(view.querySelector('[data-picker="border"]'), { value: '#64748b', defaultColor: 'transparent', onChange: color => runAction('applyStyle', { borderColor: color }) })
-  mountPicker(view.querySelector('[data-picker="line"]'), { value: '#3f89de', defaultColor: '#64748b', onChange: color => runAction('applyStyle', { lineColor: color }) })
+  mountPicker(view.querySelector('[data-picker="fill"]'), stylePickerOptions('fill', '#ffffff', 'transparent'))
+  mountPicker(view.querySelector('[data-picker="border"]'), stylePickerOptions('borderColor', '#64748b', 'transparent'))
+  mountPicker(view.querySelector('[data-picker="line"]'), stylePickerOptions('lineColor', '#3f89de', '#64748b'))
 
-  view.querySelector('[data-style-range="radius"]').addEventListener('input', event => {
+  const radius = view.querySelector('[data-style-range="radius"]')
+  radius.addEventListener('input', event => {
     view.querySelector('[data-style-output="radius"]').value = `${event.target.value}px`
-    runAction('setStyleMetadata', { radius: event.target.value })
+    runAction('previewStyle', 'radius', { radius: Number(event.target.value) })
   })
+  radius.addEventListener('change', event => runAction('commitStylePreview', 'radius', { radius: Number(event.target.value) }))
   view.querySelectorAll('[data-style-input]').forEach(input => input.addEventListener('change', () => {
     const key = input.dataset.styleInput
     const numeric = ['borderWidth', 'lineWidth'].includes(key)
@@ -148,10 +150,13 @@ function mountStyleControls(view) {
 
   view.querySelectorAll('[data-structure]').forEach(button => button.addEventListener('click', () => runAction('setLayout', button.dataset.structure)))
   view.querySelector('[data-layout-direction]').addEventListener('change', event => runAction('setLayout', event.target.value))
-  view.querySelectorAll('[data-spacing]').forEach(input => input.addEventListener('input', () => {
-    view.querySelector(`[data-spacing-output="${input.dataset.spacing}"]`).value = input.value
-    runAction('setDocumentSpacing', { [input.dataset.spacing]: input.value })
-  }))
+  view.querySelectorAll('[data-spacing]').forEach(input => {
+    input.addEventListener('input', () => {
+      view.querySelector(`[data-spacing-output="${input.dataset.spacing}"]`).value = input.value
+      runAction('previewDocumentSpacing', input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) })
+    })
+    input.addEventListener('change', () => runAction('commitDocumentSpacingPreview', input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) }))
+  })
 }
 
 function mountThemeControls(view) {
@@ -181,7 +186,12 @@ function mountThemeControls(view) {
     button.addEventListener('click', () => runAction('setCanvasBackground', color))
     quickContainer.append(button)
   })
-  mountPicker(view.querySelector('[data-picker="background"]'), { value: '#f4f7fb', defaultColor: '#ffffff', onChange: color => runAction('setCanvasBackground', color) })
+  mountPicker(view.querySelector('[data-picker="background"]'), {
+    value: '#f4f7fb',
+    defaultColor: '#ffffff',
+    onPreview: color => runAction('previewCanvasBackground', color),
+    onChange: color => runAction('commitCanvasBackgroundPreview', color)
+  })
 
   const backgroundGrid = view.querySelector('[data-background-grid]')
   backgroundPresets.forEach((background, index) => {
@@ -195,10 +205,25 @@ function mountThemeControls(view) {
   })
   view.querySelector('[data-random-background]').addEventListener('click', () => runAction('setCanvasBackground', backgroundPresets[Math.floor(Math.random() * backgroundPresets.length)]))
 
-  mountPicker(view.querySelector('[data-picker="watermark"]'), { value: '#64748b', defaultColor: '#64748b', onChange: color => { view.dataset.watermarkColor = color; applyWatermark(view) } })
+  mountPicker(view.querySelector('[data-picker="watermark"]'), {
+    value: '#64748b',
+    defaultColor: '#64748b',
+    onPreview: color => {
+      view.dataset.watermarkColor = color
+      applyWatermark(view, 'preview', 'color')
+    },
+    onChange: color => {
+      view.dataset.watermarkColor = color
+      applyWatermark(view, 'commit-preview', 'color')
+    }
+  })
   view.dataset.watermarkColor = '#64748b'
-  const watermarkInputs = view.querySelectorAll('[data-watermark-enabled], [data-watermark-text], [data-watermark-rotation], [data-watermark-opacity], [data-watermark-size]')
-  watermarkInputs.forEach(input => input.addEventListener(input.type === 'range' || input.type === 'text' ? 'input' : 'change', () => applyWatermark(view)))
+  view.querySelectorAll('[data-watermark-text], [data-watermark-opacity], [data-watermark-size]').forEach(input => {
+    const key = input.dataset.watermarkText !== undefined ? 'text' : input.dataset.watermarkOpacity !== undefined ? 'opacity' : 'size'
+    input.addEventListener('input', () => applyWatermark(view, 'preview', key))
+    input.addEventListener('change', () => applyWatermark(view, 'commit-preview', key))
+  })
+  view.querySelectorAll('[data-watermark-enabled], [data-watermark-rotation]').forEach(input => input.addEventListener('change', () => applyWatermark(view)))
 }
 
 function renderThemeGrid(container) {
@@ -215,10 +240,10 @@ function renderThemeGrid(container) {
     preview.type = 'button'
     preview.className = 'theme-card__preview'
     preview.innerHTML = createThemePreviewSvg(selectedTheme, { width: 180, height: 108 })
-    preview.addEventListener('click', () => {
+    const selectTheme = () => {
       runAction('applyTheme', selectedTheme.id)
       renderThemeGrid(container)
-    })
+    }
     const meta = document.createElement('div')
     meta.className = 'theme-card__meta'
     const name = document.createElement('span')
@@ -229,13 +254,24 @@ function renderThemeGrid(container) {
     pin.className = `theme-pin${pinned.includes(selectedTheme.id) ? ' is-pinned' : ''}`
     pin.textContent = pinned.includes(selectedTheme.id) ? '●' : '○'
     pin.title = pinned.includes(selectedTheme.id) ? '取消釘選' : '釘選主題（最多 6 個）'
-    pin.addEventListener('click', () => togglePinnedTheme(selectedTheme.id, container))
+    pin.addEventListener('click', event => {
+      event.stopPropagation()
+      togglePinnedTheme(selectedTheme.id, container)
+    })
     pin.addEventListener('dblclick', () => {
       localStorage.setItem(DEFAULT_KEY, selectedTheme.id)
       runAction('applyTheme', selectedTheme.id)
     })
     meta.append(name, pin)
     card.append(preview, meta)
+    card.tabIndex = 0
+    card.setAttribute('role', 'button')
+    card.addEventListener('click', selectTheme)
+    card.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      selectTheme()
+    })
     container.append(card)
   }
 }
@@ -249,21 +285,24 @@ function togglePinnedTheme(themeId, container) {
   renderThemeGrid(container)
 }
 
-function applyWatermark(view) {
+function applyWatermark(view, mode = 'commit', key = '') {
   const text = view.querySelector('[data-watermark-text]').value.slice(0, 30)
   const opacity = view.querySelector('[data-watermark-opacity]').value
   const size = view.querySelector('[data-watermark-size]').value
   view.querySelector('[data-watermark-count]').textContent = `${text.length}/30`
   view.querySelector('[data-watermark-opacity-value]').textContent = `${opacity}%`
   view.querySelector('[data-watermark-size-value]').textContent = `${size}px`
-  runAction('setWatermark', {
+  const config = {
     enabled: view.querySelector('[data-watermark-enabled]').checked,
     text,
     color: view.dataset.watermarkColor,
     rotation: view.querySelector('[data-watermark-rotation]').value,
     opacity,
     size
-  })
+  }
+  if (mode === 'preview') runAction('previewWatermark', key, config)
+  else if (mode === 'commit-preview') runAction('commitWatermarkPreview', key, config)
+  else runAction('setWatermark', config)
 }
 
 function refreshPanel(views) {
@@ -291,18 +330,18 @@ function refreshPanel(views) {
 
   views.theme.querySelectorAll('.theme-card').forEach(card => card.classList.toggle('is-active', card.dataset.themeId === snapshot.doc.themeId))
   const themeView = views.theme
-  themeView.querySelector('[data-watermark-enabled]').checked = Boolean(snapshot.doc.canvas.watermark)
-  themeView.querySelector('[data-watermark-text]').value = snapshot.rootAppearance.watermarkText
-  themeView.querySelector('[data-watermark-rotation]').value = snapshot.rootAppearance.watermarkRotation
-  themeView.querySelector('[data-watermark-opacity]').value = snapshot.rootAppearance.watermarkOpacity
-  themeView.querySelector('[data-watermark-size]').value = snapshot.rootAppearance.watermarkSize
+  themeView.querySelector('[data-watermark-enabled]').checked = Boolean(snapshot.doc.canvas.watermark.enabled)
+  setValue(themeView, '[data-watermark-text]', snapshot.rootAppearance.watermarkText)
+  setValue(themeView, '[data-watermark-rotation]', snapshot.rootAppearance.watermarkRotation)
+  setValue(themeView, '[data-watermark-opacity]', snapshot.rootAppearance.watermarkOpacity)
+  setValue(themeView, '[data-watermark-size]', snapshot.rootAppearance.watermarkSize)
   themeView.dataset.watermarkColor = snapshot.rootAppearance.watermarkColor
   themeView.querySelector('[data-watermark-count]').textContent = `${snapshot.rootAppearance.watermarkText.length}/30`
   themeView.querySelector('[data-watermark-opacity-value]').textContent = `${snapshot.rootAppearance.watermarkOpacity}%`
   themeView.querySelector('[data-watermark-size-value]').textContent = `${snapshot.rootAppearance.watermarkSize}px`
 }
 
-function mountPicker(mount, { value, defaultColor, onChange }) {
+function mountPicker(mount, { value, defaultColor, onChange, onPreview = onChange }) {
   const wrapper = document.createElement('span')
   wrapper.className = 'color-picker'
   const trigger = document.createElement('button')
@@ -334,12 +373,16 @@ function mountPicker(mount, { value, defaultColor, onChange }) {
       recentContainer.append(swatch)
     }
   }
-  const choose = color => {
+  const choose = (color, { commit = true, close = true } = {}) => {
     trigger.style.setProperty('--swatch', color)
-    popover.hidden = true
-    rememberColor(color)
-    renderRecent()
-    onChange(color)
+    if (close) popover.hidden = true
+    if (commit) {
+      rememberColor(color)
+      renderRecent()
+      onChange(color)
+    } else {
+      onPreview(color)
+    }
   }
   for (const color of createPalette()) {
     const swatch = document.createElement('button')
@@ -361,7 +404,8 @@ function mountPicker(mount, { value, defaultColor, onChange }) {
   const native = document.createElement('input')
   native.type = 'color'
   native.value = /^#[0-9a-f]{6}$/i.test(value) ? value : '#64748b'
-  native.addEventListener('input', () => choose(native.value))
+  native.addEventListener('input', () => choose(native.value, { commit: false, close: false }))
+  native.addEventListener('change', () => choose(native.value))
   more.append(native)
   footer.append(reset, more)
   renderRecent()
@@ -424,5 +468,16 @@ function numberOptions(min, max, selected, suffix = '') {
 
 function setValue(root, selector, value) {
   const input = root.querySelector(selector)
-  if (input && document.activeElement !== input && Array.from(input.options || []).some(option => option.value === String(value)) || input?.type === 'range') input.value = String(value)
+  if (!input || document.activeElement === input) return
+  if (input.tagName === 'SELECT' && !Array.from(input.options).some(option => option.value === String(value))) return
+  input.value = String(value)
+}
+
+function stylePickerOptions(key, value, defaultColor) {
+  return {
+    value,
+    defaultColor,
+    onPreview: color => runAction('previewStyle', key, { [key]: color }),
+    onChange: color => runAction('commitStylePreview', key, { [key]: color })
+  }
 }

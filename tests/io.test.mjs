@@ -27,6 +27,7 @@ function node(id, text, children = [], overrides = {}) {
     collapsed: false,
     side: null,
     style: {},
+    richText: null,
     notes: null,
     link: null,
     icons: [],
@@ -61,7 +62,12 @@ function fixtureDoc() {
       cp1: { x: -12, y: -30 }, cp2: { x: 44, y: 80 }, style: { color: '#f59e0b', width: 3 }
     }],
     summaries: [{ id: 'sum-1', parentId: 'root', startIndex: 0, endIndex: 1, text: '概要', style: {} }],
-    canvas: { background: '#0B0B2A', watermark: false }
+    canvas: {
+      background: '#0B0B2A',
+      watermark: { enabled: false, text: 'MindFlow', color: '#64748b', rotation: 'left', opacity: 12, size: 18 },
+      spacingH: 30,
+      spacingV: 30
+    }
   }
 }
 
@@ -194,6 +200,24 @@ test('SVG 預設遵守 collapsed，可選透明背景，空 Doc 也回傳合法 
   assert.equal(countOccurrences(visible, 'data-node-id='), 4)
   assert.ok(visible.indexOf('<g transform=') < visible.indexOf('<rect '))
   assert.equal(empty, '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"></svg>')
+})
+
+test('SVG 保留新節點形狀、圓角、邊框 dash 與 straight/orthogonal 線型', () => {
+  const doc = fixtureDoc()
+  doc.themeId = 'classic-blue'
+  doc.root.children = [
+    node('diamond', '菱形', [], { side: 'right', style: { shape: 'diamond', borderStyle: 'dash-dot', lineStyle: 'solid|shape=straight' } }),
+    node('parallel', '平行', [], { side: 'right', style: { shape: 'parallelogram', lineStyle: 'solid|shape=orthogonal' } }),
+    node('circle', '圓', [], { side: 'right', style: { shape: 'circle' } }),
+    node('pill', '窄藥丸', [], { side: 'right', style: { shape: 'pill-narrow', radius: 3 } })
+  ]
+  const svg = documentToSvg(doc, { includeCollapsedChildren: true })
+  assert.ok((svg.match(/<polygon\b/g) || []).length >= 2)
+  assert.match(svg, /<circle\b/u)
+  assert.match(svg, /stroke-dasharray="10 4 2 4"/u)
+  assert.match(svg, /d="M [^"]+ L [^"]+"/u)
+  assert.match(svg, /d="M [^"]+ H [^"]+ V [^"]+ H [^"]+"/u)
+  assert.match(svg, /<rect[^>]+rx="[1-9][0-9.]*"/u)
 })
 
 test('JSON 非物件輸入明確拒絕', () => {

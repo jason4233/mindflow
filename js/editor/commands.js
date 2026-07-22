@@ -29,8 +29,13 @@ export class CommandManager {
     if (this.undoStack.length > this.limit) this.undoStack.shift()
     // 新分支一旦產生，舊 redo 歷史已不再能套用到目前狀態。
     this.redoStack.length = 0
-    this.onChange({ type: 'execute', command })
+    this.notifyChange('execute', command)
     return true
+  }
+
+  batch(description, commands) {
+    if (!Array.isArray(commands)) throw new TypeError('batch commands 必須是陣列')
+    return this.execute(createBatchCommand(description, commands))
   }
 
   undo() {
@@ -38,7 +43,7 @@ export class CommandManager {
     if (!command) return false
     command.undo()
     this.redoStack.push(command)
-    this.onChange({ type: 'undo', command })
+    this.notifyChange('undo', command)
     return true
   }
 
@@ -51,14 +56,27 @@ export class CommandManager {
       return false
     }
     this.undoStack.push(command)
-    this.onChange({ type: 'redo', command })
+    this.notifyChange('redo', command)
     return true
   }
 
   clear() {
     this.undoStack.length = 0
     this.redoStack.length = 0
-    this.onChange({ type: 'clear', command: null })
+    this.notifyChange('clear', null)
+  }
+
+  preview() {
+    this.onChange({ type: 'preview', command: null })
+  }
+
+  notifyChange(type, command) {
+    this.onChange({ type, command })
+    if (command?.affectedIds?.length && typeof globalThis.window?.dispatchEvent === 'function' && typeof globalThis.CustomEvent === 'function') {
+      globalThis.window.dispatchEvent(new CustomEvent('mindflow:commandselection', {
+        detail: { type, affectedIds: command.affectedIds.slice() }
+      }))
+    }
   }
 
   get canUndo() {
@@ -83,6 +101,32 @@ function clampIndex(index, length) {
 
 function makeCommand(description, doAction, undoAction, extra = {}) {
   return { description, do: doAction, undo: undoAction, ...extra }
+}
+
+function createBatchCommand(description, commands) {
+  commands.forEach(assertCommand)
+  let applied = []
+  const affectedIds = Array.from(new Set(commands.flatMap(command => command.affectedIds || [])))
+  return makeCommand(
+    String(description || '批次操作'),
+    () => {
+      const changed = []
+      try {
+        for (const command of commands) {
+          if (command.do() !== false) changed.push(command)
+        }
+      } catch (error) {
+        for (const command of changed.reverse()) command.undo()
+        throw error
+      }
+      applied = changed
+      return applied.length > 0
+    },
+    () => {
+      for (const command of applied.slice().reverse()) command.undo()
+    },
+    { affectedIds }
+  )
 }
 
 export function addChild(doc, parentId, index, options = {}) {
@@ -115,7 +159,7 @@ export function addChild(doc, parentId, index, options = {}) {
       const context = findNodeContext(doc.root, node.id)
       if (context?.parent) context.parent.children.splice(context.index, 1)
     },
-    { nodeId: node.id, node }
+    { nodeId: node.id, node, affectedIds: [node.id, parentId] }
   )
 }
 
@@ -146,7 +190,7 @@ function createSiblingCommand(doc, nodeId, before, options) {
       return delegate.do()
     },
     () => delegate?.undo(),
-    { nodeId: node.id, node }
+    { nodeId: node.id, node, affectedIds: [node.id, nodeId] }
   )
 }
 
@@ -175,12 +219,15 @@ export function insertSubtrees(doc, parentId, nodes, index) {
         if (context?.parent) context.parent.children.splice(context.index, 1)
       }
     },
-    { nodeIds: insertedNodes.map(node => node.id), nodes: insertedNodes }
+    { nodeIds: insertedNodes.map(node => node.id), nodes: insertedNodes, affectedIds: [...insertedNodes.map(node => node.id), parentId] }
   )
 }
 
 export function deleteNodes(doc, ids) {
   const selectedIds = getTopLevelIds(doc.root, ids).filter(id => id !== doc.root.id)
+  const parentIds = Array.from(new Set(selectedIds
+    .map(id => findNodeContext(doc.root, id)?.parent?.id)
+    .filter(Boolean)))
   let records = null
 
   return makeCommand(
@@ -216,7 +263,32 @@ export function deleteNodes(doc, ids) {
         }
       }
     },
-    { deletedIds: selectedIds }
+    { deletedIds: selectedIds, affectedIds: [...selectedIds, ...parentIds] }
+  )
+}
+
+export function updateRichText(doc, id, html) {
+  let previous
+  let initialized = false
+  const next = typeof html === 'string' && html ? html : null
+  return makeCommand(
+    '更新富文字',
+    () => {
+      const node = findNode(doc.root, id)
+      if (!node) return false
+      if (!initialized) {
+        previous = node.richText || null
+        initialized = true
+      }
+      if ((node.richText || null) === next) return false
+      node.richText = next
+      return true
+    },
+    () => {
+      const node = findNode(doc.root, id)
+      if (node) node.richText = previous
+    },
+    { affectedIds: [id] }
   )
 }
 
@@ -240,7 +312,8 @@ export function updateText(doc, id, text) {
     () => {
       const node = findNode(doc.root, id)
       if (node) node.text = previous
-    }
+    },
+    { affectedIds: [id] }
   )
 }
 
@@ -288,7 +361,8 @@ export function moveNode(doc, id, newParentId, index, side = null) {
       current.parent.children.splice(current.index, 1)
       current.node.side = original.side
       oldParent.children.splice(clampIndex(original.index, oldParent.children.length), 0, current.node)
-    }
+    },
+    { affectedIds: [id, newParentId] }
   )
 }
 
@@ -310,7 +384,8 @@ export function toggleCollapse(doc, id) {
     () => {
       const node = findNode(doc.root, id)
       if (node) node.collapsed = previous
-    }
+    },
+    { affectedIds: [id] }
   )
 }
 
@@ -326,8 +401,10 @@ export function setStyle(doc, ids, patch) {
     () => {
       const nodes = ids.map(id => findNode(doc.root, id)).filter(Boolean)
       if (nodes.length === 0 || Object.keys(allowedPatch).length === 0) return false
-      if (!previous) previous = nodes.map(node => ({ id: node.id, style: structuredCloneSafe(node.style) }))
-      for (const node of nodes) node.style = { ...node.style, ...allowedPatch }
+      const changedNodes = nodes.filter(node => Object.entries(allowedPatch).some(([key, value]) => !sameValue(node.style[key], value)))
+      if (changedNodes.length === 0) return false
+      if (!previous) previous = changedNodes.map(node => ({ id: node.id, style: structuredCloneSafe(node.style) }))
+      for (const node of changedNodes) node.style = { ...node.style, ...allowedPatch }
       return true
     },
     () => {
@@ -335,8 +412,15 @@ export function setStyle(doc, ids, patch) {
         const node = findNode(doc.root, record.id)
         if (node) node.style = structuredCloneSafe(record.style)
       }
-    }
+    },
+    { affectedIds: ids.slice() }
   )
+}
+
+function sameValue(left, right) {
+  if (Object.is(left, right)) return true
+  if ((left === undefined || left === null) && (right === undefined || right === null)) return true
+  return false
 }
 
 export function updateDocumentTitle(doc, title) {

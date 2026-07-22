@@ -107,6 +107,13 @@ export class ViewportController {
     if (!this.initialPlacementDone) {
       this.initialPlacementDone = true
       this.zoom = 1
+      const focusId = new URLSearchParams(window.location.search).get('focus')
+      const focusPosition = focusId ? positions.get(focusId) : null
+      if (focusPosition) {
+        this.centerOn(focusPosition)
+        window.dispatchEvent(new CustomEvent('mindflow:focusnode', { detail: { id: focusId } }))
+        return
+      }
       this.panX = (this.canvas.clientWidth - (bounds.minX + bounds.maxX)) / 2
       this.panY = (this.canvas.clientHeight - (bounds.minY + bounds.maxY)) / 2
       this.apply()

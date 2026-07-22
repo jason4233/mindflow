@@ -208,23 +208,14 @@ export function getNodeAppearance(node, depth, selectedTheme) {
   const activeTheme = selectedTheme || themes['classic-blue']
   const base = depth === 0 ? activeTheme.rootStyle : depth === 1 ? activeTheme.level2Style : activeTheme.leafStyle
   const merged = { ...base, ...node.style }
-  const parsed = parseStyleToken(merged.shape, base.shape)
-  const number = (key, fallback) => Number.isFinite(Number(parsed.metadata[key])) ? Number(parsed.metadata[key]) : fallback
   return {
     ...merged,
-    shape: parsed.shape,
-    hasCustomRadius: Object.hasOwn(parsed.metadata, 'radius'),
-    radius: number('radius', Number(base.radius) || 6),
-    textAlign: parsed.metadata.align || 'center',
-    lineHeight: number('lineHeight', 1.35),
-    richText: parsed.metadata.richText || '',
-    spacingH: number('spacingH', 30),
-    spacingV: number('spacingV', 30),
-    watermarkText: parsed.metadata.watermarkText || 'MindFlow',
-    watermarkColor: parsed.metadata.watermarkColor || '#64748b',
-    watermarkRotation: parsed.metadata.watermarkRotation || 'left',
-    watermarkOpacity: number('watermarkOpacity', 12),
-    watermarkSize: number('watermarkSize', 18)
+    shape: merged.shape || base.shape,
+    hasCustomRadius: Object.hasOwn(node.style, 'radius'),
+    radius: Number.isFinite(Number(merged.radius)) ? Number(merged.radius) : Number(base.radius) || 6,
+    textAlign: ['left', 'center', 'right'].includes(merged.align) ? merged.align : 'center',
+    lineHeight: Number.isFinite(Number(merged.lineHeight)) ? Number(merged.lineHeight) : 1.35,
+    richText: node.richText || ''
   }
 }
 

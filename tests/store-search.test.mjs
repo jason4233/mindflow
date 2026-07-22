@@ -78,6 +78,17 @@ test('文件可收藏、移入回收筒、還原與永久刪除，收藏狀態�
   assert.equal(listTrashedDocuments().length, 0)
 })
 
+test('永久刪除後殘留編輯器 autosave 不會復活文件', () => {
+  resetStorage()
+  const doc = createDocument(createDefaultDoc({ id: 'stale-editor-doc', title: '不可復活' }))
+  deleteDocument(doc.id)
+  permanentlyDeleteDocument(doc.id)
+  doc.title = '殘留分頁寫回'
+  assert.equal(saveDocument(doc), false)
+  assert.equal(loadDocument(doc.id), null)
+  assert.equal(listDocuments().some(meta => meta.id === doc.id), false)
+})
+
 test('建立副本會換文件與全部節點 ID，且保留原始內容', () => {
   resetStorage()
   const source = createDefaultDoc({ title: '專案藍圖' })
@@ -107,6 +118,15 @@ test('mini-SVG 會轉義使用者文字且包含實際節點內容', () => {
   assert.ok(thumbnail.includes('&lt;script&gt;'))
   assert.equal(thumbnail.includes('<script>'), false)
   assert.ok(thumbnail.includes('安全節點'))
+})
+
+test('mini-SVG 主色取自文件實際主題 palette', () => {
+  resetStorage()
+  const classic = createDocumentThumbnail(createDefaultDoc({ themeId: 'classic-blue' }))
+  const monochrome = createDocumentThumbnail(createDefaultDoc({ themeId: 'monochrome-outline' }))
+  assert.match(classic, /#3f89de/iu)
+  assert.match(monochrome, /#262626/iu)
+  assert.doesNotMatch(monochrome, /#D55F78/iu)
 })
 
 test('全文搜尋可命中文件標題、節點文字並回傳完整節點路徑', () => {

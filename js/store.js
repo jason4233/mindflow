@@ -9,6 +9,7 @@ import {
   structuredCloneSafe,
   walkNodes
 } from './editor/model.js'
+import { getTheme } from './editor/themes.js'
 
 export const INDEX_KEY = 'mindflow.docs.index'
 export const DOC_KEY_PREFIX = 'mindflow.doc.'
@@ -110,7 +111,7 @@ export function getDocumentMeta(id) {
 
 export function createDocument(input = null) {
   const doc = input ? normalizeDoc(input) : createDefaultDoc()
-  saveDocument(doc)
+  saveDocument(doc, { allowCreate: true })
   return doc
 }
 
@@ -126,14 +127,18 @@ export function loadDocument(id) {
 }
 
 export function saveDocument(doc, options = {}) {
+  const index = readIndex()
+  const documentKey = `${DOC_KEY_PREFIX}${doc?.id || ''}`
+  const known = index.docs.some(meta => meta.id === doc?.id) || index.trash.some(meta => meta.id === doc?.id)
+  // 永久刪除後，殘留編輯器分頁不可再用 autosave 把文件加回 index。
+  if (!options.allowCreate && !known && storage().getItem(documentKey) === null) return false
   const persisted = structuredCloneSafe(normalizeDoc(doc))
   persisted.updatedAt = new Date().toISOString()
   persisted.thumbnail = isSvgThumbnail(options.thumbnail)
     ? options.thumbnail
     : createDocumentThumbnail(persisted)
-  storage().setItem(`${DOC_KEY_PREFIX}${persisted.id}`, JSON.stringify(persisted))
+  storage().setItem(documentKey, JSON.stringify(persisted))
 
-  const index = readIndex()
   const meta = {
     id: persisted.id,
     title: persisted.title,
@@ -231,7 +236,12 @@ export function createDocumentThumbnail(doc) {
   const center = { x: width / 2, y: height / 2 }
   const visible = collectThumbnailNodes(normalized.root)
   const positions = positionThumbnailNodes(visible, center, width, height)
-  const accent = colorFromTheme(normalized.themeId)
+  const selectedTheme = getTheme(normalized.themeId)
+  const accent = safeColor(selectedTheme.branchPalette[0], '#3f89de')
+  const rootFill = safeColor(selectedTheme.rootStyle.fill, accent)
+  const rootText = safeColor(selectedTheme.rootStyle.textColor, '#ffffff')
+  const branchFill = safeColor(selectedTheme.level2Style.fill, '#ffffff')
+  const branchText = safeColor(selectedTheme.level2Style.textColor, '#3b4149')
   const background = safeColor(normalized.canvas?.background, '#fbfaf8')
   const lines = visible.slice(1).map(entry => {
     const from = positions.get(entry.parent.id)
@@ -246,9 +256,9 @@ export function createDocumentThumbnail(doc) {
     const root = index === 0
     const boxWidth = root ? 96 : 74
     const boxHeight = root ? 30 : 24
-    const fill = root ? accent : '#ffffff'
+    const fill = root ? rootFill : branchFill
     const stroke = root ? accent : `${accent}99`
-    const textColor = root ? '#ffffff' : '#3b4149'
+    const textColor = root ? rootText : branchText
     return `<g><rect x="${point.x - boxWidth / 2}" y="${point.y - boxHeight / 2}" width="${boxWidth}" height="${boxHeight}" rx="${root ? 10 : 8}" fill="${fill}" stroke="${stroke}"/><text x="${point.x}" y="${point.y + 4}" text-anchor="middle" font-family="Segoe UI,Noto Sans TC,sans-serif" font-size="${root ? 11 : 9}" font-weight="${root ? 700 : 500}" fill="${textColor}">${escapeXml(shorten(entry.node.text, root ? 10 : 8))}</text></g>`
   }).join('')
 
@@ -290,14 +300,6 @@ function positionThumbnailNodes(entries, center, width, height) {
     })
   }
   return positions
-}
-
-function colorFromTheme(themeId) {
-  const palette = ['#F17E2E', '#4F7CAC', '#37A07B', '#8A62C7', '#D55F78', '#A06B3C']
-  const value = String(themeId || 'classic-blue')
-  let hash = 0
-  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  return palette[hash % palette.length]
 }
 
 function safeColor(value, fallback) {

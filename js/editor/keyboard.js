@@ -8,7 +8,9 @@ import {
   insertSubtrees,
   moveNode,
   setStyle,
-  toggleCollapse
+  toggleCollapse,
+  updateRichText,
+  updateText
 } from './commands.js'
 import {
   cloneSubtreeWithFreshIds,
@@ -18,11 +20,11 @@ import {
   getTopLevelIds,
   structuredCloneSafe
 } from './model.js'
-import { registerAction, runAction } from './actions.js'
+import { hasAction, registerAction, runAction } from './actions.js'
 import {
   encodeLineToken,
-  encodeStyleToken,
   getNextThemeId,
+  getLineAppearance,
   getNodeAppearance,
   getTheme
 } from './themes.js'
@@ -84,6 +86,17 @@ export const ACTION_BINDINGS = Object.freeze([
   { action: 'floatingNode', key: 'f', shift: true, alt: true }
 ])
 
+const FORM_GLOBAL_ACTIONS = new Set([
+  'save', 'openThemePanel', 'toggleOutline', 'duplicate', 'findReplace',
+  ...Array.from({ length: 9 }, (_, index) => `priority${index + 1}`)
+])
+
+const TOOLBAR_ACTIONS = Object.freeze([
+  'insertParent', 'formatPainter', 'edit', 'insertImage', 'insertSummary',
+  'insertRelation', 'openThemePanel', 'presentation', 'aiMenu', 'share',
+  'openExport', 'moreMenu', 'toggleFullscreen'
+])
+
 export class KeyboardController {
   constructor({ doc, manager, selection, viewport, edit, save, getPositions }) {
     this.doc = doc
@@ -95,23 +108,21 @@ export class KeyboardController {
     this.getPositions = getPositions
     this.clipboard = []
     this.styleClipboard = null
+    this.previewSessions = new Map()
     this.registerCoreActions()
     this.actions = createActionFacade()
     this.handleKeydown = this.handleKeydown.bind(this)
   }
 
   bind() {
+    assertRegisteredActions([...ACTION_BINDINGS.map(binding => binding.action), ...TOOLBAR_ACTIONS])
     window.addEventListener('keydown', this.handleKeydown)
   }
 
   handleKeydown(event) {
-    if (this.edit.isEditing || isFormTarget(event.target)) return
-    const binding = ACTION_BINDINGS.find(item => matchesBinding(event, item))
-    if (binding) {
-      event.preventDefault()
-      runAction(binding.action, event)
-      return
-    }
+    const formMode = this.edit.isEditing || isFormTarget(event.target)
+    if (dispatchGlobalShortcut(event, { formMode })) return
+    if (formMode) return
 
     // 官方行為：選中節點後直接輸入可列印字元，清空原文並從該字元開始編輯。
     if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -163,9 +174,18 @@ export class KeyboardController {
       applyStyle: patch => this.applyStyle(patch),
       setShape: shape => this.applyShape(shape),
       setStyleMetadata: patch => this.applyStyleMetadata(patch),
-      setDocumentSpacing: patch => this.applyStyleMetadata(patch, [this.doc.root.id]),
+      setDocumentSpacing: patch => this.setDocumentSpacing(patch),
       setLineStyle: config => this.applyLineStyle(config),
-      setRichText: html => this.applyStyleMetadata({ richText: html || null }, [this.selection.primaryId]),
+      setRichText: (html, id = this.selection.primaryId) => id ? this.manager.execute(updateRichText(this.doc, id, html)) : false,
+      commitTextEdit: payload => this.commitTextEdit(payload),
+      previewStyle: (key, patch) => this.previewStyle(key, patch),
+      commitStylePreview: (key, patch) => this.commitStylePreview(key, patch),
+      previewDocumentSpacing: (key, patch) => this.previewDocumentSpacing(key, patch),
+      commitDocumentSpacingPreview: (key, patch) => this.commitDocumentSpacingPreview(key, patch),
+      previewWatermark: (key, config) => this.previewWatermark(key, config),
+      commitWatermarkPreview: (key, config) => this.commitWatermarkPreview(key, config),
+      previewCanvasBackground: background => this.previewCanvasBackground(background),
+      commitCanvasBackgroundPreview: background => this.commitCanvasBackgroundPreview(background),
       setCanvasBackground: background => this.setCanvasBackground(background),
       setWatermark: config => this.setWatermark(config),
       setLayout: layoutName => this.setLayout(layoutName),
@@ -173,6 +193,10 @@ export class KeyboardController {
       toggleFullscreen: () => toggleFullscreen()
     }
     for (const [name, action] of Object.entries(actions)) registerAction(name, action)
+    const required = new Set([...ACTION_BINDINGS.map(binding => binding.action), ...TOOLBAR_ACTIONS])
+    for (const name of required) {
+      if (!hasAction(name)) registerAction(name, () => showComingSoon(name))
+    }
   }
 
   insertChild() {
@@ -200,6 +224,7 @@ export class KeyboardController {
     const originalSide = context.node.side
     const command = {
       description: '插入上級節點',
+      affectedIds: [parentNode.id, id, originalParent.id],
       do: () => {
         const current = findNodeContext(this.doc.root, id)
         if (!current?.parent || findNode(this.doc.root, parentNode.id)) return false
@@ -236,9 +261,11 @@ export class KeyboardController {
   dissolveSelected() {
     const ids = getTopLevelIds(this.doc.root, this.selection.getSelectedIds()).filter(id => id !== this.doc.root.id)
     if (ids.length === 0) return false
+    const fallback = findNodeContext(this.doc.root, ids[0])?.parent?.id || this.doc.root.id
     let records = null
     const command = {
       description: '刪除節點並保留子節點',
+      affectedIds: [...ids, fallback],
       do: () => {
         if (!records) {
           records = ids.map(id => findNodeContext(this.doc.root, id)).filter(context => context?.parent).map(context => ({
@@ -272,7 +299,6 @@ export class KeyboardController {
         }
       }
     }
-    const fallback = findNodeContext(this.doc.root, ids[0])?.parent?.id || this.doc.root.id
     if (!this.manager.execute(command)) return false
     this.selection.set([fallback])
     return true
@@ -286,18 +312,37 @@ export class KeyboardController {
   moveSelected(delta) {
     const context = findNodeContext(this.doc.root, this.selection.primaryId)
     if (!context?.parent) return false
-    const nextIndex = context.index + delta
-    if (nextIndex < 0 || nextIndex >= context.parent.children.length) return false
-    return this.manager.execute(moveNode(this.doc, context.node.id, context.parent.id, nextIndex, context.node.side))
+    const siblings = this.getVisualSiblings(context)
+    const currentIndex = siblings.findIndex(node => node.id === context.node.id)
+    const target = siblings[currentIndex + delta]
+    if (!target) return false
+    const targetContext = findNodeContext(this.doc.root, target.id)
+    if (!targetContext) return false
+    return this.manager.execute(moveNode(this.doc, context.node.id, context.parent.id, targetContext.index, context.node.side))
   }
 
   selectSibling(delta) {
     const context = findNodeContext(this.doc.root, this.selection.primaryId)
     if (!context?.parent) return false
-    const sibling = context.parent.children[context.index + delta]
+    const siblings = this.getVisualSiblings(context)
+    const currentIndex = siblings.findIndex(node => node.id === context.node.id)
+    const sibling = siblings[currentIndex + delta]
     if (!sibling) return false
     this.selection.set([sibling.id])
     return true
+  }
+
+  getVisualSiblings(context) {
+    const positions = this.getPositions()
+    const currentPosition = positions.get(context.node.id)
+    if (!currentPosition) return context.parent.children.slice()
+    return context.parent.children
+      .filter(node => positions.get(node.id)?.side === currentPosition.side)
+      .sort((left, right) => {
+        const a = positions.get(left.id)
+        const b = positions.get(right.id)
+        return (a.y + a.h / 2) - (b.y + b.h / 2)
+      })
   }
 
   duplicateSelected() {
@@ -345,29 +390,46 @@ export class KeyboardController {
 
   applyStyle(patch) {
     const ids = this.selection.getSelectedIds()
-    return ids.length > 0 && patch && typeof patch === 'object'
-      ? this.manager.execute(setStyle(this.doc, ids, patch))
-      : false
+    return this.applyStyleToIds(patch, ids)
+  }
+
+  applyStyleToIds(patch, ids) {
+    if (!patch || typeof patch !== 'object' || ids.length === 0) return false
+    const theme = getTheme(this.doc.themeId)
+    const changedIds = ids.filter(id => {
+      const context = findNodeContext(this.doc.root, id)
+      if (!context) return false
+      const appearance = getNodeAppearance(context.node, context.depth, theme)
+      return Object.entries(patch).some(([key, value]) => {
+        const effective = key === 'align' ? appearance.textAlign : appearance[key]
+        return Number.isFinite(Number(effective)) && Number.isFinite(Number(value))
+          ? Number(effective) !== Number(value)
+          : effective !== value
+      })
+    })
+    return changedIds.length > 0 ? this.manager.execute(setStyle(this.doc, changedIds, patch)) : false
   }
 
   applyShape(shape) {
-    return this.mutateSelectedStyles('設定節點形狀', (node, context) => {
-      const current = node.style.shape || getNodeAppearance(node, context.depth, getTheme(this.doc.themeId)).shape
-      node.style.shape = encodeStyleToken(current, {}, shape)
-    })
+    return this.applyStyle({ shape: String(shape || 'rounded') })
   }
 
   applyStyleMetadata(patch, explicitIds = null) {
     const ids = (explicitIds || this.selection.getSelectedIds()).filter(Boolean)
-    return this.mutateSelectedStyles('設定節點進階樣式', (node, context) => {
-      const current = node.style.shape || getNodeAppearance(node, context.depth, getTheme(this.doc.themeId)).shape
-      node.style.shape = encodeStyleToken(current, patch)
-    }, ids)
+    const allowed = {}
+    if (Object.hasOwn(patch || {}, 'radius')) allowed.radius = Math.max(0, Number(patch.radius) || 0)
+    if (['left', 'center', 'right'].includes(patch?.align)) allowed.align = patch.align
+    if (Object.hasOwn(patch || {}, 'lineHeight')) allowed.lineHeight = Math.max(0.5, Number(patch.lineHeight) || 1.35)
+    return this.applyStyleToIds(allowed, ids)
   }
 
   applyLineStyle(config = {}) {
-    return this.mutateSelectedStyles('設定連接線樣式', node => {
-      node.style.lineStyle = encodeLineToken(node.style.lineStyle, config.style, config.shape)
+    return this.mutateSelectedStyles('設定連接線樣式', (node, context) => {
+      const current = getLineAppearance(node, context.depth, getTheme(this.doc.themeId))
+      const nextStyle = config.style || current.style
+      const nextShape = config.shape || current.shape
+      if (current.style === nextStyle && current.shape === nextShape) return
+      node.style.lineStyle = encodeLineToken(current.style, nextStyle, nextShape)
     })
   }
 
@@ -377,12 +439,14 @@ export class KeyboardController {
     let previous = null
     const command = {
       description,
+      affectedIds: targetIds.slice(),
       do: () => {
         const records = targetIds.map(id => findNodeContext(this.doc.root, id)).filter(Boolean)
         if (records.length === 0) return false
         if (!previous) previous = records.map(record => ({ id: record.node.id, style: structuredCloneSafe(record.node.style) }))
+        const before = records.map(record => JSON.stringify(record.node.style))
         records.forEach(record => mutate(record.node, record))
-        return true
+        return records.some((record, index) => JSON.stringify(record.node.style) !== before[index])
       },
       undo: () => {
         for (const record of previous || []) {
@@ -427,31 +491,146 @@ export class KeyboardController {
     })
   }
 
+  previewCanvasBackground(background) {
+    const next = String(background || '').trim()
+    if (!next) return false
+    const sessionKey = 'canvas:background'
+    if (!this.previewSessions.has(sessionKey)) this.previewSessions.set(sessionKey, { previous: this.doc.canvas.background })
+    this.doc.canvas.background = next
+    this.manager.preview()
+    return true
+  }
+
+  commitCanvasBackgroundPreview(background) {
+    const sessionKey = 'canvas:background'
+    const session = this.previewSessions.get(sessionKey)
+    if (!session) return this.setCanvasBackground(background)
+    this.doc.canvas.background = session.previous
+    this.previewSessions.delete(sessionKey)
+    return this.setCanvasBackground(background)
+  }
+
   setWatermark(config = {}) {
-    const root = this.doc.root
-    const previous = { enabled: Boolean(this.doc.canvas.watermark), shape: root.style.shape }
-    const patch = {
-      watermarkText: String(config.text || 'MindFlow').slice(0, 30),
-      watermarkColor: config.color || '#64748b',
-      watermarkRotation: ['left', 'right', 'horizontal'].includes(config.rotation) ? config.rotation : 'left',
-      watermarkOpacity: Math.max(0, Math.min(100, Number(config.opacity) || 0)),
-      watermarkSize: Math.max(10, Math.min(48, Number(config.size) || 18))
-    }
-    const nextShape = encodeStyleToken(root.style.shape || getTheme(this.doc.themeId).rootStyle.shape, patch)
-    const enabled = Boolean(config.enabled)
+    const previous = structuredCloneSafe(this.doc.canvas.watermark)
+    const next = normalizeWatermark(config, previous)
+    if (sameObject(previous, next)) return false
     return this.manager.execute({
       description: '設定浮水印',
+      affectedIds: [this.doc.root.id],
       do: () => {
-        this.doc.canvas.watermark = enabled
-        root.style.shape = nextShape
+        if (sameObject(this.doc.canvas.watermark, next)) return false
+        this.doc.canvas.watermark = structuredCloneSafe(next)
         return true
       },
-      undo: () => {
-        this.doc.canvas.watermark = previous.enabled
-        if (previous.shape === undefined) delete root.style.shape
-        else root.style.shape = previous.shape
-      }
+      undo: () => { this.doc.canvas.watermark = structuredCloneSafe(previous) }
     })
+  }
+
+  setDocumentSpacing(patch = {}) {
+    const previous = { spacingH: this.doc.canvas.spacingH, spacingV: this.doc.canvas.spacingV }
+    const next = normalizeSpacing(patch, previous)
+    if (sameObject(previous, next)) return false
+    return this.manager.execute({
+      description: '設定節點間距',
+      affectedIds: [this.doc.root.id],
+      do: () => {
+        if (this.doc.canvas.spacingH === next.spacingH && this.doc.canvas.spacingV === next.spacingV) return false
+        Object.assign(this.doc.canvas, next)
+        return true
+      },
+      undo: () => Object.assign(this.doc.canvas, previous)
+    })
+  }
+
+  commitTextEdit(payload = {}) {
+    const id = payload.id
+    if (!id || !findNode(this.doc.root, id)) return false
+    const stylePatch = { ...(payload.pendingStyle || {}), ...(payload.pendingMetadata || {}) }
+    const commands = [
+      updateText(this.doc, id, payload.text ?? ''),
+      updateRichText(this.doc, id, payload.richText || null)
+    ]
+    if (Object.keys(stylePatch).length > 0) {
+      const context = findNodeContext(this.doc.root, id)
+      const appearance = getNodeAppearance(context.node, context.depth, getTheme(this.doc.themeId))
+      const effectivePatch = Object.fromEntries(Object.entries(stylePatch).filter(([key, value]) => {
+        const effective = key === 'align' ? appearance.textAlign : appearance[key]
+        return Number.isFinite(Number(effective)) && Number.isFinite(Number(value))
+          ? Number(effective) !== Number(value)
+          : effective !== value
+      }))
+      if (Object.keys(effectivePatch).length > 0) commands.push(setStyle(this.doc, [id], effectivePatch))
+    }
+    return this.manager.batch('編輯節點文字', commands)
+  }
+
+  previewStyle(key, patch = {}) {
+    const ids = this.selection.getSelectedIds()
+    if (ids.length === 0) return false
+    const sessionKey = `style:${key}`
+    if (!this.previewSessions.has(sessionKey)) {
+      this.previewSessions.set(sessionKey, {
+        ids: ids.slice(),
+        previous: ids.map(id => ({ id, style: structuredCloneSafe(findNode(this.doc.root, id)?.style || {}) }))
+      })
+    }
+    const session = this.previewSessions.get(sessionKey)
+    for (const id of session.ids) {
+      const node = findNode(this.doc.root, id)
+      if (node) Object.assign(node.style, patch)
+    }
+    this.manager.preview()
+    return true
+  }
+
+  commitStylePreview(key, patch = {}) {
+    const sessionKey = `style:${key}`
+    const session = this.previewSessions.get(sessionKey)
+    if (!session) return this.applyStyle(patch)
+    for (const record of session.previous) {
+      const node = findNode(this.doc.root, record.id)
+      if (node) node.style = structuredCloneSafe(record.style)
+    }
+    this.previewSessions.delete(sessionKey)
+    return this.applyStyleToIds(patch, session.ids)
+  }
+
+  previewDocumentSpacing(key, patch = {}) {
+    const sessionKey = `spacing:${key}`
+    if (!this.previewSessions.has(sessionKey)) {
+      this.previewSessions.set(sessionKey, { previous: { spacingH: this.doc.canvas.spacingH, spacingV: this.doc.canvas.spacingV } })
+    }
+    Object.assign(this.doc.canvas, normalizeSpacing(patch, this.doc.canvas))
+    this.manager.preview()
+    return true
+  }
+
+  commitDocumentSpacingPreview(key, patch = {}) {
+    const sessionKey = `spacing:${key}`
+    const session = this.previewSessions.get(sessionKey)
+    if (!session) return this.setDocumentSpacing(patch)
+    Object.assign(this.doc.canvas, session.previous)
+    this.previewSessions.delete(sessionKey)
+    return this.setDocumentSpacing(patch)
+  }
+
+  previewWatermark(key, config = {}) {
+    const sessionKey = `watermark:${key}`
+    if (!this.previewSessions.has(sessionKey)) {
+      this.previewSessions.set(sessionKey, { previous: structuredCloneSafe(this.doc.canvas.watermark) })
+    }
+    this.doc.canvas.watermark = normalizeWatermark(config, this.doc.canvas.watermark)
+    this.manager.preview()
+    return true
+  }
+
+  commitWatermarkPreview(key, config = {}) {
+    const sessionKey = `watermark:${key}`
+    const session = this.previewSessions.get(sessionKey)
+    if (!session) return this.setWatermark(config)
+    this.doc.canvas.watermark = structuredCloneSafe(session.previous)
+    this.previewSessions.delete(sessionKey)
+    return this.setWatermark(config)
   }
 
   setLayout(layoutName) {
@@ -468,12 +647,22 @@ export class KeyboardController {
 
   getEditorSnapshot() {
     const context = findNodeContext(this.doc.root, this.selection.primaryId)
+    const watermark = this.doc.canvas.watermark
     return {
       doc: this.doc,
       selectedIds: this.selection.getSelectedIds(),
       primaryNode: context?.node || null,
       primaryAppearance: context ? getNodeAppearance(context.node, context.depth, getTheme(this.doc.themeId)) : null,
-      rootAppearance: getNodeAppearance(this.doc.root, 0, getTheme(this.doc.themeId))
+      rootAppearance: {
+        ...getNodeAppearance(this.doc.root, 0, getTheme(this.doc.themeId)),
+        spacingH: this.doc.canvas.spacingH,
+        spacingV: this.doc.canvas.spacingV,
+        watermarkText: watermark.text,
+        watermarkColor: watermark.color,
+        watermarkRotation: watermark.rotation,
+        watermarkOpacity: watermark.opacity,
+        watermarkSize: watermark.size
+      }
     }
   }
 }
@@ -484,7 +673,7 @@ function createActionFacade() {
   return Object.fromEntries(Array.from(names, name => [name, (...args) => runAction(name, ...args)]))
 }
 
-function matchesBinding(event, binding) {
+export function matchesBinding(event, binding) {
   const ctrl = event.ctrlKey || event.metaKey
   return event.key.toLowerCase() === binding.key.toLowerCase()
     && ctrl === Boolean(binding.ctrl)
@@ -493,7 +682,70 @@ function matchesBinding(event, binding) {
 }
 
 function isFormTarget(target) {
-  return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+  return Boolean(target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || '')))
+}
+
+export function findShortcutBinding(event) {
+  return ACTION_BINDINGS.find(item => matchesBinding(event, item)) || null
+}
+
+export function dispatchGlobalShortcut(event, { formMode = false } = {}) {
+  const binding = findShortcutBinding(event)
+  if (!binding || (formMode && !FORM_GLOBAL_ACTIONS.has(binding.action))) return false
+  if (!hasAction(binding.action)) throw new Error(`快捷鍵 action「${binding.action}」尚未註冊`)
+  event.preventDefault()
+  runAction(binding.action, event)
+  return true
+}
+
+export function assertRegisteredActions(names) {
+  const missing = Array.from(new Set(names)).filter(name => !hasAction(name))
+  if (missing.length > 0) throw new Error(`未註冊 action：${missing.join(', ')}`)
+  return true
+}
+
+function normalizeWatermark(config, current) {
+  return {
+    enabled: Object.hasOwn(config, 'enabled') ? Boolean(config.enabled) : Boolean(current.enabled),
+    text: Object.hasOwn(config, 'text') ? String(config.text).slice(0, 30) : String(current.text ?? 'MindFlow').slice(0, 30),
+    color: typeof config.color === 'string' && config.color ? config.color : current.color || '#64748b',
+    rotation: ['left', 'right', 'horizontal'].includes(config.rotation) ? config.rotation : current.rotation || 'left',
+    opacity: Object.hasOwn(config, 'opacity') ? clamp(config.opacity, 0, 100, 12) : clamp(current.opacity, 0, 100, 12),
+    size: Object.hasOwn(config, 'size') ? clamp(config.size, 10, 48, 18) : clamp(current.size, 10, 48, 18)
+  }
+}
+
+function normalizeSpacing(patch, current) {
+  return {
+    spacingH: Object.hasOwn(patch, 'spacingH') ? clamp(patch.spacingH, 10, 80, 30) : clamp(current.spacingH, 10, 80, 30),
+    spacingV: Object.hasOwn(patch, 'spacingV') ? clamp(patch.spacingV, 10, 80, 30) : clamp(current.spacingV, 10, 80, 30)
+  }
+}
+
+function clamp(value, min, max, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
+function sameObject(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function showComingSoon(action) {
+  const existing = document.querySelector('[data-mindflow-toast]')
+  const toast = existing || document.createElement('div')
+  toast.dataset.mindflowToast = 'true'
+  toast.setAttribute('role', 'status')
+  toast.textContent = action === 'findReplace' ? '尋找與取代即將推出' : '此功能即將推出'
+  Object.assign(toast.style, {
+    position: 'fixed', left: '50%', bottom: '28px', transform: 'translateX(-50%)',
+    zIndex: '9999', padding: '10px 16px', borderRadius: '8px', color: '#fff',
+    background: 'rgba(15, 23, 42, .92)', boxShadow: '0 8px 24px rgba(0,0,0,.2)'
+  })
+  if (!existing) document.body.append(toast)
+  window.clearTimeout(showComingSoon.timer)
+  showComingSoon.timer = window.setTimeout(() => toast.remove(), 1800)
+  return true
 }
 
 function toggleFullscreen() {

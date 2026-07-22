@@ -14,10 +14,14 @@ export class SelectionManager {
     this.ids = new Set()
     this.primaryId = null
     this.frame = null
+    this.handleCommandSelection = this.handleCommandSelection.bind(this)
+    this.handleFocusRequest = this.handleFocusRequest.bind(this)
     this.bindEvents()
   }
 
   bindEvents() {
+    window.addEventListener('mindflow:commandselection', this.handleCommandSelection)
+    window.addEventListener('mindflow:focusnode', this.handleFocusRequest)
     this.nodesLayer.addEventListener('click', event => {
       const nodeElement = event.target.closest('.mind-node')
       if (!nodeElement || event.target.closest('[data-collapse-control]')) return
@@ -31,6 +35,18 @@ export class SelectionManager {
       if (event.button !== 0 || !(event.ctrlKey || event.metaKey) || this.isPanMode() || event.target.closest('.mind-node') || event.target.closest('button')) return
       this.startFrame(event)
     })
+  }
+
+  handleCommandSelection(event) {
+    if (!['undo', 'redo'].includes(event.detail?.type)) return
+    const positions = this.getPositions()
+    const targetId = event.detail.affectedIds.find(id => positions.has(id))
+    if (targetId) this.set([targetId])
+  }
+
+  handleFocusRequest(event) {
+    const id = event.detail?.id
+    if (id && this.getPositions().has(id)) this.set([id])
   }
 
   startFrame(event) {

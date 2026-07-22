@@ -50,9 +50,8 @@ export function render(doc, positions, {
   onToggleCollapse = () => {}
 }) {
   const activeTheme = getTheme(doc.themeId)
-  const rootAppearance = getNodeAppearance(doc.root, 0, activeTheme)
   applyLayoutDirection(positions, doc)
-  applyDocumentSpacing(positions, doc.root.id, rootAppearance)
+  applyDocumentSpacing(positions, doc.root.id, doc.canvas)
   const nodeLookup = new Map()
   const parentLookup = new Map()
   const branchLookup = buildBranchLookup(doc.root, activeTheme)
@@ -207,11 +206,11 @@ function buildBranchLookup(root, activeTheme) {
   return lookup
 }
 
-function applyDocumentSpacing(positions, rootId, appearance) {
+function applyDocumentSpacing(positions, rootId, canvas) {
   const root = positions.get(rootId)
   if (!root) return
-  const horizontalScale = Math.max(0.72, Math.min(2.4, 1 + (appearance.spacingH - 30) / 50))
-  const verticalScale = Math.max(0.72, Math.min(2.4, 1 + (appearance.spacingV - 30) / 50))
+  const horizontalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingH) || 30) - 30) / 50))
+  const verticalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingV) || 30) - 30) / 50))
   if (horizontalScale === 1 && verticalScale === 1) return
   const rootCenterX = root.x + root.w / 2
   const rootCenterY = root.y + root.h / 2
@@ -288,12 +287,12 @@ function drawWatermark({ doc, canvas, theme }) {
     layer.className = 'canvas-watermark'
     canvas.prepend(layer)
   }
-  layer.hidden = !doc.canvas?.watermark
+  const watermark = doc.canvas?.watermark
+  layer.hidden = !watermark?.enabled
   if (layer.hidden) return
-  const appearance = getNodeAppearance(doc.root, 0, theme)
-  const angle = appearance.watermarkRotation === 'right' ? 24 : appearance.watermarkRotation === 'horizontal' ? 0 : -24
-  const opacity = Math.max(0, Math.min(1, appearance.watermarkOpacity / 100))
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="150" viewBox="0 0 260 150"><text x="130" y="75" dominant-baseline="middle" text-anchor="middle" transform="rotate(${angle} 130 75)" font-family="Segoe UI, sans-serif" font-size="${appearance.watermarkSize}" font-weight="600" fill="${escapeXml(appearance.watermarkColor)}" fill-opacity="${opacity}">${escapeXml(appearance.watermarkText)}</text></svg>`
+  const angle = watermark.rotation === 'right' ? 24 : watermark.rotation === 'horizontal' ? 0 : -24
+  const opacity = Math.max(0, Math.min(1, watermark.opacity / 100))
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="150" viewBox="0 0 260 150"><text x="130" y="75" dominant-baseline="middle" text-anchor="middle" transform="rotate(${angle} 130 75)" font-family="Segoe UI, sans-serif" font-size="${watermark.size}" font-weight="600" fill="${escapeXml(watermark.color)}" fill-opacity="${opacity}">${escapeXml(watermark.text)}</text></svg>`
   layer.style.backgroundImage = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
 }
 

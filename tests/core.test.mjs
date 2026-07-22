@@ -22,11 +22,12 @@ import {
   moveNode,
   setStyle,
   toggleCollapse,
+  updateRichText,
   updateText
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
 import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
-import { ACTION_BINDINGS } from '../js/editor/keyboard.js'
+import { ACTION_BINDINGS, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding } from '../js/editor/keyboard.js'
 import {
   createThemePreviewSvg,
   encodeLineToken,
@@ -52,7 +53,12 @@ test('預設 Doc 符合 v1 schema，中心主題有四個左右平衡分支', ()
   assert.equal(doc.root.text, '中心主題')
   assert.equal(doc.root.children.length, 4)
   assert.deepEqual(doc.root.children.map(node => node.side), ['right', 'left', 'right', 'left'])
-  assert.deepEqual(doc.canvas, { background: '#f5f5f5', watermark: false })
+  assert.deepEqual(doc.canvas, {
+    background: '#f5f5f5',
+    watermark: { enabled: false, text: 'MindFlow', color: '#64748b', rotation: 'left', opacity: 12, size: 18 },
+    spacingH: 30,
+    spacingV: 30
+  })
   const ids = []
   walkNodes(doc.root, node => {
     ids.push(node.id)
@@ -166,6 +172,42 @@ test('undo stack 嚴格限制 100 步', () => {
   assert.equal(findNode(doc.root, id).text, '步驟 19')
 })
 
+test('batch 將文字、richText 與樣式視為單一 undo/redo 記錄', () => {
+  const doc = createDefaultDoc()
+  const node = doc.root.children[0]
+  node.richText = '<b>舊文字</b>'
+  const manager = new CommandManager()
+
+  assert.equal(manager.batch('編輯節點文字', [
+    updateText(doc, node.id, '新文字'),
+    updateRichText(doc, node.id, '<i>新文字</i>'),
+    setStyle(doc, [node.id], { align: 'right', lineHeight: 1.8 })
+  ]), true)
+  assert.equal(manager.undoStack.length, 1)
+  assert.deepEqual([node.text, node.richText, node.style.align, node.style.lineHeight], ['新文字', '<i>新文字</i>', 'right', 1.8])
+
+  assert.equal(manager.undo(), true)
+  assert.equal(node.text, '分支主題')
+  assert.equal(node.richText, '<b>舊文字</b>')
+  assert.deepEqual(node.style, {})
+  assert.equal(manager.redo(), true)
+  assert.equal(node.text, '新文字')
+  assert.equal(node.richText, '<i>新文字</i>')
+})
+
+test('無變化 command 不入棧且不清空 redo', () => {
+  const doc = createDefaultDoc()
+  const node = doc.root.children[0]
+  node.style.fill = '#fff'
+  const manager = new CommandManager()
+  manager.execute(updateText(doc, node.id, '暫存版本'))
+  manager.undo()
+  assert.equal(manager.canRedo, true)
+  assert.equal(manager.execute(setStyle(doc, [node.id], { fill: '#fff' })), false)
+  assert.equal(manager.undoStack.length, 0)
+  assert.equal(manager.canRedo, true)
+})
+
 test('mindmap-both 根在中央、左右展開，layout 不修改 Doc', () => {
   const doc = createDefaultDoc()
   const before = serializeDoc(doc)
@@ -272,6 +314,40 @@ test('ALPHA 快捷鍵表對齊 SPEC，且明確移除 Phase A 錯誤綁定', () 
   assert.equal(ACTION_BINDINGS.some(binding => binding.key === 'f' && binding.ctrl && binding.shift), false)
 })
 
+test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽器衝突鍵', () => {
+  const calls = []
+  const cleanups = [
+    registerAction('save', () => calls.push('save')),
+    registerAction('duplicate', () => calls.push('duplicate')),
+    registerAction('priority1', () => calls.push('priority1'))
+  ]
+  const event = (key, modifiers = {}) => ({
+    key,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    prevented: false,
+    preventDefault() { this.prevented = true },
+    ...modifiers
+  })
+
+  const plain = event('a')
+  assert.equal(dispatchGlobalShortcut(plain, { formMode: true }), false)
+  assert.equal(plain.prevented, false)
+  const copy = event('c', { ctrlKey: true })
+  assert.equal(dispatchGlobalShortcut(copy, { formMode: true }), false)
+  assert.equal(copy.prevented, false)
+  for (const current of [event('s', { ctrlKey: true }), event('d', { ctrlKey: true }), event('1', { ctrlKey: true })]) {
+    assert.equal(dispatchGlobalShortcut(current, { formMode: true }), true)
+    assert.equal(current.prevented, true)
+  }
+  assert.deepEqual(calls, ['save', 'duplicate', 'priority1'])
+  assert.equal(findShortcutBinding(event('o', { ctrlKey: true })).action, 'toggleOutline')
+  assert.throws(() => assertRegisteredActions(['definitely-missing-action']), /尚未註冊|未註冊/u)
+  cleanups.forEach(cleanup => cleanup())
+})
+
 test('內建主題至少 12 個且包含 ALPHA 指定主題與完整資料欄位', () => {
   const builtIns = getThemeList()
   assert.ok(builtIns.length >= 12)
@@ -320,21 +396,53 @@ test('樣式 token 與線型 token 可保留 shape、進階控制及繁中文字
   assert.deepEqual(parseLineToken(lineToken), { lineStyle: 'dash-dot', lineShape: 'orthogonal' })
 })
 
-test('樣式 metadata 經既有 model 序列化仍可完整恢復，不需擴張 schema', () => {
-  const doc = createDefaultDoc()
-  doc.root.style.shape = encodeStyleToken('pill', {
-    radius: 18,
-    spacingH: 42,
-    spacingV: 36,
-    watermarkText: 'MindFlow 測試'
+test('舊 shape 複合 token 載入時遷移到 node、style 與 canvas 一級欄位', () => {
+  const restored = normalizeDoc({
+    root: {
+      id: 'legacy-root',
+      text: '舊文件',
+      style: { shape: encodeStyleToken('pill', {
+      radius: 18,
+      align: 'right',
+      lineHeight: 1.7,
+      richText: '<b>舊文件</b>',
+      spacingH: 42,
+      spacingV: 36,
+      watermarkText: 'MindFlow',
+      watermarkColor: '#123456',
+      watermarkRotation: 'horizontal',
+      watermarkOpacity: 22,
+      watermarkSize: 24
+      }) }
+    },
+    canvas: { background: '#fff', watermark: true }
   })
-  const restored = deserializeDoc(serializeDoc(doc))
   const appearance = getNodeAppearance(restored.root, 0, getTheme(restored.themeId))
+  assert.equal(restored.root.style.shape, 'pill')
+  assert.equal(restored.root.style.radius, 18)
+  assert.equal(restored.root.style.align, 'right')
+  assert.equal(restored.root.style.lineHeight, 1.7)
+  assert.equal(restored.root.richText, '<b>舊文件</b>')
   assert.equal(appearance.shape, 'pill')
   assert.equal(appearance.radius, 18)
-  assert.equal(appearance.spacingH, 42)
-  assert.equal(appearance.spacingV, 36)
-  assert.equal(appearance.watermarkText, 'MindFlow 測試')
+  assert.equal(restored.canvas.spacingH, 42)
+  assert.equal(restored.canvas.spacingV, 36)
+  assert.deepEqual(restored.canvas.watermark, {
+    enabled: true,
+    text: 'MindFlow',
+    color: '#123456',
+    rotation: 'horizontal',
+    opacity: 22,
+    size: 24
+  })
+  assert.equal(restored.root.style.shape.includes('|'), false)
+
+  const emptyText = normalizeDoc({
+    root: { id: 'new-root' },
+    canvas: { watermark: { enabled: true, text: '', color: '#64748b', rotation: 'left', opacity: 12, size: 18 } }
+  })
+  assert.equal(emptyText.canvas.watermark.text, '')
+  assert.equal(emptyText.canvas.watermark.enabled, true)
 })
 
 function assertNoOverlaps(positions) {

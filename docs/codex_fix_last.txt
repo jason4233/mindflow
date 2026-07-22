@@ -1,0 +1,11 @@
+完成。18 條缺陷均已修復並通過回歸。
+
+- 全部 tests：51/51 綠
+- Playwright 瀏覽器場景：18/18 PASS
+- Browser console：0 errors、0 warnings
+- 已補 batch、舊 schema 遷移、no-op、焦點守衛、SVG、autosave 防復活測試
+- 未修改 DELTA 新模組及 `contextmenu.js`
+- 未執行任何 git 指令
+- 測試用 browser/server 已關閉
+
+完整紀錄：[docs/CODEX_FIX_NOTES.md](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_FIX_NOTES.md)

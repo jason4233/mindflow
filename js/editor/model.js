@@ -2,6 +2,7 @@
  * v1 文件資料模型、正規化與樹狀結構查詢；本模組不接觸 DOM。
  */
 import { strings } from '../strings.js'
+import { parseStyleToken } from './themes.js'
 
 export const LAYOUTS = Object.freeze([
   'mindmap-right',
@@ -17,8 +18,17 @@ export const LAYOUTS = Object.freeze([
 export const NODE_STYLE_KEYS = Object.freeze([
   'fill', 'textColor', 'borderColor', 'borderWidth', 'borderStyle',
   'fontSize', 'fontFamily', 'bold', 'italic', 'underline', 'strike', 'shape',
-  'lineColor', 'lineWidth', 'lineStyle'
+  'radius', 'align', 'lineHeight', 'lineColor', 'lineWidth', 'lineStyle'
 ])
+
+const DEFAULT_WATERMARK = Object.freeze({
+  enabled: false,
+  text: 'MindFlow',
+  color: '#64748b',
+  rotation: 'left',
+  opacity: 12,
+  size: 18
+})
 
 export function createId(prefix = 'id') {
   const random = globalThis.crypto?.getRandomValues
@@ -35,6 +45,7 @@ export function createNode(text = '', overrides = {}) {
     collapsed: false,
     side: null,
     style: {},
+    richText: null,
     notes: null,
     link: null,
     icons: [],
@@ -65,7 +76,12 @@ export function createDefaultDoc(overrides = {}) {
     themeId: 'classic-blue',
     relations: [],
     summaries: [],
-    canvas: { background: '#f5f5f5', watermark: false },
+    canvas: {
+      background: '#f5f5f5',
+      watermark: { ...DEFAULT_WATERMARK },
+      spacingH: 30,
+      spacingV: 30
+    },
     ...overrides
   })
 }
@@ -81,6 +97,24 @@ export function normalizeNode(input = {}, seenIds = new Set()) {
     if (input.style && input.style[key] !== undefined) style[key] = input.style[key]
   }
 
+  // 舊版把內容與進階樣式塞進 shape token；讀取時一次拆開，之後只保存純 shape。
+  const legacy = typeof style.shape === 'string' && style.shape.includes('|')
+    ? parseStyleToken(style.shape)
+    : null
+  if (legacy) {
+    style.shape = legacy.shape
+    if (!Object.hasOwn(style, 'radius') && legacy.metadata.radius !== undefined) style.radius = finiteNumber(legacy.metadata.radius, 6, 0)
+    if (!Object.hasOwn(style, 'align') && ['left', 'center', 'right'].includes(legacy.metadata.align)) style.align = legacy.metadata.align
+    if (!Object.hasOwn(style, 'lineHeight') && legacy.metadata.lineHeight !== undefined) style.lineHeight = finiteNumber(legacy.metadata.lineHeight, 1.35, 0.5)
+  }
+  if (Object.hasOwn(style, 'radius')) style.radius = finiteNumber(style.radius, 6, 0)
+  if (Object.hasOwn(style, 'align') && !['left', 'center', 'right'].includes(style.align)) delete style.align
+  if (Object.hasOwn(style, 'lineHeight')) style.lineHeight = finiteNumber(style.lineHeight, 1.35, 0.5)
+
+  const sourceRichText = typeof input.richText === 'string'
+    ? input.richText
+    : typeof legacy?.metadata.richText === 'string' ? legacy.metadata.richText : null
+
   const side = input.side === 'left' || input.side === 'right' ? input.side : null
   return {
     id,
@@ -91,6 +125,7 @@ export function normalizeNode(input = {}, seenIds = new Set()) {
     collapsed: Boolean(input.collapsed),
     side,
     style,
+    richText: sourceRichText || null,
     notes: typeof input.notes === 'string' ? input.notes : null,
     link: typeof input.link === 'string' ? input.link : null,
     icons: Array.isArray(input.icons) ? input.icons.filter(icon => typeof icon === 'string') : [],
@@ -111,6 +146,10 @@ export function normalizeDoc(input = {}) {
   const now = new Date().toISOString()
   const layout = LAYOUTS.includes(input.layout) ? input.layout : 'mindmap-both'
   const canvas = input.canvas && typeof input.canvas === 'object' ? input.canvas : {}
+  const legacyRootToken = typeof input.root?.style?.shape === 'string' && input.root.style.shape.includes('|')
+    ? parseStyleToken(input.root.style.shape).metadata
+    : {}
+  const watermarkSource = canvas.watermark && typeof canvas.watermark === 'object' ? canvas.watermark : {}
   const seenIds = new Set()
 
   return {
@@ -125,9 +164,29 @@ export function normalizeDoc(input = {}) {
     summaries: Array.isArray(input.summaries) ? structuredCloneSafe(input.summaries) : [],
     canvas: {
       background: typeof canvas.background === 'string' ? canvas.background : '#f5f5f5',
-      watermark: Boolean(canvas.watermark)
+      watermark: {
+        enabled: typeof watermarkSource.enabled === 'boolean' ? watermarkSource.enabled : Boolean(canvas.watermark),
+        text: watermarkSource.text !== undefined
+          ? String(watermarkSource.text).slice(0, 30)
+          : legacyRootToken.watermarkText !== undefined ? String(legacyRootToken.watermarkText).slice(0, 30) : DEFAULT_WATERMARK.text,
+        color: typeof watermarkSource.color === 'string'
+          ? watermarkSource.color
+          : typeof legacyRootToken.watermarkColor === 'string' ? legacyRootToken.watermarkColor : DEFAULT_WATERMARK.color,
+        rotation: ['left', 'right', 'horizontal'].includes(watermarkSource.rotation)
+          ? watermarkSource.rotation
+          : ['left', 'right', 'horizontal'].includes(legacyRootToken.watermarkRotation) ? legacyRootToken.watermarkRotation : DEFAULT_WATERMARK.rotation,
+        opacity: finiteNumber(watermarkSource.opacity ?? legacyRootToken.watermarkOpacity, DEFAULT_WATERMARK.opacity, 0, 100),
+        size: finiteNumber(watermarkSource.size ?? legacyRootToken.watermarkSize, DEFAULT_WATERMARK.size, 10, 48)
+      },
+      spacingH: finiteNumber(canvas.spacingH ?? legacyRootToken.spacingH, 30, 10, 80),
+      spacingV: finiteNumber(canvas.spacingV ?? legacyRootToken.spacingV, 30, 10, 80)
     }
   }
+}
+
+function finiteNumber(value, fallback, min = -Infinity, max = Infinity) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
 }
 
 function validDateString(value) {
