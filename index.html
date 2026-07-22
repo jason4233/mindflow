@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MindFlow</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233f89de'/%3E%3Cpath d='M18 20h28M18 32h18M18 44h25' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="dashboard-page">
+  <header class="dashboard-header">
+    <div class="dashboard-header__inner">
+      <h1 id="product-name" class="brand"></h1>
+      <button id="create-document" class="primary-button" type="button"></button>
+    </div>
+  </header>
+  <main class="dashboard-main">
+    <h2 id="documents-heading" class="dashboard-heading"></h2>
+    <div id="document-grid" class="document-grid" aria-live="polite"></div>
+    <div id="empty-state" class="empty-state" hidden>
+      <p id="empty-state-text"></p>
+    </div>
+  </main>
+  <script type="module" src="js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,258 @@
+/* 編輯器 chrome：工具列、畫布、面板與視口控制。 */
+.editor-page {
+  overflow: hidden;
+}
+
+.editor-toolbar {
+  position: relative;
+  z-index: 20;
+  height: 48px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: #fff;
+  user-select: none;
+}
+
+.toolbar-section {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-section--right {
+  justify-content: flex-end;
+}
+
+.back-button,
+.icon-button {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.back-button:hover,
+.icon-button:hover:not(:disabled),
+.toolbar-button:hover:not(:disabled) {
+  background: #f1f4f7;
+}
+
+.document-title {
+  width: min(220px, 24vw);
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.document-title:hover,
+.document-title:focus {
+  border-color: var(--color-border);
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--color-border);
+}
+
+.toolbar-button {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.editor-shell {
+  position: relative;
+  height: calc(100vh - 48px);
+  display: flex;
+}
+
+.canvas {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  background: var(--color-canvas);
+  cursor: default;
+  touch-action: none;
+}
+
+.canvas.is-panning {
+  cursor: grabbing;
+}
+
+.canvas.is-space-ready {
+  cursor: grab;
+}
+
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.connections-layer,
+.nodes-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+}
+
+.connections-layer {
+  z-index: 0;
+  pointer-events: none;
+}
+
+.nodes-layer {
+  z-index: 1;
+}
+
+.selection-rectangle {
+  position: absolute;
+  z-index: 8;
+  border: 1px solid #3f89de;
+  background: rgb(63 137 222 / 13%);
+  pointer-events: none;
+}
+
+.drop-indicator {
+  position: absolute;
+  z-index: 9;
+  height: 2px;
+  border-radius: 2px;
+  background: #2c7bd4;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 75%);
+  pointer-events: none;
+}
+
+.measure-layer {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  z-index: -1;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.zoom-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 4px 14px rgb(35 48 67 / 12%);
+}
+
+.zoom-button,
+.zoom-display {
+  height: 30px;
+  min-width: 32px;
+  border-radius: 6px;
+}
+
+.zoom-button:hover,
+.zoom-display:hover {
+  background: #f1f4f7;
+}
+
+.zoom-display {
+  min-width: 58px;
+  color: #526175;
+  font-size: 12px;
+}
+
+.zoom-button--fit {
+  min-width: 44px;
+  padding: 0 8px;
+  border-left-color: var(--color-border);
+  border-radius: 0 6px 6px 0;
+}
+
+.sidepanel {
+  position: relative;
+  z-index: 12;
+  width: 280px;
+  flex: 0 0 280px;
+  border-left: 1px solid var(--color-border);
+  background: #fff;
+  transition: width 160ms ease, flex-basis 160ms ease, transform 160ms ease;
+}
+
+.sidepanel.is-collapsed {
+  width: 0;
+  flex-basis: 0;
+  overflow: hidden;
+  transform: translateX(100%);
+}
+
+.sidepanel-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sidepanel-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.sidepanel-placeholder {
+  margin: 18px;
+  padding: 18px;
+  border: 1px dashed #ccd4dd;
+  border-radius: 8px;
+  color: var(--color-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 999;
+  margin: 0;
+  opacity: 0.72;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+@media (max-width: 760px) {
+  .editor-toolbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .toolbar-section--center {
+    display: none;
+  }
+
+  .sidepanel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+  }
+}

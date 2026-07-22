@@ -1,0 +1,75 @@
+/* 全站 reset、色彩變數與共用控制項。 */
+:root {
+  color-scheme: light;
+  --color-primary: #3f89de;
+  --color-primary-hover: #3378c7;
+  --color-text: #273142;
+  --color-muted: #748094;
+  --color-border: #e1e5eb;
+  --color-surface: #ffffff;
+  --color-canvas: #f5f5f5;
+  --shadow-card: 0 4px 18px rgb(35 48 67 / 8%);
+  font-family: Inter, "Segoe UI", "Noto Sans TC", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid rgb(63 137 222 / 45%);
+  outline-offset: 2px;
+}
+
+.primary-button {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+  background: var(--color-primary);
+  cursor: pointer;
+}
+
+.primary-button:hover {
+  background: var(--color-primary-hover);
+}
+
+.icon-button,
+.toolbar-button,
+.zoom-button,
+.zoom-display {
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+}
+
+.icon-button:disabled,
+.toolbar-button:disabled,
+.zoom-button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}

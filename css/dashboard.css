@@ -1,0 +1,101 @@
+/* 首頁儀表板的最小可用版面。 */
+.dashboard-page {
+  min-height: 100%;
+  background: #f7f8fa;
+}
+
+.dashboard-header {
+  height: 64px;
+  border-bottom: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.dashboard-header__inner,
+.dashboard-main {
+  width: min(1180px, calc(100% - 48px));
+  margin: 0 auto;
+}
+
+.dashboard-header__inner {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  margin: 0;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+}
+
+.dashboard-main {
+  padding: 32px 0 56px;
+}
+
+.dashboard-heading {
+  margin: 0 0 20px;
+  font-size: 20px;
+}
+
+.document-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 18px;
+}
+
+.document-card {
+  min-height: 158px;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+}
+
+.document-card__title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-card__time {
+  margin: 8px 0 20px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.document-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.document-card__actions button {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.document-card__actions button:hover {
+  border-color: #aebbc9;
+  background: #f6f8fa;
+}
+
+.document-card__actions .danger-button:hover {
+  border-color: #ed9a9a;
+  color: #c93434;
+  background: #fff6f6;
+}
+
+.empty-state {
+  padding: 72px 20px;
+  color: var(--color-muted);
+  text-align: center;
+}

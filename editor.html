@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MindFlow</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233f89de'/%3E%3Cpath d='M18 20h28M18 32h18M18 44h25' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/editor.css">
+  <link rel="stylesheet" href="css/node.css">
+</head>
+<body class="editor-page">
+  <header class="editor-toolbar" id="editor-toolbar">
+    <div class="toolbar-section toolbar-section--left">
+      <a id="back-home" class="icon-button back-button" href="index.html"></a>
+      <input id="document-title" class="document-title" type="text" maxlength="120">
+      <span class="toolbar-divider"></span>
+      <button id="undo-button" class="icon-button" type="button"></button>
+      <button id="redo-button" class="icon-button" type="button"></button>
+    </div>
+    <div class="toolbar-section toolbar-section--center">
+      <button id="add-child-button" class="toolbar-button" type="button"></button>
+      <button id="add-sibling-button" class="toolbar-button" type="button"></button>
+    </div>
+    <div class="toolbar-section toolbar-section--right">
+      <button id="toggle-sidepanel-button" class="toolbar-button" type="button"></button>
+      <button id="export-button" class="toolbar-button" type="button" disabled></button>
+    </div>
+  </header>
+
+  <main id="editor-shell" class="editor-shell">
+    <section id="canvas" class="canvas" tabindex="0">
+      <div id="world" class="world">
+        <svg id="connections-layer" class="connections-layer" width="1" height="1" aria-hidden="true"></svg>
+        <div id="nodes-layer" class="nodes-layer"></div>
+      </div>
+      <div id="selection-rectangle" class="selection-rectangle" hidden></div>
+      <div id="drop-indicator" class="drop-indicator" hidden></div>
+      <div id="measure-layer" class="measure-layer" aria-hidden="true"></div>
+      <div class="zoom-controls">
+        <button id="zoom-out-button" class="zoom-button" type="button"></button>
+        <button id="zoom-display" class="zoom-display" type="button"></button>
+        <button id="zoom-in-button" class="zoom-button" type="button"></button>
+        <button id="fit-button" class="zoom-button zoom-button--fit" type="button"></button>
+      </div>
+    </section>
+
+    <aside id="sidepanel" class="sidepanel">
+      <div class="sidepanel-header">
+        <h2 id="sidepanel-title"></h2>
+        <button id="close-sidepanel-button" class="icon-button" type="button"></button>
+      </div>
+      <div id="sidepanel-placeholder" class="sidepanel-placeholder"></div>
+    </aside>
+  </main>
+  <script type="module" src="js/editor/main.js"></script>
+</body>
+</html>

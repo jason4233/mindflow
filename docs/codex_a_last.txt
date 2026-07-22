@@ -1,0 +1,17 @@
+Phase A 已完整實作，未使用 git。
+
+- 架構規定檔案：26/26
+- Node 自測：13/13 通過
+- 連續 20 次 undo/redo：通過
+- 151 節點瀏覽器壓測：約 69.4ms，151 nodes / 150 paths
+- localStorage reload、拖曳重掛、摺疊、縮放平移：通過
+- Console：0 errors / 0 warnings
+- 外部 runtime 依賴：無
+- 最終清理檢查：通過
+
+交付文件：
+
+- [CODEX_A_NOTES.md](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_A_NOTES.md)
+- [core.test.mjs](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/tests/core.test.mjs)
+
+唯一範圍說明：Phase A 未要求的 org/tree/timeline/fishbone layout 目前安全降級為 `mindmap-right`，其餘 Phase A 項目無已知偏離。
