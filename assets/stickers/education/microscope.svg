@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Microscope sticker">
+  <path d="m54 18 22 10-8 18-22-10 8-18Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m49 35-7 16 17 8 7-16" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M46 50c-13 12-17 32-8 48M65 54c12 5 18 15 18 27 0 14-10 24-24 24" fill="none" stroke="#554F5B" stroke-width="8" stroke-linecap="round"/>
+  <path d="M27 105h74c5 0 9 4 9 9H18c0-5 4-9 9-9Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M61 76h37" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="74" cy="94" r="7" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+</svg>

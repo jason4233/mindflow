@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Target sticker">
+  <circle cx="58" cy="70" r="42" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="58" cy="70" r="29" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="58" cy="70" r="16" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="58" cy="70" r="6" fill="#F17E72" stroke="#554F5B" stroke-width="2"/>
+  <path d="m62 66 34-34" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <path d="m91 37 1-15 7 7 10 1-13 7-5 0Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sun sticker">
+  <path d="M64 8v15M64 105v15M8 64h15M105 64h15M24 24l11 11M93 93l11 11M104 24 93 35M35 93l-11 11" fill="none" stroke="#F4B78F" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="64" cy="64" r="34" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="52" cy="58" r="3" fill="#554F5B"/><circle cx="76" cy="58" r="3" fill="#554F5B"/>
+  <path d="M53 73c6 6 16 6 22 0" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

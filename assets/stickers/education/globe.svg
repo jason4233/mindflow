@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Globe sticker">
+  <circle cx="60" cy="55" r="39" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M32 29c7 7 17 10 28 10s21-3 28-10M22 55h76M32 81c7-7 17-10 28-10s21 3 28 10M60 16c-11 11-17 24-17 39s6 28 17 39M60 16c11 11 17 24 17 39s-6 28-17 39" fill="none" stroke="#FFFDF5" stroke-width="2"/>
+  <path d="M18 101h84M60 94v7M41 113h38c0-7-6-12-13-12H54c-7 0-13 5-13 12Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="M25 28C13 47 15 72 31 89" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

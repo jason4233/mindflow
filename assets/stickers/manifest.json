@@ -1,0 +1,50 @@
+{
+  "business": [
+    { "id": "business-briefcase", "name": "公事包", "file": "assets/stickers/business/briefcase.svg" },
+    { "id": "business-trophy", "name": "獎盃", "file": "assets/stickers/business/trophy.svg" },
+    { "id": "business-handshake", "name": "握手", "file": "assets/stickers/business/handshake.svg" },
+    { "id": "business-presentation", "name": "簡報", "file": "assets/stickers/business/presentation.svg" },
+    { "id": "business-calendar", "name": "行事曆", "file": "assets/stickers/business/calendar.svg" },
+    { "id": "business-target", "name": "目標", "file": "assets/stickers/business/target.svg" }
+  ],
+  "education": [
+    { "id": "education-book", "name": "書本", "file": "assets/stickers/education/book.svg" },
+    { "id": "education-graduation-cap", "name": "學士帽", "file": "assets/stickers/education/graduation-cap.svg" },
+    { "id": "education-microscope", "name": "顯微鏡", "file": "assets/stickers/education/microscope.svg" },
+    { "id": "education-pencil", "name": "鉛筆", "file": "assets/stickers/education/pencil.svg" },
+    { "id": "education-globe", "name": "地球儀", "file": "assets/stickers/education/globe.svg" },
+    { "id": "education-abacus", "name": "算盤", "file": "assets/stickers/education/abacus.svg" }
+  ],
+  "technology": [
+    { "id": "technology-rocket", "name": "火箭", "file": "assets/stickers/technology/rocket.svg" },
+    { "id": "technology-robot", "name": "機器人", "file": "assets/stickers/technology/robot.svg" },
+    { "id": "technology-laptop", "name": "筆記型電腦", "file": "assets/stickers/technology/laptop.svg" },
+    { "id": "technology-gear", "name": "齒輪", "file": "assets/stickers/technology/gear.svg" },
+    { "id": "technology-satellite", "name": "衛星", "file": "assets/stickers/technology/satellite.svg" },
+    { "id": "technology-circuit-board", "name": "電路板", "file": "assets/stickers/technology/circuit-board.svg" }
+  ],
+  "expressions": [
+    { "id": "expressions-happy-face", "name": "開心", "file": "assets/stickers/expressions/happy-face.svg" },
+    { "id": "expressions-love-face", "name": "喜愛", "file": "assets/stickers/expressions/love-face.svg" },
+    { "id": "expressions-surprised-face", "name": "驚訝", "file": "assets/stickers/expressions/surprised-face.svg" },
+    { "id": "expressions-sleepy-face", "name": "睏倦", "file": "assets/stickers/expressions/sleepy-face.svg" },
+    { "id": "expressions-cool-face", "name": "酷", "file": "assets/stickers/expressions/cool-face.svg" },
+    { "id": "expressions-wink-face", "name": "眨眼", "file": "assets/stickers/expressions/wink-face.svg" }
+  ],
+  "travel": [
+    { "id": "travel-airplane", "name": "飛機", "file": "assets/stickers/travel/airplane.svg" },
+    { "id": "travel-suitcase", "name": "行李箱", "file": "assets/stickers/travel/suitcase.svg" },
+    { "id": "travel-compass", "name": "指南針", "file": "assets/stickers/travel/compass.svg" },
+    { "id": "travel-camera", "name": "相機", "file": "assets/stickers/travel/camera.svg" },
+    { "id": "travel-hot-air-balloon", "name": "熱氣球", "file": "assets/stickers/travel/hot-air-balloon.svg" },
+    { "id": "travel-map-pin", "name": "地圖定位", "file": "assets/stickers/travel/map-pin.svg" }
+  ],
+  "weather": [
+    { "id": "weather-sun", "name": "太陽", "file": "assets/stickers/weather/sun.svg" },
+    { "id": "weather-cloud-rain", "name": "雨雲", "file": "assets/stickers/weather/cloud-rain.svg" },
+    { "id": "weather-rainbow", "name": "彩虹", "file": "assets/stickers/weather/rainbow.svg" },
+    { "id": "weather-snowflake", "name": "雪花", "file": "assets/stickers/weather/snowflake.svg" },
+    { "id": "weather-thunderstorm", "name": "雷雨", "file": "assets/stickers/weather/thunderstorm.svg" },
+    { "id": "weather-moon-stars", "name": "月亮與星星", "file": "assets/stickers/weather/moon-stars.svg" }
+  ]
+}

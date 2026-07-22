@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Rocket sticker">
+  <path d="M72 18c17-6 30-5 37-3 2 7 3 20-3 37L76 82 46 52l26-34Z" fill="#FFF6D7" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="85" cy="39" r="11" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="m48 50-19 5-13 22 31-6M78 80l-5 19-22 13 6-31" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M44 78c-16 2-24 11-27 28 17-3 26-11 28-27l-1-1Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M35 88c-6 2-9 5-11 11 6-2 9-5 11-11Z" fill="#F17E72"/>
+</svg>

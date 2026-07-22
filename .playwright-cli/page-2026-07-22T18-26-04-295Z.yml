@@ -1,0 +1,132 @@
+- generic [active] [ref=e1]:
+  - banner:
+    - generic [ref=e2]:
+      - link "返回首頁" [ref=e3] [cursor=pointer]:
+        - /url: index.html
+        - text: ←
+      - textbox "文件名稱" [ref=e4]: 未命名心智圖
+      - generic [ref=e6]: 已保存 02:26
+    - generic "編輯工具列" [ref=e7]:
+      - button "復原" [ref=e8] [cursor=pointer]: ↶
+      - button "重做" [disabled] [ref=e9]: ↷
+      - button "插入子節點" [ref=e11] [cursor=pointer]: ↳
+      - button "插入同級節點" [ref=e12] [cursor=pointer]: ＋
+      - button "↰" [ref=e13] [cursor=pointer]
+      - button "▰" [ref=e14] [cursor=pointer]
+      - button "T" [ref=e15] [cursor=pointer]
+      - button "⊕" [ref=e16] [cursor=pointer]
+      - 'button "}" [ref=e17] [cursor=pointer]'
+      - button "⌁" [ref=e18] [cursor=pointer]
+      - button "✦" [ref=e19] [cursor=pointer]
+      - button "▷" [ref=e20] [cursor=pointer]
+      - button "AI" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - button "分享" [ref=e23]
+      - button "匯出" [ref=e24] [cursor=pointer]: ⇧
+      - button "···" [ref=e25] [cursor=pointer]
+      - button [ref=e26]
+  - main [ref=e27]:
+    - region "心智圖畫布" [ref=e28]:
+      - generic:
+        - generic:
+          - generic [ref=e435]: X
+          - generic [ref=e437]: 分支主題
+          - generic [ref=e439]: 分支主題
+          - generic [ref=e441]: 分支主題
+          - generic [ref=e443]: 分支主題
+      - generic [ref=e39]:
+        - button "−" [ref=e40] [cursor=pointer]
+        - button "重設縮放" [ref=e41] [cursor=pointer]: 100%
+        - button "+" [ref=e42] [cursor=pointer]
+        - button "適應畫布" [ref=e43] [cursor=pointer]: 適應
+        - button "⛶" [ref=e44] [cursor=pointer]
+    - complementary "樣式面板" [ref=e45]:
+      - generic [ref=e46]:
+        - navigation "面板分頁" [ref=e47]:
+          - button "樣式" [ref=e48]
+          - button "主題" [ref=e49]
+          - button "佈局" [ref=e50]
+          - button "圖示" [ref=e51]
+        - button "關閉面板" [ref=e52] [cursor=pointer]: ×
+        - heading "樣式" [level=2] [ref=e53]
+      - generic [ref=e222]:
+        - generic [ref=e223]:
+          - button "主題" [ref=e224]
+          - button "背景" [ref=e225]
+        - generic [ref=e226]:
+          - button "一鍵搭配" [ref=e227]
+          - generic [ref=e228]:
+            - heading "推薦主題" [level=3] [ref=e229]
+            - generic [ref=e230]:
+              - article "經典藍" [ref=e445]:
+                - button [ref=e446]:
+                  - img "經典藍主題預覽" [ref=e447]
+                - generic [ref=e459]:
+                  - generic [ref=e460]: 經典藍
+                  - button "○" [ref=e461]
+              - article "粉紅範本" [ref=e462]:
+                - button [ref=e463]:
+                  - img "粉紅範本主題預覽" [ref=e464]
+                - generic [ref=e476]:
+                  - generic [ref=e477]: 粉紅範本
+                  - button "○" [ref=e478]
+              - article "深色星空" [ref=e479]:
+                - button [ref=e480]:
+                  - img "深色星空主題預覽" [ref=e481]
+                - generic [ref=e493]:
+                  - generic [ref=e494]: 深色星空
+                  - button "○" [ref=e495]
+              - article "灰階綱要" [ref=e496]:
+                - button [ref=e497]:
+                  - img "灰階綱要主題預覽" [ref=e498]
+                - generic [ref=e510]:
+                  - generic [ref=e511]: 灰階綱要
+                  - button "○" [ref=e512]
+              - article "藍橘雙藥丸" [ref=e513]:
+                - button [ref=e514]:
+                  - img "藍橘雙藥丸主題預覽" [ref=e515]
+                - generic [ref=e527]:
+                  - generic [ref=e528]: 藍橘雙藥丸
+                  - button "○" [ref=e529]
+              - article "水彩薄荷綠" [ref=e530]:
+                - button [ref=e531]:
+                  - img "水彩薄荷綠主題預覽" [ref=e532]
+                - generic [ref=e544]:
+                  - generic [ref=e545]: 水彩薄荷綠
+                  - button "○" [ref=e546]
+              - article "秋色暖棕" [ref=e547]:
+                - button [ref=e548]:
+                  - img "秋色暖棕主題預覽" [ref=e549]
+                - generic [ref=e561]:
+                  - generic [ref=e562]: 秋色暖棕
+                  - button "○" [ref=e563]
+              - article "奶油筆記" [ref=e564]:
+                - button [ref=e565]:
+                  - img "奶油筆記主題預覽" [ref=e566]
+                - generic [ref=e578]:
+                  - generic [ref=e579]: 奶油筆記
+                  - button "○" [ref=e580]
+              - article "紫紅彩虹" [ref=e581]:
+                - button [ref=e582]:
+                  - img "紫紅彩虹主題預覽" [ref=e583]
+                - generic [ref=e595]:
+                  - generic [ref=e596]: 紫紅彩虹
+                  - button "○" [ref=e597]
+              - article "午夜簡報" [ref=e598]:
+                - button [ref=e599]:
+                  - img "午夜簡報主題預覽" [ref=e600]
+                - generic [ref=e612]:
+                  - generic [ref=e613]: 午夜簡報
+                  - button "○" [ref=e614]
+              - article "鼠尾草日記" [ref=e615]:
+                - button [ref=e616]:
+                  - img "鼠尾草日記主題預覽" [ref=e617]
+                - generic [ref=e629]:
+                  - generic [ref=e630]: 鼠尾草日記
+                  - button "○" [ref=e631]
+              - article "繽紛派對" [ref=e632]:
+                - button [ref=e633]:
+                  - img "繽紛派對主題預覽" [ref=e634]
+                - generic [ref=e646]:
+                  - generic [ref=e647]: 繽紛派對
+                  - button "○" [ref=e648]

@@ -22,8 +22,9 @@ export class DragDropController {
       const element = event.target.closest('.mind-node')
       if (event.button !== 0 || !element || event.target.closest('[data-collapse-control]') || event.target.isContentEditable) return
       const id = element.dataset.nodeId
-      if (id === this.doc.root.id || this.viewport.spacePressed) return
-      if (!this.selection.ids.has(id)) this.selection.set([id])
+      if (id === this.doc.root.id) return
+      // Ctrl/Meta+點擊由 SelectionManager 在 click 階段 toggle；這裡若提前 set 會造成第二次 toggle 把它移除。
+      if (!this.selection.ids.has(id) && !event.ctrlKey && !event.metaKey) this.selection.set([id])
       this.pending = {
         id,
         element,

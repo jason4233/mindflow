@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Abacus sticker">
+  <rect x="18" y="18" width="92" height="92" rx="14" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="M29 39h70M29 57h70M29 75h70M29 93h70" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <g stroke="#554F5B" stroke-width="2">
+    <rect x="35" y="32" width="16" height="14" rx="7" fill="#F4A7A0"/><rect x="71" y="32" width="16" height="14" rx="7" fill="#F4A7A0"/>
+    <rect x="48" y="50" width="16" height="14" rx="7" fill="#AFCDF3"/><rect x="79" y="50" width="16" height="14" rx="7" fill="#AFCDF3"/>
+    <rect x="28" y="68" width="16" height="14" rx="7" fill="#A9D8C8"/><rect x="57" y="68" width="16" height="14" rx="7" fill="#A9D8C8"/>
+    <rect x="42" y="86" width="16" height="14" rx="7" fill="#C9B8E8"/><rect x="67" y="86" width="16" height="14" rx="7" fill="#C9B8E8"/>
+  </g>
+</svg>

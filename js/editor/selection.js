@@ -27,7 +27,8 @@ export class SelectionManager {
     })
 
     this.canvas.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || this.isPanMode() || event.target.closest('.mind-node') || event.target.closest('button')) return
+      // 純左鍵拖曳由 viewport 平移；只有 Ctrl/Meta+左鍵才開始框選。
+      if (event.button !== 0 || !(event.ctrlKey || event.metaKey) || this.isPanMode() || event.target.closest('.mind-node') || event.target.closest('button')) return
       this.startFrame(event)
     })
   }
@@ -127,6 +128,9 @@ export class SelectionManager {
     for (const element of this.nodesLayer.querySelectorAll('.mind-node')) {
       element.classList.toggle('is-selected', this.ids.has(element.dataset.nodeId))
     }
+    window.dispatchEvent(new CustomEvent('mindflow:selectionchange', {
+      detail: { ids: this.getSelectedIds(), primaryId: this.primaryId }
+    }))
   }
 
   getSelectedIds() {

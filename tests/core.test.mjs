@@ -25,6 +25,18 @@ import {
   updateText
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
+import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
+import { ACTION_BINDINGS } from '../js/editor/keyboard.js'
+import {
+  createThemePreviewSvg,
+  encodeLineToken,
+  encodeStyleToken,
+  getNodeAppearance,
+  getTheme,
+  getThemeList,
+  parseLineToken,
+  parseStyleToken
+} from '../js/editor/themes.js'
 
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })
@@ -223,6 +235,106 @@ test('150 節點 layout 在合理時間內完成、座標有限且 bounds 正確
   const bounds = getLayoutBounds(positions)
   assert.ok(bounds.width > 0 && bounds.height > 0)
   assertNoOverlaps(positions)
+})
+
+test('action registry 可註冊、執行、覆寫並以精確 cleanup 移除', () => {
+  const name = 'test.alpha.registry'
+  const unregisterOld = registerAction(name, value => value + 1)
+  assert.equal(hasAction(name), true)
+  assert.equal(runAction(name, 4), 5)
+  const unregisterNew = registerAction(name, value => value * 3)
+  unregisterOld()
+  assert.equal(runAction(name, 4), 12)
+  assert.ok(getRegisteredActionNames().includes(name))
+  unregisterNew()
+  assert.equal(hasAction(name), false)
+  assert.equal(runAction(name), false)
+})
+
+test('ALPHA 快捷鍵表對齊 SPEC，且明確移除 Phase A 錯誤綁定', () => {
+  const hasBinding = (action, key, modifiers = {}) => ACTION_BINDINGS.some(binding => binding.action === action
+    && binding.key === key
+    && Boolean(binding.ctrl) === Boolean(modifiers.ctrl)
+    && Boolean(binding.shift) === Boolean(modifiers.shift)
+    && Boolean(binding.alt) === Boolean(modifiers.alt))
+
+  assert.equal(hasBinding('insertParent', 'Tab', { shift: true }), true)
+  assert.equal(hasBinding('toggleCollapse', '/', { ctrl: true }), true)
+  assert.equal(hasBinding('dissolve', 'Delete', { ctrl: true }), true)
+  assert.equal(hasBinding('duplicate', 'd', { ctrl: true }), true)
+  assert.equal(hasBinding('fit', 'f', { ctrl: true, alt: true }), true)
+  assert.equal(hasBinding('centerRoot', 'r', { ctrl: true, shift: true }), true)
+  assert.equal(hasBinding('openThemePanel', 'p', { ctrl: true }), true)
+  assert.equal(hasBinding('openStylePanel', 'y', { alt: true }), true)
+  assert.equal(hasBinding('edit', ' '), true)
+  assert.equal(ACTION_BINDINGS.some(binding => binding.key === 'F2'), false)
+  assert.equal(ACTION_BINDINGS.some(binding => ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(binding.key) && !binding.alt && !binding.shift), false)
+  assert.equal(ACTION_BINDINGS.some(binding => binding.key === 'f' && binding.ctrl && binding.shift), false)
+})
+
+test('內建主題至少 12 個且包含 ALPHA 指定主題與完整資料欄位', () => {
+  const builtIns = getThemeList()
+  assert.ok(builtIns.length >= 12)
+  const required = [
+    'classic-blue', 'office-pink', 'deep-space', 'monochrome-outline',
+    'duo-capsule', 'watercolor-mint', 'autumn-warm', 'cream-notes', 'magenta-rainbow'
+  ]
+  required.forEach(id => assert.ok(builtIns.some(item => item.id === id), `缺少主題 ${id}`))
+  for (const item of builtIns) {
+    assert.equal(typeof item.name, 'string')
+    assert.equal(typeof item.canvasBg, 'string')
+    assert.ok(item.branchPalette.length >= 1)
+    assert.ok(['curved', 'dotted', 'orthogonal'].includes(item.lineShape))
+    assert.deepEqual(item.lineWidthByDepth, [4, 3, 2, 1])
+    assert.ok(item.rootStyle && item.level2Style && item.leafStyle)
+  }
+  assert.equal(getTheme('deep-space').canvasBg, '#0B0B2A')
+  assert.equal(getTheme('office-pink').rootStyle.fill, '#DAEEF3')
+})
+
+test('主題 mini-SVG 由資料即時產生且不引用點陣圖片', () => {
+  for (const item of getThemeList()) {
+    const svg = createThemePreviewSvg(item)
+    assert.match(svg, /^<svg[\s\S]*<\/svg>$/)
+    assert.match(svg, new RegExp(item.canvasBg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
+    assert.equal(/<(image|foreignObject)\b/i.test(svg), false)
+    assert.ok((svg.match(/<path\b/g) || []).length >= 5)
+  }
+})
+
+test('樣式 token 與線型 token 可保留 shape、進階控制及繁中文字', () => {
+  const token = encodeStyleToken('rounded', {
+    radius: 13,
+    align: 'right',
+    lineHeight: 1.75,
+    watermarkText: '晨睿測試',
+    richText: '<b>局部粗體</b>'
+  }, 'diamond')
+  const parsed = parseStyleToken(token)
+  assert.equal(parsed.shape, 'diamond')
+  assert.equal(parsed.metadata.radius, '13')
+  assert.equal(parsed.metadata.watermarkText, '晨睿測試')
+  assert.equal(parsed.metadata.richText, '<b>局部粗體</b>')
+
+  const lineToken = encodeLineToken('solid', 'dash-dot', 'orthogonal')
+  assert.deepEqual(parseLineToken(lineToken), { lineStyle: 'dash-dot', lineShape: 'orthogonal' })
+})
+
+test('樣式 metadata 經既有 model 序列化仍可完整恢復，不需擴張 schema', () => {
+  const doc = createDefaultDoc()
+  doc.root.style.shape = encodeStyleToken('pill', {
+    radius: 18,
+    spacingH: 42,
+    spacingV: 36,
+    watermarkText: 'MindFlow 測試'
+  })
+  const restored = deserializeDoc(serializeDoc(doc))
+  const appearance = getNodeAppearance(restored.root, 0, getTheme(restored.themeId))
+  assert.equal(appearance.shape, 'pill')
+  assert.equal(appearance.radius, 18)
+  assert.equal(appearance.spacingH, 42)
+  assert.equal(appearance.spacingV, 36)
+  assert.equal(appearance.watermarkText, 'MindFlow 測試')
 })
 
 function assertNoOverlaps(positions) {

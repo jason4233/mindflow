@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Circuit board sticker">
+  <rect x="17" y="17" width="94" height="94" rx="16" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <rect x="43" y="43" width="42" height="42" rx="8" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="64" r="10" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M43 52H29v-9M43 64H25M43 76H29v9M85 52h14v-9M85 64h18M85 76h14v9M52 43V29h-9M64 43V25M76 43V29h9M52 85v14h-9M64 85v18M76 85v14h9" fill="none" stroke="#FFFDF5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#C9B8E8" stroke="#554F5B" stroke-width="2"><circle cx="29" cy="43" r="4"/><circle cx="25" cy="64" r="4"/><circle cx="29" cy="85" r="4"/><circle cx="99" cy="43" r="4"/><circle cx="103" cy="64" r="4"/><circle cx="99" cy="85" r="4"/><circle cx="43" cy="29" r="4"/><circle cx="64" cy="25" r="4"/><circle cx="85" cy="29" r="4"/><circle cx="43" cy="99" r="4"/><circle cx="64" cy="103" r="4"/><circle cx="85" cy="99" r="4"/></g>
+</svg>

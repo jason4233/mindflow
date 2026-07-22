@@ -4,32 +4,47 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MindFlow</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233f89de'/%3E%3Cpath d='M18 20h28M18 32h18M18 44h25' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23F17E2E'/%3E%3Cpath d='M17 22h30M17 32h20M17 42h27' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/editor.css">
   <link rel="stylesheet" href="css/node.css">
 </head>
 <body class="editor-page">
   <header class="editor-toolbar" id="editor-toolbar">
-    <div class="toolbar-section toolbar-section--left">
+    <div class="toolbar-section toolbar-section--left toolbar-capsule">
       <a id="back-home" class="icon-button back-button" href="index.html"></a>
-      <input id="document-title" class="document-title" type="text" maxlength="120">
+      <input id="document-title" class="document-title" type="text" maxlength="120" aria-label="文件名稱">
       <span class="toolbar-divider"></span>
+      <span id="save-status" class="save-status" aria-live="polite">已保存</span>
+    </div>
+
+    <div class="toolbar-section toolbar-section--center toolbar-capsule" aria-label="編輯工具列">
       <button id="undo-button" class="icon-button" type="button"></button>
       <button id="redo-button" class="icon-button" type="button"></button>
+      <span class="toolbar-divider"></span>
+      <button id="add-child-button" class="icon-button" type="button" title="插入下級節點">↳</button>
+      <button id="add-sibling-button" class="icon-button" type="button" title="插入同級節點">＋</button>
+      <button id="add-parent-button" class="icon-button" type="button" title="插入上級節點">↰</button>
+      <button id="format-painter-button" class="icon-button" type="button" title="格式刷">▰</button>
+      <button id="text-button" class="icon-button" type="button" title="編輯文字">T</button>
+      <button id="insert-button" class="icon-button" type="button" title="插入">⊕</button>
+      <button id="summary-button" class="icon-button" type="button" title="概括">}</button>
+      <button id="relation-button" class="icon-button" type="button" title="關聯線">⌁</button>
+      <button id="theme-button" class="icon-button" type="button" title="主題">✦</button>
+      <button id="presentation-button" class="icon-button" type="button" title="演示模式">▷</button>
+      <button id="ai-button" class="icon-button" type="button" title="AI（即將推出）">AI</button>
     </div>
-    <div class="toolbar-section toolbar-section--center">
-      <button id="add-child-button" class="toolbar-button" type="button"></button>
-      <button id="add-sibling-button" class="toolbar-button" type="button"></button>
-    </div>
-    <div class="toolbar-section toolbar-section--right">
-      <button id="toggle-sidepanel-button" class="toolbar-button" type="button"></button>
-      <button id="export-button" class="toolbar-button" type="button" disabled></button>
+
+    <div class="toolbar-section toolbar-section--right toolbar-capsule">
+      <button id="share-button" class="share-button" type="button">分享</button>
+      <button id="export-button" class="icon-button" type="button" title="匯出">⇧</button>
+      <button id="more-button" class="icon-button" type="button" title="更多">···</button>
+      <button id="toggle-sidepanel-button" class="visually-hidden" type="button" tabindex="-1"></button>
     </div>
   </header>
 
   <main id="editor-shell" class="editor-shell">
-    <section id="canvas" class="canvas" tabindex="0">
+    <section id="canvas" class="canvas" tabindex="0" aria-label="心智圖畫布">
       <div id="world" class="world">
         <svg id="connections-layer" class="connections-layer" width="1" height="1" aria-hidden="true"></svg>
         <div id="nodes-layer" class="nodes-layer"></div>
@@ -37,20 +52,57 @@
       <div id="selection-rectangle" class="selection-rectangle" hidden></div>
       <div id="drop-indicator" class="drop-indicator" hidden></div>
       <div id="measure-layer" class="measure-layer" aria-hidden="true"></div>
+
+      <div id="text-toolbar" class="text-toolbar" hidden role="toolbar" aria-label="文字格式">
+        <select id="text-font-family" aria-label="字型">
+          <option value='Inter, "Segoe UI", "Noto Sans TC", sans-serif'>系統字體</option>
+          <option value='"Noto Sans TC", "Microsoft JhengHei", sans-serif'>思源黑體</option>
+          <option value='"Microsoft JhengHei", sans-serif'>微軟正黑體</option>
+          <option value='Georgia, "Noto Serif TC", serif'>襯線字體</option>
+          <option value='"Courier New", monospace'>等寬字體</option>
+          <option value='cursive'>手寫字體</option>
+        </select>
+        <select id="text-font-size" aria-label="字級">
+          <option>12</option><option selected>14</option><option>16</option><option>18</option><option>24</option><option>36</option>
+        </select>
+        <span class="text-toolbar__divider"></span>
+        <button type="button" data-text-command="bold" aria-label="粗體"><strong>B</strong></button>
+        <button type="button" data-text-command="italic" aria-label="斜體"><em>I</em></button>
+        <button type="button" data-text-command="underline" aria-label="底線"><u>U</u></button>
+        <button type="button" data-text-command="strikeThrough" aria-label="刪除線"><s>S</s></button>
+        <label class="text-color-button" title="文字色"><span>A</span><input id="text-color" type="color" value="#253044" aria-label="文字色"></label>
+        <label class="text-color-button text-color-button--highlight" title="反白色"><span>A</span><input id="text-highlight" type="color" value="#fff176" aria-label="反白色"></label>
+        <span class="text-toolbar__divider"></span>
+        <button type="button" data-text-align="left" aria-label="靠左對齊">≡</button>
+        <button type="button" data-text-align="center" aria-label="置中對齊">≣</button>
+        <button type="button" data-text-align="right" aria-label="靠右對齊">≡</button>
+        <select id="text-line-height" aria-label="行距">
+          <option value="1.2">1.2</option><option value="1.35" selected>1.35</option><option value="1.5">1.5</option><option value="1.75">1.75</option><option value="2">2.0</option>
+        </select>
+        <button id="text-format-painter" type="button" aria-label="格式刷">▰</button>
+      </div>
+
       <div class="zoom-controls">
         <button id="zoom-out-button" class="zoom-button" type="button"></button>
         <button id="zoom-display" class="zoom-display" type="button"></button>
         <button id="zoom-in-button" class="zoom-button" type="button"></button>
         <button id="fit-button" class="zoom-button zoom-button--fit" type="button"></button>
+        <button id="fullscreen-button" class="zoom-button" type="button" title="全螢幕">⛶</button>
       </div>
     </section>
 
-    <aside id="sidepanel" class="sidepanel">
+    <aside id="sidepanel" class="sidepanel" aria-label="樣式面板">
       <div class="sidepanel-header">
-        <h2 id="sidepanel-title"></h2>
+        <nav class="sidepanel-tabs" aria-label="面板分頁">
+          <button type="button" data-panel-tab="style" class="is-active">樣式</button>
+          <button type="button" data-panel-tab="theme">主題</button>
+          <button type="button" data-panel-tab="layout">佈局</button>
+          <button type="button" data-panel-tab="icon">圖示</button>
+        </nav>
         <button id="close-sidepanel-button" class="icon-button" type="button"></button>
+        <h2 id="sidepanel-title" class="visually-hidden"></h2>
       </div>
-      <div id="sidepanel-placeholder" class="sidepanel-placeholder"></div>
+      <div id="sidepanel-placeholder" class="sidepanel-content"></div>
     </aside>
   </main>
   <script type="module" src="js/editor/main.js"></script>

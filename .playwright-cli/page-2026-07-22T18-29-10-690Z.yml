@@ -1,0 +1,229 @@
+- generic [ref=f1e1]:
+  - banner:
+    - generic [ref=f1e2]:
+      - link "返回首頁" [ref=f1e3] [cursor=pointer]:
+        - /url: index.html
+        - text: ←
+      - textbox "文件名稱" [ref=f1e4]: 未命名心智圖
+      - generic [ref=f1e6]: 已保存 02:29
+    - generic "編輯工具列" [ref=f1e7]:
+      - button "復原" [ref=f1e8] [cursor=pointer]: ↶
+      - button "重做" [disabled] [ref=f1e9]: ↷
+      - button "插入子節點" [ref=f1e11] [cursor=pointer]: ↳
+      - button "插入同級節點" [ref=f1e12] [cursor=pointer]: ＋
+      - button "↰" [ref=f1e13] [cursor=pointer]
+      - button "▰" [ref=f1e14] [cursor=pointer]
+      - button "T" [ref=f1e15] [cursor=pointer]
+      - button "⊕" [ref=f1e16] [cursor=pointer]
+      - 'button "}" [ref=f1e17] [cursor=pointer]'
+      - button "⌁" [ref=f1e18] [cursor=pointer]
+      - button "✦" [ref=f1e19] [cursor=pointer]
+      - button "▷" [ref=f1e20] [cursor=pointer]
+      - button "AI" [ref=f1e21] [cursor=pointer]
+    - generic [ref=f1e22]:
+      - button "分享" [ref=f1e23]
+      - button "匯出" [ref=f1e24] [cursor=pointer]: ⇧
+      - button "···" [ref=f1e25] [cursor=pointer]
+      - button [ref=f1e26]
+  - main [ref=f1e27]:
+    - region "心智圖畫布" [ref=f1e28]:
+      - generic:
+        - generic:
+          - generic [ref=f1e267]: X
+          - generic [ref=f1e269]: 分支主題
+          - generic [ref=f1e271]: 分支主題
+          - generic [ref=f1e273]: 分支主題
+          - generic [ref=f1e275]: 分支主題
+      - generic [ref=f1e39]:
+        - button "−" [ref=f1e40] [cursor=pointer]
+        - button "重設縮放" [ref=f1e41] [cursor=pointer]: 100%
+        - button "+" [ref=f1e42] [cursor=pointer]
+        - button "適應畫布" [ref=f1e43] [cursor=pointer]: 適應
+        - button "⛶" [ref=f1e44] [cursor=pointer]
+    - complementary "樣式面板" [ref=f1e45]:
+      - generic [ref=f1e46]:
+        - navigation "面板分頁" [ref=f1e47]:
+          - button "樣式" [ref=f1e48]
+          - button "主題" [ref=f1e49]
+          - button "佈局" [ref=f1e50]
+          - button "圖示" [ref=f1e51]
+        - button "關閉面板" [ref=f1e52] [cursor=pointer]: ×
+        - heading "樣式" [level=2] [ref=f1e53]
+      - generic [ref=f1e55]:
+        - generic [ref=f1e56]:
+          - heading "形狀 Shape" [level=3] [ref=f1e57]
+          - generic [ref=f1e58]:
+            - button "小圓角矩形" [ref=f1e59]
+            - button "大圓角矩形" [ref=f1e60]
+            - button "窄藥丸" [ref=f1e61]
+            - button "寬藥丸" [ref=f1e62]
+            - button "大圓角卡片" [ref=f1e63]
+            - button "底線" [ref=f1e64]
+            - button "圓形" [ref=f1e65]
+            - button "橢圓" [ref=f1e66]
+            - button "菱形" [ref=f1e67]
+            - button "平行四邊形" [ref=f1e68]
+          - generic [ref=f1e69]:
+            - generic [ref=f1e70]: 填色
+            - button "開啟色票" [active] [ref=f1e73]
+        - generic [ref=f1e74]:
+          - heading "圓角 Radius" [level=3] [ref=f1e75]
+          - generic [ref=f1e76]:
+            - slider [ref=f1e77]: "6"
+            - status [ref=f1e78]: 6px
+        - generic [ref=f1e79]:
+          - heading "邊框 Border" [level=3] [ref=f1e80]
+          - generic [ref=f1e81]:
+            - generic [ref=f1e82]: 線型
+            - combobox [ref=f1e83]:
+              - option "實線"
+              - option "細點虛線"
+              - option "中段虛線"
+              - option "點劃線" [selected]
+              - option "長虛點劃線"
+          - generic [ref=f1e84]:
+            - generic [ref=f1e85]: 顏色
+            - button "開啟色票" [ref=f1e88]
+            - generic [ref=f1e89]: 寬度
+            - combobox [ref=f1e90]:
+              - option "0px"
+              - option "1px"
+              - option "2px"
+              - option "3px"
+              - option "4px" [selected]
+              - option "5px"
+        - generic [ref=f1e91]:
+          - heading "連接線 Line" [level=3] [ref=f1e92]
+          - generic [ref=f1e93]:
+            - generic [ref=f1e94]: 形狀
+            - combobox [ref=f1e95]:
+              - option "曲線"
+              - option "直線"
+              - option "直角" [selected]
+          - generic [ref=f1e96]:
+            - generic [ref=f1e97]: 線型
+            - combobox [ref=f1e98]:
+              - option "實線"
+              - option "細點虛線"
+              - option "中段虛線"
+              - option "點劃線"
+              - option "長虛點劃線" [selected]
+          - generic [ref=f1e99]:
+            - generic [ref=f1e100]: 顏色
+            - button "開啟色票" [ref=f1e103]
+            - generic [ref=f1e104]: 寬度
+            - combobox [ref=f1e105]:
+              - option "0px"
+              - option "1px"
+              - option "2px"
+              - option "3px"
+              - option "4px"
+              - option "5px" [selected]
+        - generic [ref=f1e106]:
+          - heading "結構 Structure" [level=3] [ref=f1e107]
+          - generic [ref=f1e108]:
+            - button "平衡心智圖" [ref=f1e109]: ⇆
+            - button "向右樹狀" [ref=f1e110]: ⇢
+            - button "組織圖" [ref=f1e111]: ⌄
+            - button "目錄樹" [ref=f1e112]: ☷
+            - button "魚骨圖" [ref=f1e113]: ≪
+            - button "時間軸" [ref=f1e114]: ↦
+          - generic [ref=f1e115]:
+            - generic [ref=f1e116]: 方向
+            - combobox [ref=f1e117]:
+              - option "向右"
+              - option "向左" [selected]
+              - option "平衡"
+        - generic [ref=f1e118]:
+          - heading "節點間距" [level=3] [ref=f1e119]
+          - generic [ref=f1e120]:
+            - generic [ref=f1e121]: 水平
+            - slider [ref=f1e122]: "30"
+            - status [ref=f1e123]: "30"
+          - generic [ref=f1e124]:
+            - generic [ref=f1e125]: 垂直
+            - slider [ref=f1e126]: "30"
+            - status [ref=f1e127]: "30"
+          - generic [ref=f1e128]:
+            - generic [ref=f1e129]: 範圍
+            - combobox [ref=f1e130]:
+              - option "所有節點" [selected]
+              - option "目前分支"
+              - option "選中節點"
+  - generic [ref=f1e191]:
+    - generic [ref=f1e192]:
+      - button "#faefef" [ref=f1e193]
+      - button "#faf3ef" [ref=f1e194]
+      - button "#faf7ef" [ref=f1e195]
+      - button "#f7faef" [ref=f1e196]
+      - button "#effaf2" [ref=f1e197]
+      - button "#effafa" [ref=f1e198]
+      - button "#eff5fa" [ref=f1e199]
+      - button "#eff0fa" [ref=f1e200]
+      - button "#f6effa" [ref=f1e201]
+      - button "#faeff6" [ref=f1e202]
+      - button "#f5cccc" [ref=f1e203]
+      - button "#f5d8cc" [ref=f1e204]
+      - button "#f5e7cc" [ref=f1e205]
+      - button "#e9f5cc" [ref=f1e206]
+      - button "#ccf5d6" [ref=f1e207]
+      - button "#ccf5f4" [ref=f1e208]
+      - button "#cce0f5" [ref=f1e209]
+      - button "#cccff5" [ref=f1e210]
+      - button "#e4ccf5" [ref=f1e211]
+      - button "#f5cce4" [ref=f1e212]
+      - button "#eb9898" [ref=f1e213]
+      - button "#ebb198" [ref=f1e214]
+      - button "#ebd098" [ref=f1e215]
+      - button "#d2eb98" [ref=f1e216]
+      - button "#98ebad" [ref=f1e217]
+      - button "#98ebe9" [ref=f1e218]
+      - button "#98c2eb" [ref=f1e219]
+      - button "#989feb" [ref=f1e220]
+      - button "#c998eb" [ref=f1e221]
+      - button "#eb98c9" [ref=f1e222]
+      - button "#e16060" [ref=f1e223]
+      - button "#e18760" [ref=f1e224]
+      - button "#e1b660" [ref=f1e225]
+      - button "#bae160" [ref=f1e226]
+      - button "#60e181" [ref=f1e227]
+      - button "#60e1dd" [ref=f1e228]
+      - button "#60a1e1" [ref=f1e229]
+      - button "#606be1" [ref=f1e230]
+      - button "#ab60e1" [ref=f1e231]
+      - button "#e160ab" [ref=f1e232]
+      - button "#d62929" [ref=f1e233]
+      - button "#d65d29" [ref=f1e234]
+      - button "#d69c29" [ref=f1e235]
+      - button "#a2d629" [ref=f1e236]
+      - button "#29d654" [ref=f1e237]
+      - button "#29d6d0" [ref=f1e238]
+      - button "#2980d6" [ref=f1e239]
+      - button "#2937d6" [ref=f1e240]
+      - button "#8e29d6" [ref=f1e241]
+      - button "#d6298e" [ref=f1e242]
+      - button "#9f1e1e" [ref=f1e243]
+      - button "#9f451e" [ref=f1e244]
+      - button "#9f741e" [ref=f1e245]
+      - button "#789f1e" [ref=f1e246]
+      - button "#1e9f3e" [ref=f1e247]
+      - button "#1e9f9a" [ref=f1e248]
+      - button "#1e5e9f" [ref=f1e249]
+      - button "#1e299f" [ref=f1e250]
+      - button "#691e9f" [ref=f1e251]
+      - button "#9f1e69" [ref=f1e252]
+      - button "#631313" [ref=f1e253]
+      - button "#632b13" [ref=f1e254]
+      - button "#634813" [ref=f1e255]
+      - button "#4b6313" [ref=f1e256]
+      - button "#136327" [ref=f1e257]
+      - button "#136360" [ref=f1e258]
+      - button "#133b63" [ref=f1e259]
+      - button "#131963" [ref=f1e260]
+      - button "#411363" [ref=f1e261]
+      - button "#631341" [ref=f1e262]
+    - generic [ref=f1e263]:
+      - button "預設" [ref=f1e264]
+      - generic [ref=f1e265] [cursor=pointer]:
+        - text: 更多顏色
+        - textbox "更多顏色" [ref=f1e266]: "#ffffff"

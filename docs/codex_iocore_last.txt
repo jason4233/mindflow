@@ -1,0 +1,14 @@
+已完成 IO-CORE。
+
+- [export.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\io\export.js)：TXT、Markdown、Word `.doc` HTML、MindFlow JSON、獨立 SVG。
+- [import.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\io\import.js)：JSON、TXT、Markdown 匯入。
+- [io.test.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\tests\io.test.mjs)：往返、空樹、320 層、特殊字元、SVG/Word 邊界測試。
+
+測試結果：
+
+- IO：10/10
+- Core：19/19
+- Store/Search：7/7
+- `git diff --check`：通過
+
+未建立 `docs/CODEX_IOCORE_NOTES.md`，因它與最後的「只能改 `js/io/*` 與 `tests/io.test.mjs`」互相衝突；依較嚴格的路徑限制執行。

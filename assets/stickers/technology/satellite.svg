@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Satellite sticker">
+  <path d="m49 48 31 31-22 22-31-31 22-22Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m30 50-17-17 20-20 17 17-20 20ZM98 99 81 82l20-20 17 17-20 20Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M22 23 40 41M91 72l18 18" fill="none" stroke="#FFFDF5" stroke-width="2"/>
+  <circle cx="64" cy="64" r="8" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M77 36c9-9 24-9 33 0M82 43c6-6 16-6 22 0" fill="none" stroke="#C9B8E8" stroke-width="4" stroke-linecap="round"/>
+  <path d="m48 80-12 12" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

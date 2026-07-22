@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Cool face sticker">
+  <circle cx="64" cy="65" r="48" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M24 46c11-4 23-4 34 0l-3 18c-1 7-7 12-14 12s-13-5-14-12l-3-18ZM104 46c-11-4-23-4-34 0l3 18c1 7 7 12 14 12s13-5 14-12l3-18Z" fill="#554F5B" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M58 49c4-2 8-2 12 0" fill="none" stroke="#554F5B" stroke-width="5"/>
+  <path d="M39 50c5-1 10-1 15 1M76 51c5-2 10-2 15-1" fill="none" stroke="#AFCDF3" stroke-width="3" stroke-linecap="round"/>
+  <path d="M44 88c11 7 29 7 40 0" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+</svg>

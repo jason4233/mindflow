@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Camera sticker">
+  <path d="M42 35 50 23h28l8 12h17c7 0 12 5 12 12v48c0 7-5 12-12 12H25c-7 0-12-5-12-12V47c0-7 5-12 12-12h17Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="64" cy="70" r="26" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="70" r="16" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="70" cy="64" r="6" fill="#FFFDF5" opacity=".75"/>
+  <rect x="91" y="45" width="13" height="9" rx="4" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M22 52h12" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

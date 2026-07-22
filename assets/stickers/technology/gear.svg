@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Gear sticker">
+  <path d="m56 16 3 12c3 0 7 0 10 1l7-10 14 7-4 12c3 3 5 5 7 8l12-2 5 15-11 6v9l10 7-7 14-12-4c-2 3-5 5-8 7l2 12-15 5-6-11h-9l-7 10-14-7 4-12c-3-2-5-5-7-8l-12 2-5-15 11-6v-9l-10-7 7-14 12 4c2-3 5-5 8-7l-2-12 13-7Z" fill="#A9D8C8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="64" cy="66" r="24" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="66" r="10" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+</svg>

@@ -16,6 +16,7 @@ export class ViewportController {
     this.panY = 0
     this.zoom = 1
     this.spacePressed = false
+    this.initialPlacementDone = false
     this.drag = null
     this.bindEvents()
     this.apply()
@@ -25,22 +26,6 @@ export class ViewportController {
     this.canvas.addEventListener('wheel', event => this.handleWheel(event), { passive: false })
     this.canvas.addEventListener('pointerdown', event => this.handlePointerDown(event))
     this.canvas.addEventListener('contextmenu', event => event.preventDefault())
-
-    window.addEventListener('keydown', event => {
-      if (event.code !== 'Space' || isEditableTarget(event.target)) return
-      this.spacePressed = true
-      this.canvas.classList.add('is-space-ready')
-      event.preventDefault()
-    }, true)
-    window.addEventListener('keyup', event => {
-      if (event.code !== 'Space') return
-      this.spacePressed = false
-      this.canvas.classList.remove('is-space-ready')
-    }, true)
-    window.addEventListener('blur', () => {
-      this.spacePressed = false
-      this.canvas.classList.remove('is-space-ready')
-    })
   }
 
   handleWheel(event) {
@@ -62,7 +47,9 @@ export class ViewportController {
   }
 
   handlePointerDown(event) {
-    const shouldPan = event.button === 2 || (event.button === 0 && this.spacePressed)
+    // 官方操作是直接拖曳空白平移；Ctrl/Meta+拖曳保留給框選。
+    const interactive = event.target.closest?.('.mind-node, button, input, select, textarea, [contenteditable="true"]')
+    const shouldPan = event.button === 0 && !event.ctrlKey && !event.metaKey && !interactive
     if (!shouldPan) return
     event.preventDefault()
     this.drag = {
@@ -117,6 +104,14 @@ export class ViewportController {
   fit(positions, padding = 60) {
     const bounds = getLayoutBounds(positions)
     if (positions.size === 0) return
+    if (!this.initialPlacementDone) {
+      this.initialPlacementDone = true
+      this.zoom = 1
+      this.panX = (this.canvas.clientWidth - (bounds.minX + bounds.maxX)) / 2
+      this.panY = (this.canvas.clientHeight - (bounds.minY + bounds.maxY)) / 2
+      this.apply()
+      return
+    }
     const availableWidth = Math.max(1, this.canvas.clientWidth - padding * 2)
     const availableHeight = Math.max(1, this.canvas.clientHeight - padding * 2)
     const contentWidth = Math.max(1, bounds.width)
@@ -125,6 +120,14 @@ export class ViewportController {
     this.panX = (this.canvas.clientWidth - (bounds.minX + bounds.maxX) * this.zoom) / 2
     this.panY = (this.canvas.clientHeight - (bounds.minY + bounds.maxY) * this.zoom) / 2
     this.apply()
+  }
+
+  centerOn(position) {
+    if (!position) return false
+    this.panX = this.canvas.clientWidth / 2 - (position.x + position.w / 2) * this.zoom
+    this.panY = this.canvas.clientHeight / 2 - (position.y + position.h / 2) * this.zoom
+    this.apply()
+    return true
   }
 
   screenToWorld(clientX, clientY) {

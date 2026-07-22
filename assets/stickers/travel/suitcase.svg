@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Suitcase sticker">
+  <path d="M45 31v-8c0-5 4-9 9-9h20c5 0 9 4 9 9v8" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <rect x="22" y="30" width="84" height="78" rx="15" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M42 30v78M86 30v78" fill="none" stroke="#554F5B" stroke-width="2"/>
+  <rect x="50" y="55" width="28" height="26" rx="8" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="M57 68h14M64 61v14" fill="none" stroke="#A9D8C8" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="41" cy="113" r="5" fill="#554F5B"/><circle cx="87" cy="113" r="5" fill="#554F5B"/>
+</svg>

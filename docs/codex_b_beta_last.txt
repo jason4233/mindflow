@@ -1,0 +1,10 @@
+BETA 全範圍完成，未 commit。
+
+- 完整 dashboard、收藏、回收筒、全文檢索、mini-SVG 縮圖與 responsive UI 已完成：[index.html](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/index.html>)
+- Store v2 向下相容：[store.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/store.js>)
+- 8 分類、17 個繁中範本，輪替全部 12 個主題 id：[templates.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/templates.js>)
+- 新增測試 7/7；既有 core 18/18 全過。
+- Playwright 驗證 1440px／375px、主要操作流程、無溢出、console 0 error/warning、操作區至少 44px。
+- 交付摘要：[CODEX_B_BETA_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_B_BETA_NOTES.md>)
+
+ALPHA 同期修改的 `js/editor/`、editor CSS/HTML 與 `tests/core.test.mjs` 均完整保留，我沒有動到。

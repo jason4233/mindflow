@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sleepy face sticker">
+  <circle cx="61" cy="69" r="45" fill="#C9B8E8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M34 59c6 6 14 6 20 0M68 59c6 6 14 6 20 0" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="61" cy="85" rx="10" ry="7" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M94 42h19L96 58h19" fill="none" stroke="#AFCDF3" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M102 18h13l-11 11h13" fill="none" stroke="#AFCDF3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <ellipse cx="27" cy="75" rx="6" ry="4" fill="#F4A7A0" opacity=".65"/>
+  <ellipse cx="95" cy="75" rx="6" ry="4" fill="#F4A7A0" opacity=".65"/>
+</svg>

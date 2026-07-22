@@ -1,11 +1,15 @@
 /**
- * contenteditable 編輯生命週期：Enter/blur 確認、Esc 還原、Shift+Enter 換行。
+ * contenteditable 編輯生命週期與文字浮動工具列：Enter 確認、Esc 還原、Shift+Enter 換行。
  */
+import { runAction } from './actions.js'
+
 export class EditController {
   constructor({ nodesLayer, onCommit }) {
     this.nodesLayer = nodesLayer
     this.onCommit = onCommit
     this.session = null
+    this.toolbar = document.querySelector('#text-toolbar')
+    this.bindToolbar()
   }
 
   bindEvents() {
@@ -23,14 +27,26 @@ export class EditController {
     const textElement = nodeElement?.querySelector('.mind-node__text')
     if (!textElement) return false
 
-    const original = textElement.textContent === '\u200b' ? '' : textElement.textContent
-    this.session = { id, textElement, original, finishing: false }
+    const original = textElement.textContent === '\u200b' ? '' : textElement.innerText
+    this.session = {
+      id,
+      nodeElement,
+      textElement,
+      original,
+      originalHtml: textElement.innerHTML,
+      finishing: false,
+      lastRange: null,
+      pendingStyle: {},
+      pendingMetadata: {}
+    }
     nodeElement.classList.add('is-editing')
     textElement.contentEditable = 'true'
     textElement.spellcheck = false
     if (initialText !== null) textElement.textContent = initialText
     textElement.focus()
     placeCaret(textElement, initialText === null)
+    this.captureRange()
+    this.showToolbar(nodeElement)
 
     const keydown = event => {
       event.stopPropagation()
@@ -40,30 +56,46 @@ export class EditController {
       } else if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
         this.commit()
+      } else if ((event.ctrlKey || event.metaKey) && ['b', 'i', 'u'].includes(event.key.toLowerCase())) {
+        event.preventDefault()
+        this.executeTextCommand(({ b: 'bold', i: 'italic', u: 'underline' })[event.key.toLowerCase()])
       }
     }
-    const blur = () => this.commit()
+    const blur = event => {
+      if (this.toolbar?.contains(event.relatedTarget)) return
+      queueMicrotask(() => {
+        if (this.session && !this.toolbar?.contains(document.activeElement)) this.commit()
+      })
+    }
+    const selectionChange = () => this.captureRange()
     this.session.keydown = keydown
     this.session.blur = blur
+    this.session.selectionChange = selectionChange
     textElement.addEventListener('keydown', keydown)
     textElement.addEventListener('blur', blur)
+    document.addEventListener('selectionchange', selectionChange)
     return true
   }
 
   commit() {
     if (!this.session || this.session.finishing) return false
     this.session.finishing = true
-    const { id, textElement, original } = this.session
+    const { id, textElement, original, originalHtml, pendingStyle, pendingMetadata } = this.session
     const next = normalizeEditableText(textElement.innerText)
+    const richHtml = normalizeRichHtml(textElement.innerHTML)
+    const richChanged = richHtml !== normalizeRichHtml(originalHtml)
     this.cleanup()
     if (next !== original) this.onCommit(id, next)
+    if (richChanged || hasRichFormatting(richHtml)) runAction('setRichText', hasRichFormatting(richHtml) ? richHtml : '')
+    if (Object.keys(pendingStyle).length > 0) runAction('applyStyle', pendingStyle)
+    if (Object.keys(pendingMetadata).length > 0) runAction('setStyleMetadata', pendingMetadata)
     return true
   }
 
   cancel() {
     if (!this.session || this.session.finishing) return false
     this.session.finishing = true
-    this.session.textElement.textContent = this.session.original || '\u200b'
+    this.session.textElement.innerHTML = this.session.originalHtml || '\u200b'
     this.cleanup()
     return true
   }
@@ -73,9 +105,109 @@ export class EditController {
     if (!session) return
     session.textElement.removeEventListener('keydown', session.keydown)
     session.textElement.removeEventListener('blur', session.blur)
+    document.removeEventListener('selectionchange', session.selectionChange)
     session.textElement.contentEditable = 'false'
-    session.textElement.closest('.mind-node')?.classList.remove('is-editing')
+    session.nodeElement.classList.remove('is-editing')
+    if (this.toolbar) this.toolbar.hidden = true
     this.session = null
+  }
+
+  bindToolbar() {
+    if (!this.toolbar) return
+    this.toolbar.addEventListener('pointerdown', () => this.captureRange(), true)
+    this.toolbar.querySelectorAll('[data-text-command]').forEach(button => button.addEventListener('click', () => this.executeTextCommand(button.dataset.textCommand)))
+    this.toolbar.querySelectorAll('[data-text-align]').forEach(button => button.addEventListener('click', () => {
+      const alignment = button.dataset.textAlign
+      this.restoreRange()
+      document.execCommand(({ left: 'justifyLeft', center: 'justifyCenter', right: 'justifyRight' })[alignment], false)
+      if (this.session) this.session.pendingMetadata.align = alignment
+      this.refocus()
+    }))
+
+    this.toolbar.querySelector('#text-font-family')?.addEventListener('change', event => {
+      this.restoreRange()
+      document.execCommand('fontName', false, event.target.value)
+      if (this.session) this.session.pendingStyle.fontFamily = event.target.value
+      this.refocus()
+    })
+    this.toolbar.querySelector('#text-font-size')?.addEventListener('change', event => {
+      const size = Number(event.target.value)
+      this.restoreRange()
+      document.execCommand('fontSize', false, fontSizeCommandValue(size))
+      if (this.session) this.session.pendingStyle.fontSize = size
+      this.refocus()
+    })
+    this.toolbar.querySelector('#text-color')?.addEventListener('input', event => {
+      this.restoreRange()
+      document.execCommand('foreColor', false, event.target.value)
+      this.refocus()
+    })
+    this.toolbar.querySelector('#text-highlight')?.addEventListener('input', event => {
+      this.restoreRange()
+      document.execCommand('hiliteColor', false, event.target.value)
+      this.refocus()
+    })
+    this.toolbar.querySelector('#text-line-height')?.addEventListener('change', event => {
+      if (this.session) this.session.pendingMetadata.lineHeight = event.target.value
+      this.refocus()
+    })
+    this.toolbar.querySelector('#text-format-painter')?.addEventListener('click', () => {
+      runAction('copyStyle')
+      this.refocus()
+    })
+  }
+
+  executeTextCommand(command) {
+    if (!this.session) return false
+    this.restoreRange()
+    document.execCommand(command, false)
+    this.captureRange()
+    this.updateToolbarState()
+    this.refocus()
+    return true
+  }
+
+  captureRange() {
+    if (!this.session) return
+    const selection = window.getSelection()
+    if (!selection?.rangeCount) return
+    const range = selection.getRangeAt(0)
+    if (this.session.textElement.contains(range.commonAncestorContainer)) this.session.lastRange = range.cloneRange()
+  }
+
+  restoreRange() {
+    if (!this.session?.lastRange) return
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(this.session.lastRange)
+  }
+
+  refocus() {
+    if (!this.session) return
+    this.session.textElement.focus({ preventScroll: true })
+    this.restoreRange()
+  }
+
+  showToolbar(nodeElement) {
+    if (!this.toolbar) return
+    this.toolbar.hidden = false
+    this.updateToolbarState()
+    requestAnimationFrame(() => {
+      if (!this.session) return
+      const canvas = this.nodesLayer.closest('.canvas')
+      const nodeRect = nodeElement.getBoundingClientRect()
+      const canvasRect = canvas.getBoundingClientRect()
+      const width = this.toolbar.offsetWidth
+      const left = Math.max(8, Math.min(canvas.clientWidth - width - 8, nodeRect.left - canvasRect.left + nodeRect.width / 2 - width / 2))
+      const top = Math.max(64, nodeRect.top - canvasRect.top - this.toolbar.offsetHeight - 10)
+      this.toolbar.style.left = `${left}px`
+      this.toolbar.style.top = `${top}px`
+    })
+  }
+
+  updateToolbarState() {
+    if (!this.toolbar || !this.session) return
+    this.toolbar.querySelectorAll('[data-text-command]').forEach(button => button.classList.toggle('is-active', document.queryCommandState(button.dataset.textCommand)))
   }
 
   get isEditing() {
@@ -85,6 +217,38 @@ export class EditController {
 
 function normalizeEditableText(text) {
   return String(text).replace(/\r/g, '').replace(/\n$/, '')
+}
+
+function normalizeRichHtml(html) {
+  const template = document.createElement('template')
+  template.innerHTML = String(html || '')
+  for (const font of Array.from(template.content.querySelectorAll('font'))) {
+    const span = document.createElement('span')
+    if (font.color) span.style.color = font.color
+    if (font.face) span.style.fontFamily = font.face
+    if (font.size) span.style.fontSize = commandSizeToPixels(font.size)
+    span.append(...font.childNodes)
+    font.replaceWith(span)
+  }
+  return template.innerHTML
+}
+
+function hasRichFormatting(html) {
+  return /<(b|strong|i|em|u|s|strike|span)\b/i.test(html)
+}
+
+function fontSizeCommandValue(size) {
+  if (size <= 10) return 1
+  if (size <= 12) return 2
+  if (size <= 14) return 3
+  if (size <= 18) return 4
+  if (size <= 24) return 5
+  if (size <= 32) return 6
+  return 7
+}
+
+function commandSizeToPixels(value) {
+  return `${({ 1: 10, 2: 12, 3: 14, 4: 18, 5: 24, 6: 32, 7: 48 })[Number(value)] || 14}px`
 }
 
 function placeCaret(element, selectAll) {

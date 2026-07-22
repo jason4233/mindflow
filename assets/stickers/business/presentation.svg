@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Presentation board sticker">
+  <rect x="20" y="22" width="88" height="63" rx="8" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="M14 22h100M64 85v21M48 106h32" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="M38 67V54M54 67V43M70 67V49M86 67V35" fill="none" stroke="#F17E72" stroke-width="8" stroke-linecap="round"/>
+  <path d="m34 40 15-8 16 5 24-13" fill="none" stroke="#78BFA6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="89" cy="24" r="4" fill="#78BFA6" stroke="#554F5B" stroke-width="2"/>
+</svg>

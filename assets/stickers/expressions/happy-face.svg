@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Happy face sticker">
+  <circle cx="64" cy="64" r="49" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M39 55c4-5 10-5 14 0M75 55c4-5 10-5 14 0" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <path d="M42 73c6 15 17 22 22 22s16-7 22-22H42Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <ellipse cx="32" cy="70" rx="8" ry="5" fill="#F4A7A0" opacity=".8"/>
+  <ellipse cx="96" cy="70" rx="8" ry="5" fill="#F4A7A0" opacity=".8"/>
+</svg>

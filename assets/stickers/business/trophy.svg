@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Trophy sticker">
+  <path d="M38 24h52v17c0 21-10 34-26 34S38 62 38 41V24Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M38 33H24v9c0 13 8 22 21 24M90 33h14v9c0 13-8 22-21 24" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M64 75v17M49 104h30M53 92h22l4 12H49l4-12Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m64 35 4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1 4-8Z" fill="#FFF6D7" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+</svg>

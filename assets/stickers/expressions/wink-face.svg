@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Winking face sticker">
+  <circle cx="64" cy="64" r="49" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M35 54c6-6 14-6 20 0" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="82" cy="54" rx="6" ry="8" fill="#554F5B"/>
+  <path d="M44 76c7 13 20 18 34 12" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M78 88c3-1 6 1 7 4" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="31" cy="69" rx="7" ry="5" fill="#F4A7A0" opacity=".8"/>
+  <ellipse cx="97" cy="69" rx="7" ry="5" fill="#F4A7A0" opacity=".8"/>
+  <path d="m105 23 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1 3-6Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+</svg>

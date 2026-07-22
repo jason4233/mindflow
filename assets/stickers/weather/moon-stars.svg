@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Moon and stars sticker">
+  <path d="M85 94c-25 12-55 2-67-23S16 16 41 4c7-3 14-5 21-4-17 13-23 36-13 56s31 31 52 27c-4 5-10 9-16 11Z" fill="#FFE7A3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round" transform="translate(4 13)"/>
+  <path d="m93 19 3 8 8 3-8 3-3 8-3-8-8-3 8-3 3-8ZM108 55l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5ZM83 76l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="69" cy="25" r="4" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+</svg>

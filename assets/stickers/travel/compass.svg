@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Compass sticker">
+  <circle cx="64" cy="64" r="50" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="64" r="39" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M64 21v8M64 99v8M21 64h8M99 64h8" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="m73 55 20-20-12 29-17 17-29 12 20-20 9-9 9-9Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m35 93 29-12 17-17 12-29-20 20-9 9-9 9-20 20Z" fill="#FFFDF5" opacity=".7"/>
+  <circle cx="64" cy="64" r="5" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+</svg>

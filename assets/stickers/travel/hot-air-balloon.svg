@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Hot air balloon sticker">
+  <path d="M64 13c26 0 43 18 43 40 0 21-16 35-31 49H52C37 88 21 74 21 53c0-22 17-40 43-40Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M64 13c13 0 22 18 22 40 0 21-8 35-16 49H58C50 88 42 74 42 53c0-22 9-40 22-40Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M22 53h84" fill="none" stroke="#554F5B" stroke-width="2"/>
+  <path d="M52 102h24l-4 14H56l-4-14Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M55 102 49 87M73 102l6-15" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

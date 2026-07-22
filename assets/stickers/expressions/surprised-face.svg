@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Surprised face sticker">
+  <circle cx="64" cy="66" r="48" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M36 39c6-5 13-6 20-2M72 37c7-4 14-3 20 2" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="47" cy="55" rx="6" ry="9" fill="#554F5B"/>
+  <ellipse cx="81" cy="55" rx="6" ry="9" fill="#554F5B"/>
+  <ellipse cx="64" cy="83" rx="14" ry="18" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M23 78c-7 3-10 8-9 15M105 78c7 3 10 8 9 15" fill="none" stroke="#C9B8E8" stroke-width="5" stroke-linecap="round"/>
+</svg>

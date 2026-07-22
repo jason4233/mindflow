@@ -1,0 +1,12 @@
+工作流 ALPHA 全部完成。
+
+- A-fix、3 條 REVIEW_A 缺陷已修正。
+- action registry、overlay hooks 已建立。
+- 12 個內建主題、Theme/Background、完整 Style 面板、文字浮動工具列、浮水印均已實作。
+- 瀏覽器實測發現並修正 Ctrl+點擊多選與 DnD 衝突。
+- `node tests/core.test.mjs`：19/19 通過。
+- Chromium console：0 errors、0 warnings。
+- 未修改 ALPHA 所有權外檔案；並行 BETA 改動未覆寫。
+- 未 git commit。
+
+完整紀錄：[CODEX_B_ALPHA_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_B_ALPHA_NOTES.md>)。

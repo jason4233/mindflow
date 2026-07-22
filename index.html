@@ -3,25 +3,134 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MindFlow</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233f89de'/%3E%3Cpath d='M18 20h28M18 32h18M18 44h25' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <meta name="theme-color" content="#F17E2E">
+  <title>MindFlow — 我的心智圖</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23F17E2E'/%3E%3Cpath d='M20 20c8-8 24-3 24 8 0 9-10 16-22 13' fill='none' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='18' cy='21' r='5' fill='white'/%3E%3Ccircle cx='20' cy='42' r='5' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/dashboard.css">
 </head>
 <body class="dashboard-page">
-  <header class="dashboard-header">
-    <div class="dashboard-header__inner">
-      <h1 id="product-name" class="brand"></h1>
-      <button id="create-document" class="primary-button" type="button"></button>
+  <a class="skip-link" href="#main-content">跳到主要內容</a>
+
+  <header class="dashboard-topbar">
+    <a class="brand-lockup" href="index.html" aria-label="MindFlow 首頁">
+      <svg class="brand-lockup__mark" viewBox="0 0 48 48" aria-hidden="true">
+        <defs>
+          <linearGradient id="mindflow-gradient" x1="7" y1="6" x2="41" y2="43" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#FF9A52"/>
+            <stop offset="1" stop-color="#E85C20"/>
+          </linearGradient>
+        </defs>
+        <path d="M13 14.5c7.2-7.2 21.5-4.5 24.3 5.8 2.5 9.2-5 18.3-16.6 18.3" fill="none" stroke="url(#mindflow-gradient)" stroke-width="5.2" stroke-linecap="round"/>
+        <path d="M13.5 15.3v17.2c0 3.3 2.6 6 5.9 6" fill="none" stroke="url(#mindflow-gradient)" stroke-width="5.2" stroke-linecap="round"/>
+        <circle cx="13" cy="14" r="5.3" fill="#F17E2E"/>
+        <circle cx="20" cy="38.5" r="5.3" fill="#E85C20"/>
+        <circle cx="37.2" cy="21.4" r="4.2" fill="#FF9A52"/>
+      </svg>
+      <span>MindFlow</span>
+    </a>
+
+    <button class="templates-shortcut" type="button" data-view-target="templates">
+      範本庫
+      <span class="hot-badge">16+</span>
+    </button>
+
+    <div class="global-search" role="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+      <label class="visually-hidden" for="global-search-input">搜尋文件標題與節點內容</label>
+      <input id="global-search-input" type="search" autocomplete="off" placeholder="搜尋文件與節點（Ctrl+K）">
+      <button id="clear-search" class="search-clear" type="button" aria-label="清除搜尋" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 8 8M16 8l-8 8"/></svg>
+      </button>
     </div>
+
+    <button id="settings-button" class="topbar-icon-button" type="button" aria-label="設定（即將推出）">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.5v-.1A1.7 1.7 0 0 0 8.4 19a1.7 1.7 0 0 0-1.88.34l-.06.06L3.6 16.54l.06-.06A1.7 1.7 0 0 0 4 14.6a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2V9.1h.3A1.7 1.7 0 0 0 4 8a1.7 1.7 0 0 0-.34-1.88L3.6 6.06 6.46 3.2l.06.06A1.7 1.7 0 0 0 8.4 3a1.7 1.7 0 0 0 1-.6A1.7 1.7 0 0 0 9.8 1.3V1h4.1v.3a1.7 1.7 0 0 0 1.1 1.7 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.4 7.4a1.7 1.7 0 0 0 .6 1c.3.3.7.4 1.1.4h.3v4.1h-.3a1.7 1.7 0 0 0-1.7 1.1Z"/></svg>
+    </button>
   </header>
-  <main class="dashboard-main">
-    <h2 id="documents-heading" class="dashboard-heading"></h2>
-    <div id="document-grid" class="document-grid" aria-live="polite"></div>
-    <div id="empty-state" class="empty-state" hidden>
-      <p id="empty-state-text"></p>
-    </div>
-  </main>
+
+  <div class="dashboard-shell">
+    <aside class="dashboard-sidebar" aria-label="文件庫導覽">
+      <button id="create-document" class="sidebar-create" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>新增文檔</span>
+      </button>
+
+      <nav class="sidebar-nav" aria-label="文件分類">
+        <button type="button" data-view-target="recent">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3.4 2"/></svg>
+          <span>最近編輯</span>
+        </button>
+        <button type="button" data-view-target="documents">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h9l5 5v12H5z"/><path d="M14 3.5v5h5M8.5 13h7M8.5 16.5h5"/></svg>
+          <span>我的心智圖</span>
+        </button>
+        <button type="button" class="sidebar-placeholder" disabled title="團隊協作功能即將推出">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3.5 20c.3-4 2.1-6 5.5-6s5.2 2 5.5 6M14 15.5c3.5-.6 5.5.9 6 4.5"/></svg>
+          <span>團隊協作</span><span class="soon-label">即將推出</span>
+        </button>
+        <button type="button" class="sidebar-placeholder" disabled title="我的分享功能即將推出">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6"/></svg>
+          <span>我的分享</span><span class="soon-label">即將推出</span>
+        </button>
+        <button type="button" data-view-target="favorites">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg>
+          <span>我的收藏</span><span id="favorites-count" class="nav-count">0</span>
+        </button>
+        <button type="button" data-view-target="trash">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 3.5h6L16 7H8zM6.5 7l.8 13h9.4l.8-13M10 10.5v6M14 10.5v6"/></svg>
+          <span>資源回收筒</span><span id="trash-count" class="nav-count">0</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-library-card">
+        <span>需要一點靈感？</span>
+        <button type="button" data-view-target="templates">瀏覽 17 個範本</button>
+      </div>
+    </aside>
+
+    <main id="main-content" class="dashboard-main" tabindex="-1">
+      <header class="content-header">
+        <div>
+          <p id="view-eyebrow" class="content-eyebrow">你的工作空間</p>
+          <h1 id="view-heading">最近編輯</h1>
+          <p id="view-description" class="content-description">快速接續最近的思考。</p>
+        </div>
+        <span id="view-count" class="content-count" aria-live="polite"></span>
+      </header>
+
+      <section id="documents-view" aria-labelledby="view-heading">
+        <div id="document-grid" class="document-grid" aria-live="polite"></div>
+        <div id="empty-state" class="empty-state" hidden>
+          <svg viewBox="0 0 80 80" aria-hidden="true"><path d="M22 14h25l12 12v40H22z"/><path d="M47 14v13h12M31 40h20M31 49h15"/></svg>
+          <h2 id="empty-state-title">這裡還沒有文件</h2>
+          <p id="empty-state-text">建立第一張心智圖，開始整理想法。</p>
+          <button id="empty-state-action" class="primary-button" type="button">新增文檔</button>
+        </div>
+      </section>
+
+      <section id="templates-view" class="templates-layout" aria-labelledby="view-heading" hidden>
+        <nav id="template-categories" class="template-categories" aria-label="範本分類"></nav>
+        <div id="template-grid" class="template-grid" aria-live="polite"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-dialog-title">
+    <form method="dialog">
+      <div class="confirm-dialog__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M9 3.5h6L16 7H8zM6.5 7l.8 13h9.4l.8-13"/></svg>
+      </div>
+      <h2 id="confirm-dialog-title">永久刪除文件？</h2>
+      <p id="confirm-dialog-message">刪除後無法復原。</p>
+      <div class="confirm-dialog__actions">
+        <button value="cancel" class="secondary-button">取消</button>
+        <button id="confirm-delete" value="confirm" class="danger-solid-button">永久刪除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="dashboard-toast" class="dashboard-toast" role="status" aria-live="polite" hidden></div>
   <script type="module" src="js/dashboard.js"></script>
 </body>
 </html>

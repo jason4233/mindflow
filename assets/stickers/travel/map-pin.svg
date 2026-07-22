@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Map pin sticker">
+  <path d="M20 42 49 29l30 13 29-13v69l-29 13-30-13-29 13V42Z" fill="#A9D8C8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M49 29v69M79 42v69" fill="none" stroke="#554F5B" stroke-width="2"/>
+  <path d="m20 70 29-13 30 13 29-13" fill="none" stroke="#FFFDF5" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M64 13c-15 0-26 11-26 26 0 20 26 43 26 43s26-23 26-43c0-15-11-26-26-26Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="64" cy="39" r="10" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+</svg>
