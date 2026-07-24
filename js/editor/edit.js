@@ -4,6 +4,12 @@
 import { runAction } from './actions.js'
 import { dispatchGlobalShortcut, findShortcutBinding } from './keyboard.js'
 
+const COMMIT_BEFORE_GLOBAL_ACTIONS = new Set([
+  'duplicate',
+  'nextTheme',
+  ...Array.from({ length: 9 }, (_, index) => `priority${index + 1}`)
+])
+
 export class EditController {
   constructor({ nodesLayer, onCommit }) {
     this.nodesLayer = nodesLayer
@@ -51,8 +57,9 @@ export class EditController {
 
     const keydown = event => {
       const shortcut = findShortcutBinding(event)
-      // Ctrl+S 先提交目前 session，確保存下的是畫面上正在編輯的內容。
-      if (shortcut?.action === 'save') this.commit()
+      // 這些 action 會重繪節點層；先結束編輯，避免 renderAll 拔掉 contenteditable
+      // 後留下 detached session，造成文字延遲回寫與鍵盤失效。
+      if (shortcut?.action === 'save' || COMMIT_BEFORE_GLOBAL_ACTIONS.has(shortcut?.action)) this.commit()
       if (dispatchGlobalShortcut(event, { formMode: true })) {
         event.stopPropagation()
         return

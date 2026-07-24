@@ -3,9 +3,11 @@
  */
 import { hasAction, runAction } from './actions.js'
 import { dispatchGlobalShortcut, findShortcutBinding } from './keyboard.js'
+import { initializeExportDialog } from './exportdialog.js'
 import { strings } from '../strings.js'
 
 export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
+  initializeExportDialog({ doc })
   const back = document.querySelector('#back-home')
   const undo = document.querySelector('#undo-button')
   const redo = document.querySelector('#redo-button')

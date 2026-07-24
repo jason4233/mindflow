@@ -4,7 +4,6 @@
 import {
   addChild,
   addSiblingAfter,
-  deleteNodes,
   insertSubtrees,
   moveNode,
   setStyle,
@@ -28,6 +27,8 @@ import {
   getNodeAppearance,
   getTheme
 } from './themes.js'
+import { sanitizeFloatingClone } from './floating.js'
+import { deleteNodesWithOverlaysCommand } from './relations.js'
 import { strings } from '../strings.js'
 
 export const ACTION_BINDINGS = Object.freeze([
@@ -87,7 +88,7 @@ export const ACTION_BINDINGS = Object.freeze([
 ])
 
 const FORM_GLOBAL_ACTIONS = new Set([
-  'save', 'openThemePanel', 'toggleOutline', 'duplicate', 'findReplace',
+  'save', 'openThemePanel', 'toggleOutline', 'duplicate', 'findReplace', 'nextTheme',
   ...Array.from({ length: 9 }, (_, index) => `priority${index + 1}`)
 ])
 
@@ -253,7 +254,7 @@ export class KeyboardController {
     if (ids.length === 0) return false
     const primaryContext = findNodeContext(this.doc.root, this.selection.primaryId)
     const fallbackId = primaryContext?.parent?.id || this.doc.root.id
-    if (!this.manager.execute(deleteNodes(this.doc, ids))) return false
+    if (!this.manager.execute(deleteNodesWithOverlaysCommand(this.doc, ids))) return false
     this.selection.set([fallbackId])
     return true
   }
@@ -350,7 +351,10 @@ export class KeyboardController {
     const records = ids.map(id => findNodeContext(this.doc.root, id)).filter(context => context?.parent)
     if (records.length === 0) return false
     const anchor = records.at(-1)
-    const clones = records.map(record => cloneSubtreeWithFreshIds(record.node))
+    const clones = records.map(record => sanitizeFloatingClone(
+      cloneSubtreeWithFreshIds(record.node),
+      { asRootChild: anchor.parent === this.doc.root }
+    ))
     const command = insertSubtrees(this.doc, anchor.parent.id, clones, anchor.index + 1)
     if (!this.manager.execute(command)) return false
     this.selection.set(command.nodeIds)
@@ -369,7 +373,10 @@ export class KeyboardController {
   paste() {
     if (this.clipboard.length === 0) return false
     const parentId = this.selection.primaryId || this.doc.root.id
-    const nodes = this.clipboard.map(cloneSubtreeWithFreshIds)
+    const nodes = this.clipboard.map(node => sanitizeFloatingClone(
+      cloneSubtreeWithFreshIds(node),
+      { asRootChild: parentId === this.doc.root.id }
+    ))
     const command = insertSubtrees(this.doc, parentId, nodes)
     if (!this.manager.execute(command)) return false
     this.selection.set(command.nodeIds)
@@ -681,8 +688,10 @@ export function matchesBinding(event, binding) {
     && event.altKey === Boolean(binding.alt)
 }
 
-function isFormTarget(target) {
-  return Boolean(target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || '')))
+export function isFormTarget(target) {
+  if (!target) return false
+  if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName || '')) return true
+  return typeof target.closest === 'function' && Boolean(target.closest('[role="button"], [role="menuitem"], [role^="menuitem"]'))
 }
 
 export function findShortcutBinding(event) {
@@ -690,9 +699,13 @@ export function findShortcutBinding(event) {
 }
 
 export function dispatchGlobalShortcut(event, { formMode = false } = {}) {
+  if (event.defaultPrevented) return false
   const binding = findShortcutBinding(event)
   if (!binding || (formMode && !FORM_GLOBAL_ACTIONS.has(binding.action))) return false
   if (!hasAction(binding.action)) throw new Error(`快捷鍵 action「${binding.action}」尚未註冊`)
+  // Ctrl+V 必須保留瀏覽器原生 paste 事件；attachments 會先嘗試內部節點剪貼簿，
+  // 沒有內部資料時才接手 URL / 圖片，避免 keydown 與 paste 雙重處理。
+  if (binding.action === 'paste') return false
   event.preventDefault()
   runAction(binding.action, event)
   return true

@@ -27,7 +27,7 @@ import {
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
 import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
-import { ACTION_BINDINGS, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding } from '../js/editor/keyboard.js'
+import { ACTION_BINDINGS, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget } from '../js/editor/keyboard.js'
 import {
   createThemePreviewSvg,
   encodeLineToken,
@@ -319,7 +319,9 @@ test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽�
   const cleanups = [
     registerAction('save', () => calls.push('save')),
     registerAction('duplicate', () => calls.push('duplicate')),
-    registerAction('priority1', () => calls.push('priority1'))
+    registerAction('priority1', () => calls.push('priority1')),
+    registerAction('nextTheme', () => calls.push('nextTheme')),
+    registerAction('paste', () => calls.push('paste'))
   ]
   const event = (key, modifiers = {}) => ({
     key,
@@ -338,11 +340,18 @@ test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽�
   const copy = event('c', { ctrlKey: true })
   assert.equal(dispatchGlobalShortcut(copy, { formMode: true }), false)
   assert.equal(copy.prevented, false)
-  for (const current of [event('s', { ctrlKey: true }), event('d', { ctrlKey: true }), event('1', { ctrlKey: true })]) {
+  const paste = event('v', { ctrlKey: true })
+  assert.equal(dispatchGlobalShortcut(paste), false)
+  assert.equal(paste.prevented, false)
+  for (const current of [event('s', { ctrlKey: true }), event('d', { ctrlKey: true }), event('1', { ctrlKey: true }), event('F6')]) {
     assert.equal(dispatchGlobalShortcut(current, { formMode: true }), true)
     assert.equal(current.prevented, true)
   }
-  assert.deepEqual(calls, ['save', 'duplicate', 'priority1'])
+  assert.deepEqual(calls, ['save', 'duplicate', 'priority1', 'nextTheme'])
+  const handled = event('Enter', { defaultPrevented: true })
+  assert.equal(dispatchGlobalShortcut(handled), false)
+  assert.equal(isFormTarget({ tagName: 'BUTTON', isContentEditable: false }), true)
+  assert.equal(isFormTarget({ tagName: 'DIV', isContentEditable: false, closest: selector => selector.includes('role') ? {} : null }), true)
   assert.equal(findShortcutBinding(event('o', { ctrlKey: true })).action, 'toggleOutline')
   assert.throws(() => assertRegisteredActions(['definitely-missing-action']), /尚未註冊|未註冊/u)
   cleanups.forEach(cleanup => cleanup())

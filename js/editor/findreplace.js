@@ -2,7 +2,7 @@
  * 節點全文尋找、逐筆跳轉與可逆取代浮窗。
  */
 import { registerAction } from './actions.js'
-import { updateText } from './commands.js'
+import { updateRichText, updateText } from './commands.js'
 import { findNode, structuredCloneSafe, walkNodes } from './model.js'
 import { registerOverlay } from './render.js'
 
@@ -45,6 +45,7 @@ export function createReplaceAllCommand(doc, query, replacement, options = {}) {
           return {
             id: match.id,
             previous: node.text,
+            previousRichText: node.richText || null,
             next: replaceText(node.text, query, replacement, { ...options, all: true })
           }
         }).filter(record => record.previous !== record.next)
@@ -52,13 +53,20 @@ export function createReplaceAllCommand(doc, query, replacement, options = {}) {
       if (records.length === 0) return false
       records.forEach(record => {
         const node = findNode(doc.root, record.id)
-        if (node) node.text = record.next
+        if (node) {
+          node.text = record.next
+          // richText 會優先於 text 顯示；取代後退回純文字，避免兩份內容永久分歧。
+          node.richText = null
+        }
       })
       return true
     },
     undo: () => records?.forEach(record => {
       const node = findNode(doc.root, record.id)
-      if (node) node.text = record.previous
+      if (node) {
+        node.text = record.previous
+        node.richText = record.previousRichText
+      }
     }),
     get records() { return structuredCloneSafe(records || []) }
   }
@@ -138,7 +146,9 @@ export function initializeFindReplace(ctx) {
     const node = findNode(ctx.doc.root, match?.id)
     if (!node) return
     const next = replaceText(node.text, state.query, replaceInput.value)
-    if (ctx.manager.execute(updateText(ctx.doc, node.id, next))) {
+    const commands = [updateText(ctx.doc, node.id, next)]
+    if (node.richText) commands.push(updateRichText(ctx.doc, node.id, null))
+    if (ctx.manager.batch('取代節點文字', commands)) {
       recompute()
       ctx.notify('已取代目前結果')
     }

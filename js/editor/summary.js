@@ -12,9 +12,16 @@ export function getSummaryRange(root, selectedIds) {
   if (contexts.length < 2) return null
   const parent = contexts[0].parent
   if (contexts.some(context => context.parent !== parent)) return null
-  const indexes = contexts.map(context => context.index).sort((a, b) => a - b)
+  // 根節點 children 會左右交錯保存；概要的「連續」必須以同側視覺順序判定。
+  const visualSiblings = getVisualSiblings(parent, contexts[0].node)
+  const indexes = contexts.map(context => visualSiblings.findIndex(node => node.id === context.node.id)).sort((a, b) => a - b)
+  if (indexes.some(index => index < 0)) return null
   if (indexes.some((value, index) => index > 0 && value !== indexes[index - 1] + 1)) return null
-  return { parentId: parent.id, startIndex: indexes[0], endIndex: indexes.at(-1) }
+  return {
+    parentId: parent.id,
+    startNodeId: visualSiblings[indexes[0]].id,
+    endNodeId: visualSiblings[indexes.at(-1)].id
+  }
 }
 
 export function createSummaryCommand(doc, selectedIds, overrides = {}) {
@@ -52,12 +59,19 @@ export function updateSummaryCommand(doc, summaryId, patch, description = '調�
     do: () => {
       const summary = doc.summaries?.find(item => item.id === summaryId)
       if (!summary) return false
-      if (!previous) previous = structuredCloneSafe(summary)
-      Object.assign(summary, structuredCloneSafe(next))
-      const parent = findNode(doc.root, summary.parentId)
+      const candidate = { ...structuredCloneSafe(summary), ...structuredCloneSafe(next) }
+      const parent = findNode(doc.root, candidate.parentId)
       if (!parent || parent.children.length === 0) return false
-      summary.startIndex = Math.max(0, Math.min(parent.children.length - 1, Number(summary.startIndex) || 0))
-      summary.endIndex = Math.max(summary.startIndex, Math.min(parent.children.length - 1, Number(summary.endIndex) || 0))
+      const anchors = normalizeSummaryAnchors(candidate, parent)
+      if (!anchors) return false
+      Object.assign(candidate, anchors)
+      delete candidate.startIndex
+      delete candidate.endIndex
+      if (JSON.stringify(summary) === JSON.stringify(candidate)) return false
+      if (!previous) previous = structuredCloneSafe(summary)
+      Object.assign(summary, candidate)
+      delete summary.startIndex
+      delete summary.endIndex
       return JSON.stringify(summary) !== JSON.stringify(previous)
     },
     undo: () => {
@@ -86,7 +100,7 @@ export function removeSummaryCommand(doc, summaryId) {
 }
 
 export function summaryGeometry(summary, parent, positions) {
-  const covered = parent.children.slice(summary.startIndex, summary.endIndex + 1).map(child => positions.get(child.id)).filter(Boolean)
+  const covered = getSummaryNodes(summary, parent).map(child => positions.get(child.id)).filter(Boolean)
   if (covered.length === 0) return null
   const top = Math.min(...covered.map(position => position.y)) - 5
   const bottom = Math.max(...covered.map(position => position.y + position.h)) + 5
@@ -101,6 +115,18 @@ export function summaryGeometry(summary, parent, positions) {
     labelX: x + 32,
     path: `M ${x + depth} ${top} C ${x + 5} ${top}, ${x + 8} ${middle - depth}, ${x} ${middle} C ${x + 8} ${middle + depth}, ${x + 5} ${bottom}, ${x + depth} ${bottom}`
   }
+}
+
+export function getSummaryNodes(summary, parent) {
+  if (!summary || !parent) return []
+  const anchors = normalizeSummaryAnchors(summary, parent)
+  if (!anchors) return []
+  const startNode = parent.children.find(node => node.id === anchors.startNodeId)
+  if (!startNode) return []
+  const siblings = getVisualSiblings(parent, startNode)
+  const start = siblings.findIndex(node => node.id === anchors.startNodeId)
+  const end = siblings.findIndex(node => node.id === anchors.endNodeId)
+  return start >= 0 && end >= start ? siblings.slice(start, end + 1) : []
 }
 
 export function initializeSummaries(ctx) {
@@ -181,8 +207,8 @@ function drawSummaries(overlayCtx, appCtx, selectSummary, editSummary) {
     overlayCtx.nodesLayer.append(label)
 
     if (selected) {
-      for (const edge of ['startIndex', 'endIndex']) {
-        const y = edge === 'startIndex' ? geometry.top : geometry.bottom
+      for (const edge of ['startNodeId', 'endNodeId']) {
+        const y = edge === 'startNodeId' ? geometry.top : geometry.bottom
         const control = svgElement('circle', { cx: geometry.x + 20, cy: y, r: 7, class: 'summary-boundary', 'data-summary-edge': edge })
         control.addEventListener('pointerdown', event => beginBoundaryDrag(event, summary, parent, edge, geometry, appCtx, control))
         overlayCtx.svgLayer.append(control)
@@ -206,17 +232,48 @@ function beginBoundaryDrag(event, summary, parent, edge, geometry, ctx, control)
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', end)
     window.removeEventListener('pointercancel', end)
-    const candidates = parent.children.map((child, index) => ({ index, position: ctx.getPositions().get(child.id) })).filter(item => item.position)
+    const covered = getSummaryNodes(summary, parent)
+    const anchor = covered[0]
+    const visualSiblings = anchor ? getVisualSiblings(parent, anchor) : []
+    const candidates = visualSiblings.map((child, index) => ({ child, index, position: ctx.getPositions().get(child.id) })).filter(item => item.position)
     const nearest = candidates.sort((a, b) => Math.abs(centerY(a.position) - latestY) - Math.abs(centerY(b.position) - latestY))[0]
     if (!nearest) { ctx.renderAll(); return }
-    const patch = edge === 'startIndex'
-      ? { startIndex: Math.min(nearest.index, summary.endIndex) }
-      : { endIndex: Math.max(nearest.index, summary.startIndex) }
+    const startIndex = visualSiblings.findIndex(child => child.id === covered[0]?.id)
+    const endIndex = visualSiblings.findIndex(child => child.id === covered.at(-1)?.id)
+    const patch = edge === 'startNodeId'
+      ? { startNodeId: visualSiblings[Math.min(nearest.index, endIndex)]?.id }
+      : { endNodeId: visualSiblings[Math.max(nearest.index, startIndex)]?.id }
     ctx.manager.execute(updateSummaryCommand(ctx.doc, summary.id, patch, '調整概要範圍'))
   }
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', end)
   window.addEventListener('pointercancel', end)
+}
+
+function normalizeSummaryAnchors(summary, parent) {
+  let startNodeId = summary.startNodeId
+  let endNodeId = summary.endNodeId
+  // 舊文件仍可讀取 index；一旦更新便遷移為穩定 nodeId 錨點。
+  if (!startNodeId && Number.isFinite(Number(summary.startIndex))) {
+    startNodeId = parent.children[Math.max(0, Math.min(parent.children.length - 1, Number(summary.startIndex)))]?.id
+  }
+  if (!endNodeId && Number.isFinite(Number(summary.endIndex))) {
+    endNodeId = parent.children[Math.max(0, Math.min(parent.children.length - 1, Number(summary.endIndex)))]?.id
+  }
+  const startNode = parent.children.find(node => node.id === startNodeId)
+  const endNode = parent.children.find(node => node.id === endNodeId)
+  if (!startNode || !endNode) return null
+  const siblings = getVisualSiblings(parent, startNode)
+  const start = siblings.findIndex(node => node.id === startNode.id)
+  const end = siblings.findIndex(node => node.id === endNode.id)
+  return start >= 0 && end >= start ? { startNodeId, endNodeId } : null
+}
+
+function getVisualSiblings(parent, anchor) {
+  if (anchor?.side === 'left' || anchor?.side === 'right') {
+    return parent.children.filter(node => node.side === anchor.side)
+  }
+  return parent.children.slice()
 }
 
 function centerY(position) { return position.y + position.h / 2 }

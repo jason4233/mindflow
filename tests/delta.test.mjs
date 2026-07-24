@@ -7,6 +7,7 @@ import { createDefaultDoc, createNode, findNode } from '../js/editor/model.js'
 import { CommandManager } from '../js/editor/commands.js'
 import {
   createRelationCommand,
+  deleteNodesWithOverlaysCommand,
   relationGeometry,
   removeRelationCommand,
   setRelationStyleCommand,
@@ -15,6 +16,7 @@ import {
 import {
   createSummaryCommand,
   getSummaryRange,
+  getSummaryNodes,
   removeSummaryCommand,
   summaryGeometry,
   updateSummaryCommand
@@ -29,6 +31,7 @@ import {
   attachFloatingNodeCommand,
   createFloatingNodeCommand,
   getFloatingMeta,
+  sanitizeFloatingClone,
   updateFloatingPositionCommand
 } from '../js/editor/floating.js'
 import { createProgressSvg, createPrioritySvg, flattenStickerManifest, toggleNodeIconCommand } from '../js/editor/iconpanel.js'
@@ -69,23 +72,82 @@ test('關聯線幾何使用 cubic Bézier 且控制點偏移可預測', () => {
   assert.equal(geometry.cp2.y, geometry.baseCp2.y + 30)
 })
 
-test('概要只接受同父連續同級，range 調整與移除可復原', () => {
+test('概要依同側視覺順序建立並以 nodeId 錨定，兄弟增刪不會漂移', () => {
   const doc = createDefaultDoc()
-  const ids = doc.root.children.slice(0, 3).map(node => node.id)
-  assert.deepEqual(getSummaryRange(doc.root, ids), { parentId: doc.root.id, startIndex: 0, endIndex: 2 })
-  assert.equal(getSummaryRange(doc.root, [ids[0], ids[2]]), null)
+  const right = doc.root.children.filter(node => node.side === 'right')
+  const left = doc.root.children.filter(node => node.side === 'left')
+  const ids = right.map(node => node.id)
+  assert.deepEqual(getSummaryRange(doc.root, ids), {
+    parentId: doc.root.id,
+    startNodeId: ids[0],
+    endNodeId: ids[1]
+  })
+  assert.equal(getSummaryRange(doc.root, [right[0].id, left[0].id]), null)
   const manager = new CommandManager()
   const add = createSummaryCommand(doc, ids, { id: 'sum-delta', text: '三段概要' })
   manager.execute(add)
-  manager.execute(updateSummaryCommand(doc, add.summary.id, { startIndex: 1, text: '後兩段' }))
-  assert.equal(doc.summaries[0].startIndex, 1)
+  const inserted = createNode('先插入', { side: 'right' })
+  doc.root.children.unshift(inserted)
+  assert.deepEqual(getSummaryNodes(doc.summaries[0], doc.root).map(node => node.id), ids)
+  manager.execute(updateSummaryCommand(doc, add.summary.id, { startNodeId: ids[1], text: '後一段' }))
+  assert.equal(doc.summaries[0].startNodeId, ids[1])
   manager.execute(removeSummaryCommand(doc, add.summary.id))
   manager.undo()
-  assert.equal(doc.summaries[0].text, '後兩段')
+  assert.equal(doc.summaries[0].text, '後一段')
   const positions = new Map(doc.root.children.map((node, index) => [node.id, { x: 120, y: index * 55, w: 80, h: 30 }]))
   const geometry = summaryGeometry(doc.summaries[0], doc.root, positions)
   assert.ok(geometry.bottom > geometry.top)
   assert.match(geometry.path, /^M .+ C /u)
+})
+
+test('概要更新驗證失敗時不修改懸空資料', () => {
+  const doc = createDefaultDoc()
+  doc.summaries.push({
+    id: 'sum-orphan',
+    parentId: 'missing-parent',
+    startNodeId: 'missing-a',
+    endNodeId: 'missing-b',
+    text: '原文',
+    style: {}
+  })
+  const command = updateSummaryCommand(doc, 'sum-orphan', { text: '不該寫入' })
+  assert.equal(command.do(), false)
+  assert.equal(doc.summaries[0].text, '原文')
+})
+
+test('關聯線重接端點會拒絕既有的相同配對', () => {
+  const doc = createDefaultDoc()
+  const [a, b, c] = doc.root.children
+  const manager = new CommandManager()
+  const first = createRelationCommand(doc, a.id, b.id, { id: 'rel-ab' })
+  const second = createRelationCommand(doc, a.id, c.id, { id: 'rel-ac' })
+  manager.execute(first)
+  manager.execute(second)
+  assert.equal(manager.execute(updateRelationCommand(doc, second.item.id, { toId: b.id })), false)
+  assert.equal(doc.relations.length, 2)
+  assert.equal(doc.relations.find(item => item.id === second.item.id).toId, c.id)
+})
+
+test('刪除節點同步清理關聯線與概要，undo/redo 完整還原', () => {
+  const doc = createDefaultDoc()
+  const right = doc.root.children.filter(node => node.side === 'right')
+  const left = doc.root.children.find(node => node.side === 'left')
+  const middle = createNode('概要中段', { side: 'right' })
+  doc.root.children.splice(doc.root.children.indexOf(right[0]) + 1, 0, middle)
+  const manager = new CommandManager()
+  manager.execute(createRelationCommand(doc, middle.id, left.id, { id: 'rel-cleanup' }))
+  manager.execute(createSummaryCommand(doc, [right[0].id, middle.id, right[1].id], { id: 'sum-cleanup' }))
+  manager.execute(deleteNodesWithOverlaysCommand(doc, [middle.id]))
+  assert.equal(findNode(doc.root, middle.id), null)
+  assert.equal(doc.relations.length, 0)
+  assert.equal(doc.summaries.length, 0)
+  manager.undo()
+  assert.ok(findNode(doc.root, middle.id))
+  assert.equal(doc.relations[0].id, 'rel-cleanup')
+  assert.equal(doc.summaries[0].id, 'sum-cleanup')
+  manager.redo()
+  assert.equal(doc.relations.length, 0)
+  assert.equal(doc.summaries.length, 0)
 })
 
 test('備註/連結/圖片欄位以同一 command 原子更新與復原', () => {
@@ -149,9 +211,23 @@ test('懸浮節點座標可持久化、移動、掛回樹並 undo', () => {
   assert.deepEqual(getFloatingMeta(findNode(doc.root, add.nodeId)), { x: 400, y: 220 })
 })
 
+test('懸浮節點 clone 掛入樹時清 token，root 複製時位移且清除後代 token', () => {
+  const source = createNode('懸浮 clone', {
+    icons: ['__floating__:300,200'],
+    children: [createNode('後代', { icons: ['__floating__:10,20'] })]
+  })
+  const attached = sanitizeFloatingClone(structuredClone(source), { asRootChild: false })
+  assert.equal(getFloatingMeta(attached), null)
+  assert.equal(getFloatingMeta(attached.children[0]), null)
+  const duplicated = sanitizeFloatingClone(structuredClone(source), { asRootChild: true })
+  assert.deepEqual(getFloatingMeta(duplicated), { x: 332, y: 224 })
+  assert.equal(getFloatingMeta(duplicated.children[0]), null)
+})
+
 test('尋找與取代支援逐筆/全部並保留 undo', () => {
   const doc = createDefaultDoc()
   doc.root.text = 'Alpha alpha'
+  doc.root.richText = '<b>Alpha</b> alpha'
   doc.root.children[0].text = 'alpha beta alpha'
   const matches = findTextMatches(doc.root, 'alpha')
   assert.equal(matches.length, 2)
@@ -161,9 +237,11 @@ test('尋找與取代支援逐筆/全部並保留 undo', () => {
   const command = createReplaceAllCommand(doc, 'alpha', '完成')
   manager.execute(command)
   assert.equal(doc.root.text, '完成 完成')
+  assert.equal(doc.root.richText, null)
   assert.equal(doc.root.children[0].text, '完成 beta 完成')
   manager.undo()
   assert.equal(doc.root.text, 'Alpha alpha')
+  assert.equal(doc.root.richText, '<b>Alpha</b> alpha')
 })
 
 test('全部展開/收起只改有子節點的非根節點', () => {

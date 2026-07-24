@@ -1,10 +1,11 @@
 /**
  * 右側 Style / Theme / Background 面板；所有文件異動透過 action registry 執行。
  */
-import { registerAction, runAction } from './actions.js'
+import { hasAction, registerAction, runAction } from './actions.js'
 import {
   backgroundPresets,
   createThemePreviewSvg,
+  getTheme,
   getThemeList,
   parseLineToken
 } from './themes.js'
@@ -28,6 +29,11 @@ const STRUCTURES = [
   ['tree-right', '☷', '目錄樹'], ['fishbone', '≪', '魚骨圖'], ['timeline-h', '↦', '時間軸']
 ]
 
+const LAYOUT_CARDS = [
+  ['mindmap', '心智圖'], ['logic-right', '邏輯圖'], ['org', '組織圖'],
+  ['tree', '目錄樹'], ['timeline-h', '時間軸'], ['fishbone', '魚骨圖']
+]
+
 export function initializeSidepanel() {
   const panel = document.querySelector('#sidepanel')
   const title = document.querySelector('#sidepanel-title')
@@ -41,6 +47,7 @@ export function initializeSidepanel() {
   const views = buildViews(content)
   mountStyleControls(views.style)
   mountThemeControls(views.theme)
+  mountLayoutControls(views.layout)
 
   const setOpen = open => panel.classList.toggle('is-collapsed', !open)
   const showTab = name => {
@@ -119,7 +126,16 @@ function buildViews(content) {
         </section>
       </div>
     </div>
-    <div class="panel-view" data-panel-view="layout" hidden><div class="panel-empty">全域佈局縮圖由工作流 GAMMA 接入；目前可先在「樣式 → 結構」切換方向。</div></div>
+    <div class="panel-view" data-panel-view="layout" hidden>
+      <section class="panel-section">
+        <h3>全域佈局</h3>
+        <div class="fix2-layout-grid">${LAYOUT_CARDS.map(([id, label]) => `
+          <button class="fix2-layout-card" type="button" data-fix2-layout="${id}" title="${label}">
+            <span>${createLayoutMiniSvg(id)}</span><strong>${label}</strong>
+          </button>`).join('')}</div>
+        <button class="panel-primary-button fix2-tidy-button" type="button" data-fix2-tidy>一鍵整理（Ctrl+Shift+L）</button>
+      </section>
+    </div>
     <div class="panel-view" data-panel-view="icon" hidden><div class="panel-empty">節點圖示庫由工作流 DELTA 接入。</div></div>`
   return Object.fromEntries(Array.from(content.querySelectorAll('[data-panel-view]'), view => [view.dataset.panelView, view]))
 }
@@ -139,14 +155,23 @@ function mountStyleControls(view) {
   view.querySelectorAll('[data-style-input]').forEach(input => input.addEventListener('change', () => {
     const key = input.dataset.styleInput
     const numeric = ['borderWidth', 'lineWidth'].includes(key)
-    runAction('applyStyle', { [key]: numeric ? Number(input.value) : input.value })
+    const value = numeric ? Number(input.value) : input.value
+    if (key === 'lineWidth' && runAction('getSelectedOverlay')?.type === 'relation') {
+      runAction('applyRelationStyle', { lineWidth: value })
+    } else {
+      runAction('applyStyle', { [key]: value })
+    }
   }))
 
   const lineShape = view.querySelector('[data-line-shape]')
   const lineStyle = view.querySelector('[data-line-style]')
-  const updateLine = () => runAction('setLineStyle', { shape: lineShape.value, style: lineStyle.value })
-  lineShape.addEventListener('change', updateLine)
-  lineStyle.addEventListener('change', updateLine)
+  lineShape.addEventListener('change', () => {
+    if (runAction('getSelectedOverlay')?.type !== 'relation') runAction('setLineStyle', { shape: lineShape.value })
+  })
+  lineStyle.addEventListener('change', () => {
+    if (runAction('getSelectedOverlay')?.type === 'relation') runAction('applyRelationStyle', { lineStyle: lineStyle.value })
+    else runAction('setLineStyle', { style: lineStyle.value })
+  })
 
   view.querySelectorAll('[data-structure]').forEach(button => button.addEventListener('click', () => runAction('setLayout', button.dataset.structure)))
   view.querySelector('[data-layout-direction]').addEventListener('change', event => runAction('setLayout', event.target.value))
@@ -157,6 +182,21 @@ function mountStyleControls(view) {
     })
     input.addEventListener('change', () => runAction('commitDocumentSpacingPreview', input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) }))
   })
+}
+
+function mountLayoutControls(view) {
+  view.querySelectorAll('[data-fix2-layout]').forEach(button => {
+    button.addEventListener('click', () => runLayoutAction('setLayout', button.dataset.fix2Layout))
+  })
+  view.querySelector('[data-fix2-tidy]')?.addEventListener('click', () => runLayoutAction('tidyLayout'))
+}
+
+function runLayoutAction(action, ...args) {
+  if (!hasAction(action)) {
+    showPanelToast('此佈局即將推出')
+    return false
+  }
+  return runAction(action, ...args)
 }
 
 function mountThemeControls(view) {
@@ -270,6 +310,7 @@ function renderThemeGrid(container) {
     card.addEventListener('keydown', event => {
       if (event.key !== 'Enter' && event.key !== ' ') return
       event.preventDefault()
+      event.stopPropagation()
       selectTheme()
     })
     container.append(card)
@@ -317,7 +358,7 @@ function refreshPanel(views) {
     setValue(styleView, '[data-style-input="borderStyle"]', appearance.borderStyle)
     setValue(styleView, '[data-style-input="borderWidth"]', appearance.borderWidth)
     setValue(styleView, '[data-style-input="lineWidth"]', appearance.lineWidth)
-    const line = parseLineToken(appearance.lineStyle, 'solid', 'curved')
+    const line = parseLineToken(appearance.lineStyle, 'solid', getTheme(snapshot.doc.themeId).lineShape)
     setValue(styleView, '[data-line-style]', line.lineStyle)
     setValue(styleView, '[data-line-shape]', line.lineShape)
   }
@@ -339,6 +380,50 @@ function refreshPanel(views) {
   themeView.querySelector('[data-watermark-count]').textContent = `${snapshot.rootAppearance.watermarkText.length}/30`
   themeView.querySelector('[data-watermark-opacity-value]').textContent = `${snapshot.rootAppearance.watermarkOpacity}%`
   themeView.querySelector('[data-watermark-size-value]').textContent = `${snapshot.rootAppearance.watermarkSize}px`
+}
+
+function createLayoutMiniSvg(id) {
+  const common = 'fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"'
+  const node = (x, y, w = 17, h = 8) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="white" stroke="currentColor"/>`
+  let paths = ''
+  let nodes = ''
+  if (id === 'org') {
+    paths = `<path d="M45 19V29M18 29H72M18 29V40M45 29V40M72 29V40" ${common}/>`
+    nodes = `${node(34,10,22,9)}${node(9,40)}${node(36,40)}${node(63,40)}`
+  } else if (id === 'tree') {
+    paths = `<path d="M22 15V47M22 26H39M22 39H48M22 47H36" ${common}/>`
+    nodes = `${node(6,10,20,9)}${node(39,22)}${node(48,35)}${node(36,44)}`
+  } else if (id === 'timeline-h') {
+    paths = `<path d="M10 31H80M28 31V19M48 31V43M68 31V19" ${common}/>`
+    nodes = `${node(19,10)}${node(39,43)}${node(59,10)}`
+  } else if (id === 'fishbone') {
+    paths = `<path d="M12 31H78M30 31L20 17M45 31L35 45M60 31L51 17" ${common}/>`
+    nodes = `${node(69,26)}${node(8,9,15,8)}${node(27,45,15,8)}${node(44,9,15,8)}`
+  } else {
+    const both = id === 'mindmap'
+    paths = both
+      ? `<path d="M34 31H15M34 31H70M15 31V17M15 31V45M70 31V17M70 31V45" ${common}/>`
+      : `<path d="M28 31H68M48 31V17M48 31V45M68 31V31" ${common}/>`
+    nodes = both
+      ? `${node(29,26,28,10)}${node(3,10)}${node(3,43)}${node(70,10)}${node(70,43)}`
+      : `${node(5,26,24,10)}${node(48,10)}${node(48,43)}${node(68,26)}`
+  }
+  return `<svg viewBox="0 0 90 62" aria-hidden="true">${paths}${nodes}</svg>`
+}
+
+function showPanelToast(message) {
+  let toast = document.querySelector('[data-fix2-toast]')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.dataset.fix2Toast = 'true'
+    toast.className = 'fix2-toast'
+    toast.setAttribute('role', 'status')
+    document.body.append(toast)
+  }
+  toast.textContent = message
+  toast.hidden = false
+  window.clearTimeout(showPanelToast.timer)
+  showPanelToast.timer = window.setTimeout(() => { toast.hidden = true }, 1800)
 }
 
 function mountPicker(mount, { value, defaultColor, onChange, onPreview = onChange }) {

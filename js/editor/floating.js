@@ -20,6 +20,28 @@ export function getFloatingMeta(node) {
   }
 }
 
+export function stripFloatingMeta(node) {
+  if (!node || typeof node !== 'object') return node
+  node.icons = Array.isArray(node.icons)
+    ? node.icons.filter(icon => !String(icon).startsWith(FLOATING_PREFIX))
+    : []
+  for (const child of node.children || []) stripFloatingMeta(child)
+  return node
+}
+
+export function sanitizeFloatingClone(node, { asRootChild = false, offset = { x: 32, y: 24 } } = {}) {
+  const meta = getFloatingMeta(node)
+  stripFloatingMeta(node)
+  // 只有 root 直屬節點能保留懸浮語意；複製時位移，避免 Ctrl+D 完全重疊。
+  if (asRootChild && meta) {
+    node.icons.push(floatingToken({
+      x: meta.x + finite(offset?.x, 32),
+      y: meta.y + finite(offset?.y, 24)
+    }))
+  }
+  return node
+}
+
 export function createFloatingNodeCommand(doc, point, overrides = {}) {
   const node = createNode(overrides.text || '懸浮主題', {
     id: overrides.id || createId('node'),
@@ -136,8 +158,10 @@ function drawFloatingNodes({ doc, positions, nodesLayer, svgLayer, nodeLookup },
   const connectionPaths = Array.from(svgLayer.querySelectorAll(':scope > .connection-path'))
   for (const [id, position] of positions) {
     const node = findNode(doc.root, id)
+    const context = findNodeContext(doc.root, id)
     const meta = getFloatingMeta(node)
-    if (!meta) continue
+    // 舊資料若把 token 洩漏到樹內子節點，不再讓它脫離父節點與隱藏連線。
+    if (!meta || context?.parent !== doc.root) continue
     // overlay 先改 positions，讓後續關聯線/概要 hook 讀到自由座標。
     position.x = meta.x
     position.y = meta.y

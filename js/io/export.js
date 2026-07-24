@@ -204,10 +204,15 @@ function measureSvgNode(node, depth, activeTheme, cache, options) {
   const paddingY = finiteNumber(appearance.paddingY, depth === 0 ? 12 : 8, 0, 120)
   const maxTextWidth = finiteNumber(options.maxTextWidth, DEFAULT_MAX_TEXT_WIDTH, 40, 2000)
   const lineHeight = fontSize * finiteNumber(appearance.lineHeight, 1.35, 0.8, 4)
-  const textLayout = wrapSvgText(node.text, fontSize, maxTextWidth)
+  const textLayout = wrapSvgRichText(node.richText, node.text, fontSize, maxTextWidth)
   const iconPrefix = Array.isArray(node.icons) && node.icons.length > 0 ? `${node.icons.join(' ')} ` : ''
-  if (iconPrefix) textLayout.lines[0] = `${iconPrefix}${textLayout.lines[0]}`
-  textLayout.width = Math.min(maxTextWidth, Math.max(...textLayout.lines.map(line => estimateTextWidth(line, fontSize)), 0))
+  if (iconPrefix) {
+    textLayout.lines[0] = `${iconPrefix}${textLayout.lines[0]}`
+    textLayout.runLines[0].unshift({ text: iconPrefix, style: {} })
+  }
+  textLayout.width = Math.min(maxTextWidth, Math.max(...textLayout.runLines.map(line => {
+    return line.reduce((width, run) => width + estimateTextWidth(run.text, run.style.fontSize || fontSize), 0)
+  }), 0))
   textLayout.lineHeight = lineHeight
   textLayout.fontSize = fontSize
 
@@ -249,6 +254,87 @@ function wrapSvgText(value, fontSize, maxWidth) {
   }
   if (lines.length === 0) lines.push('')
   return { lines, width: Math.max(...lines.map(line => estimateTextWidth(line, fontSize)), 0) }
+}
+
+function wrapSvgRichText(richText, plainText, fontSize, maxWidth) {
+  const sourceRuns = richText ? parseRichTextRuns(richText) : []
+  const runs = sourceRuns.length > 0 ? sourceRuns : [{ text: String(plainText ?? ''), style: {} }]
+  const runLines = [[]]
+  const lines = ['']
+  let width = 0
+
+  const nextLine = () => {
+    runLines.push([])
+    lines.push('')
+    width = 0
+  }
+  for (const run of runs) {
+    for (const character of Array.from(run.text)) {
+      if (character === '\r') continue
+      if (character === '\n') {
+        nextLine()
+        continue
+      }
+      const characterWidth = estimateTextWidth(character, run.style.fontSize || fontSize)
+      if (lines.at(-1) && width + characterWidth > maxWidth) nextLine()
+      lines[lines.length - 1] += character
+      width += characterWidth
+      const currentRuns = runLines.at(-1)
+      const previous = currentRuns.at(-1)
+      if (previous && sameTextStyle(previous.style, run.style)) previous.text += character
+      else currentRuns.push({ text: character, style: { ...run.style } })
+    }
+  }
+  if (runLines.length === 0) {
+    runLines.push([])
+    lines.push('')
+  }
+  return { lines, runLines, width: Math.max(...lines.map(line => estimateTextWidth(line, fontSize)), 0) }
+}
+
+export function parseRichTextRuns(html) {
+  const tokens = String(html || '').match(/<[^>]*>|[^<]+/gu) || []
+  const stack = [{ tag: '', style: {} }]
+  const runs = []
+  const append = (text, style = stack.at(-1).style) => {
+    if (!text) return
+    const decoded = decodeHtmlEntities(text).replace(/\u00a0/gu, ' ')
+    if (!decoded) return
+    const previous = runs.at(-1)
+    if (previous && sameTextStyle(previous.style, style)) previous.text += decoded
+    else runs.push({ text: decoded, style: { ...style } })
+  }
+
+  for (const token of tokens) {
+    if (!token.startsWith('<')) {
+      append(token)
+      continue
+    }
+    if (/^<\s*br\b/iu.test(token)) {
+      append('\n')
+      continue
+    }
+    const closing = token.match(/^<\s*\/\s*([a-z0-9-]+)/iu)
+    if (closing) {
+      const tag = closing[1].toLowerCase()
+      const index = stack.map(entry => entry.tag).lastIndexOf(tag)
+      if (index > 0) stack.splice(index)
+      if (/^(div|p|li)$/u.test(tag) && !runs.at(-1)?.text.endsWith('\n')) append('\n')
+      continue
+    }
+    if (/^<\s*[!?]/u.test(token)) continue
+    const opening = token.match(/^<\s*([a-z0-9-]+)/iu)
+    if (!opening) continue
+    const tag = opening[1].toLowerCase()
+    if (/^(div|p|li)$/u.test(tag) && runs.length > 0 && !runs.at(-1).text.endsWith('\n')) append('\n')
+    const style = { ...stack.at(-1).style, ...styleFromTag(tag, token) }
+    if (!/\/\s*>$/u.test(token) && !/^(br|hr|img|meta|link|input)$/u.test(tag)) stack.push({ tag, style })
+  }
+  while (runs.at(-1)?.text.endsWith('\n')) {
+    runs[runs.length - 1].text = runs.at(-1).text.slice(0, -1)
+    if (!runs.at(-1).text) runs.pop()
+  }
+  return runs
 }
 
 function estimateTextWidth(value, fontSize) {
@@ -350,11 +436,81 @@ function svgNode(node, position, appearance, branchColor, textLayout) {
   const firstY = textAreaCenterY - ((textLayout.lines.length - 1) * lineHeight) / 2
   const decoration = [appearance.underline ? 'underline' : '', appearance.strike ? 'line-through' : ''].filter(Boolean).join(' ')
   pieces.push(`<text x="${formatNumber(textX)}" y="${formatNumber(firstY)}" text-anchor="${anchor}" dominant-baseline="central" font-family="${escapeXml(appearance.fontFamily)}" font-size="${formatNumber(textLayout.fontSize)}" font-weight="${appearance.bold ? '700' : '400'}" font-style="${appearance.italic ? 'italic' : 'normal'}"${decoration ? ` text-decoration="${decoration}"` : ''} fill="${escapeXml(appearance.textColor)}">`)
-  textLayout.lines.forEach((line, index) => {
-    pieces.push(`<tspan x="${formatNumber(textX)}"${index === 0 ? '' : ` dy="${formatNumber(lineHeight)}"`}>${escapeXml(line)}</tspan>`)
+  textLayout.runLines.forEach((line, index) => {
+    const runs = line.length > 0 ? line : [{ text: '\u200b', style: {} }]
+    runs.forEach((run, runIndex) => {
+      const position = runIndex === 0
+        ? ` x="${formatNumber(textX)}"${index === 0 ? '' : ` dy="${formatNumber(lineHeight)}"`}`
+        : ''
+      pieces.push(`<tspan${position}${svgRunAttributes(run.style)}>${escapeXml(run.text)}</tspan>`)
+    })
   })
   pieces.push('</text></g>')
   return pieces.join('')
+}
+
+function styleFromTag(tag, token) {
+  const style = {}
+  if (tag === 'b' || tag === 'strong') style.bold = true
+  if (tag === 'i' || tag === 'em') style.italic = true
+  if (tag === 'u') style.underline = true
+  if (tag === 's' || tag === 'strike' || tag === 'del') style.strike = true
+  const styleText = readHtmlAttribute(token, 'style')
+  for (const declaration of styleText.split(';')) {
+    const splitAt = declaration.indexOf(':')
+    if (splitAt < 1) continue
+    const key = declaration.slice(0, splitAt).trim().toLowerCase()
+    const value = declaration.slice(splitAt + 1).trim()
+    if (key === 'color' && isSvgColor(value)) style.color = value
+    if (key === 'font-weight' && (/bold/iu.test(value) || Number(value) >= 600)) style.bold = true
+    if (key === 'font-style' && /italic|oblique/iu.test(value)) style.italic = true
+    if (key === 'font-family' && value) style.fontFamily = value.replace(/["']/gu, '')
+    if (key === 'font-size') {
+      const size = Number.parseFloat(value)
+      if (Number.isFinite(size)) style.fontSize = finiteNumber(size, 14, 6, 120)
+    }
+    if (key === 'text-decoration' && /underline/iu.test(value)) style.underline = true
+    if (key === 'text-decoration' && /line-through/iu.test(value)) style.strike = true
+  }
+  const color = readHtmlAttribute(token, 'color')
+  if (tag === 'font' && isSvgColor(color)) style.color = color
+  const face = readHtmlAttribute(token, 'face')
+  if (tag === 'font' && face) style.fontFamily = face.replace(/["']/gu, '')
+  return style
+}
+
+function readHtmlAttribute(token, name) {
+  const match = token.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'iu'))
+  return decodeHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? '')
+}
+
+function decodeHtmlEntities(value) {
+  return String(value).replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/giu, (entity, code) => {
+    const normalized = code.toLowerCase()
+    if (normalized.startsWith('#x')) return String.fromCodePoint(Number.parseInt(normalized.slice(2), 16))
+    if (normalized.startsWith('#')) return String.fromCodePoint(Number.parseInt(normalized.slice(1), 10))
+    return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' })[normalized] || entity
+  })
+}
+
+function sameTextStyle(left, right) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {})
+}
+
+function isSvgColor(value) {
+  return /^(?:#[\da-f]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\)|[a-z]+)$/iu.test(String(value || '').trim())
+}
+
+function svgRunAttributes(style = {}) {
+  const attributes = []
+  if (style.bold) attributes.push('font-weight="700"')
+  if (style.italic) attributes.push('font-style="italic"')
+  if (style.color) attributes.push(`fill="${escapeXml(style.color)}"`)
+  if (style.fontFamily) attributes.push(`font-family="${escapeXml(style.fontFamily)}"`)
+  if (style.fontSize) attributes.push(`font-size="${formatNumber(style.fontSize)}"`)
+  const decoration = [style.underline ? 'underline' : '', style.strike ? 'line-through' : ''].filter(Boolean).join(' ')
+  if (decoration) attributes.push(`text-decoration="${decoration}"`)
+  return attributes.length > 0 ? ` ${attributes.join(' ')}` : ''
 }
 
 function buildBranchLookup(root, activeTheme) {

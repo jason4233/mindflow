@@ -2,10 +2,10 @@
  * 關聯線 command、貝茲 overlay 與控制點互動；不介入樹狀連接線核心渲染。
  */
 import { registerAction, runAction } from './actions.js'
-import { deleteNodes, setStyle } from './commands.js'
+import { deleteNodes } from './commands.js'
 import { createId, findNode, findNodeContext, structuredCloneSafe } from './model.js'
-import { encodeLineToken } from './themes.js'
 import { registerOverlay } from './render.js'
+import { getSummaryNodes } from './summary.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const DEFAULT_STYLE = Object.freeze({ color: '#f17e2e', width: 2, lineStyle: 'dashed' })
@@ -38,7 +38,10 @@ export function updateRelationCommand(doc, relationId, patch, description = '調
       if (!relation) return false
       if (nextPatch.fromId && !findNode(doc.root, nextPatch.fromId)) return false
       if (nextPatch.toId && !findNode(doc.root, nextPatch.toId)) return false
-      if ((nextPatch.fromId || relation.fromId) === (nextPatch.toId || relation.toId)) return false
+      const nextFromId = nextPatch.fromId || relation.fromId
+      const nextToId = nextPatch.toId || relation.toId
+      if (nextFromId === nextToId) return false
+      if (doc.relations.some(item => item.id !== relationId && item.fromId === nextFromId && item.toId === nextToId)) return false
       if (!previous) previous = structuredCloneSafe(relation)
       const { style, ...fields } = structuredCloneSafe(nextPatch)
       Object.assign(relation, fields)
@@ -64,6 +67,33 @@ export function setRelationStyleCommand(doc, relationId, patch) {
   if (patch.width !== undefined || patch.lineWidth !== undefined) stylePatch.width = Number(patch.width ?? patch.lineWidth)
   if (patch.lineStyle || patch.style) stylePatch.lineStyle = patch.lineStyle || patch.style
   return updateRelationCommand(doc, relationId, { style: stylePatch }, '設定關聯線樣式')
+}
+
+export function deleteNodesWithOverlaysCommand(doc, ids) {
+  const treeCommand = deleteNodes(doc, ids)
+  const deletedIds = collectSubtreeIds(doc.root, treeCommand.deletedIds || [])
+  let removedRelations = null
+  let removedSummaries = null
+  return {
+    description: '刪除節點與附屬資料',
+    affectedIds: treeCommand.affectedIds || [],
+    do: () => {
+      if (deletedIds.size === 0) return false
+      if (!removedRelations) {
+        removedRelations = collectRemoved(doc.relations, relation => deletedIds.has(relation.fromId) || deletedIds.has(relation.toId))
+        removedSummaries = collectRemoved(doc.summaries, summary => summaryTouchesDeletedNode(doc, summary, deletedIds))
+      }
+      if (treeCommand.do() === false) return false
+      removeCaptured(doc.relations, removedRelations)
+      removeCaptured(doc.summaries, removedSummaries)
+      return true
+    },
+    undo: () => {
+      treeCommand.undo()
+      restoreCaptured(doc.relations, removedRelations)
+      restoreCaptured(doc.summaries, removedSummaries)
+    }
+  }
 }
 
 export function relationGeometry(positions, relation) {
@@ -169,6 +199,7 @@ export function initializeRelations(ctx) {
     ctx.notify('請點選關聯線的目標節點')
     return true
   })
+  registerAction('getSelectedOverlay', () => state.selectedOverlay ? { ...state.selectedOverlay } : null)
 
   // 接管這些既有 action，先處理 overlay 選取，否則完整保留節點原行為。
   registerAction('remove', () => {
@@ -184,7 +215,7 @@ export function initializeRelations(ctx) {
     const ids = ctx.selection.getSelectedIds()
     if (ids.length === 0) return false
     const fallback = findNodeContext(ctx.doc.root, ctx.selection.primaryId)?.parent?.id || ctx.doc.root.id
-    if (!ctx.manager.execute(deleteNodes(ctx.doc, ids))) return false
+    if (!ctx.manager.execute(deleteNodesWithOverlaysCommand(ctx.doc, ids))) return false
     ctx.selection.set([fallback])
     return true
   })
@@ -194,37 +225,6 @@ export function initializeRelations(ctx) {
     if (selected?.type === 'relation') return startLabelEdit(selected.id)
     if (selected?.type === 'summary') return ctx.featureHandlers.editSummary?.(selected.id) || false
     return ctx.selection.primaryId ? ctx.edit.start(ctx.selection.primaryId) : false
-  })
-
-  registerAction('applyStyle', patch => {
-    const selected = state.selectedOverlay
-    if (selected?.type === 'relation') return ctx.manager.execute(setRelationStyleCommand(ctx.doc, selected.id, patch || {}))
-    const ids = ctx.selection.getSelectedIds()
-    return ids.length > 0 && patch && typeof patch === 'object' ? ctx.manager.execute(setStyle(ctx.doc, ids, patch)) : false
-  })
-
-  registerAction('setLineStyle', config => {
-    const selected = state.selectedOverlay
-    if (selected?.type === 'relation') return ctx.manager.execute(setRelationStyleCommand(ctx.doc, selected.id, { lineStyle: config?.style }))
-    const ids = ctx.selection.getSelectedIds()
-    if (ids.length === 0) return false
-    let previous = null
-    return ctx.manager.execute({
-      description: '設定連接線樣式',
-      do: () => {
-        const nodes = ids.map(id => findNode(ctx.doc.root, id)).filter(Boolean)
-        if (nodes.length === 0) return false
-        if (!previous) previous = nodes.map(node => ({ id: node.id, value: node.style.lineStyle }))
-        nodes.forEach(node => { node.style.lineStyle = encodeLineToken(node.style.lineStyle, config?.style, config?.shape) })
-        return true
-      },
-      undo: () => previous?.forEach(record => {
-        const node = findNode(ctx.doc.root, record.id)
-        if (!node) return
-        if (record.value === undefined) delete node.style.lineStyle
-        else node.style.lineStyle = record.value
-      })
-    })
   })
 
   registerAction('applyRelationStyle', patch => {
@@ -365,6 +365,55 @@ function beginEndpointDrag(event, relation, key, geometry, ctx, group) {
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', end)
   window.addEventListener('pointercancel', end)
+}
+
+function collectSubtreeIds(root, ids) {
+  const result = new Set()
+  for (const id of ids) {
+    const node = findNode(root, id)
+    if (!node || node === root) continue
+    const stack = [node]
+    while (stack.length > 0) {
+      const current = stack.pop()
+      if (result.has(current.id)) continue
+      result.add(current.id)
+      for (const child of current.children || []) stack.push(child)
+    }
+  }
+  return result
+}
+
+function collectRemoved(collection, predicate) {
+  return (collection || []).map((item, index) => ({ item: structuredCloneSafe(item), index }))
+    .filter(record => predicate(record.item))
+}
+
+function summaryTouchesDeletedNode(doc, summary, deletedIds) {
+  if (deletedIds.has(summary.parentId) || deletedIds.has(summary.startNodeId) || deletedIds.has(summary.endNodeId)) return true
+  const parent = findNode(doc.root, summary.parentId)
+  if (!parent) return false
+  if (summary.startNodeId && summary.endNodeId) {
+    return getSummaryNodes(summary, parent).some(node => deletedIds.has(node.id))
+  }
+  if (!Number.isFinite(Number(summary.startIndex)) || !Number.isFinite(Number(summary.endIndex))) return false
+  const start = Math.max(0, Number(summary.startIndex))
+  const end = Math.min(parent.children.length - 1, Number(summary.endIndex))
+  return parent.children.slice(start, end + 1).some(node => deletedIds.has(node.id))
+}
+
+function removeCaptured(collection, records) {
+  const ids = new Set((records || []).map(record => record.item.id))
+  for (let index = collection.length - 1; index >= 0; index -= 1) {
+    if (ids.has(collection[index].id)) collection.splice(index, 1)
+  }
+}
+
+function restoreCaptured(collection, records) {
+  for (const record of records || []) {
+    if (!collection.some(item => item.id === record.item.id)) {
+      collection.splice(Math.min(record.index, collection.length), 0, structuredCloneSafe(record.item))
+    }
+  }
 }
 
 function collectionInsertCommand(doc, key, item, description, validate) {

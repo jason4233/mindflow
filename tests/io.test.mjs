@@ -7,8 +7,10 @@ import {
   exportDocumentJson,
   exportDocumentMarkdown,
   exportDocumentTxt,
-  exportDocumentWord
+  exportDocumentWord,
+  parseRichTextRuns
 } from '../js/io/export.js'
+import { EXPORT_FORMATS } from '../js/editor/exportdialog.js'
 import {
   importDocumentJson,
   importDocumentMarkdown,
@@ -218,6 +220,26 @@ test('SVG 保留新節點形狀、圓角、邊框 dash 與 straight/orthogonal �
   assert.match(svg, /d="M [^"]+ L [^"]+"/u)
   assert.match(svg, /d="M [^"]+ H [^"]+ V [^"]+ H [^"]+"/u)
   assert.match(svg, /<rect[^>]+rx="[1-9][0-9.]*"/u)
+})
+
+test('SVG 以 tspan run 保留 richText 局部粗斜體、底線與顏色', () => {
+  const doc = fixtureDoc()
+  doc.root.text = '重點提示底線'
+  doc.root.richText = '<b><span style="color: #dc2626">重點</span></b><i>提示</i><u>底線</u>'
+  const runs = parseRichTextRuns(doc.root.richText)
+  assert.deepEqual(runs, [
+    { text: '重點', style: { bold: true, color: '#dc2626' } },
+    { text: '提示', style: { italic: true } },
+    { text: '底線', style: { underline: true } }
+  ])
+  const svg = documentToSvg(doc)
+  assert.match(svg, /<tspan[^>]*font-weight="700"[^>]*fill="#dc2626"[^>]*>重點<\/tspan>/u)
+  assert.match(svg, /<tspan[^>]*font-style="italic"[^>]*>提示<\/tspan>/u)
+  assert.match(svg, /<tspan[^>]*text-decoration="underline"[^>]*>底線<\/tspan>/u)
+})
+
+test('匯出彈窗提供 SPEC 指定六格式', () => {
+  assert.deepEqual(EXPORT_FORMATS.map(format => format.id), ['jpg', 'png', 'pdf', 'word', 'txt', 'mindflow'])
 })
 
 test('JSON 非物件輸入明確拒絕', () => {

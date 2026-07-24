@@ -152,6 +152,12 @@ export function initializeAttachments(ctx) {
   }, { capture: true })
 
   window.addEventListener('paste', event => {
+    if (isEditableTarget(event.target)) return
+    // 內部節點剪貼簿優先；成功後不再把系統剪貼簿文字誤當成節點連結。
+    if (runAction('paste')) {
+      event.preventDefault()
+      return
+    }
     const imageFile = Array.from(event.clipboardData?.files || []).find(file => file.type.startsWith('image/'))
     const id = ctx.selection.primaryId
     if (imageFile && id) {
@@ -159,7 +165,7 @@ export function initializeAttachments(ctx) {
       attachImageFile(ctx, id, imageFile)
       return
     }
-    if (isEditableTarget(event.target) || !id) return
+    if (!id) return
     const text = event.clipboardData?.getData('text/plain')?.trim() || ''
     if (!isLikelyUrl(text)) return
     event.preventDefault()
@@ -293,6 +299,7 @@ function createNoteDrawer(ctx) {
   textarea.addEventListener('input', updateCount)
   textarea.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); save(); ctx.notify('備註已儲存') }
+    if (event.key === 'Escape') { event.preventDefault(); close() }
   })
   return {
     open(id) {
@@ -480,7 +487,11 @@ function ensureFeatureStyles() {
 }
 
 function isEditableTarget(target) {
-  return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(target.tagName))
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(target.tagName)) return true
+  // Chromium 在非文字焦點下可能把 native paste 的 target 指向 canvas 內最後一次文字選取
+  // 所在的 button（例如概要標籤）；這種情況仍應貼到目前節點。畫布外按鈕則保持原生行為。
+  return /^(BUTTON)$/u.test(target.tagName) && !target.closest('#canvas')
 }
 function clamp(value, min, max, fallback) {
   const number = Number(value)
