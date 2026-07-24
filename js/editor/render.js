@@ -50,8 +50,8 @@ export function render(doc, positions, {
   onToggleCollapse = () => {}
 }) {
   const activeTheme = getTheme(doc.themeId)
-  applyLayoutDirection(positions, doc)
   applyDocumentSpacing(positions, doc.root.id, doc.canvas)
+  const previousPositions = readRenderedPositions(nodesLayer)
   const nodeLookup = new Map()
   const parentLookup = new Map()
   const branchLookup = buildBranchLookup(doc.root, activeTheme)
@@ -62,10 +62,19 @@ export function render(doc, positions, {
   }, { includeHidden: false })
 
   const fragment = document.createDocumentFragment()
+  const movingNodes = []
   for (const [id, position] of positions) {
     const record = nodeLookup.get(id)
     if (!record) continue
-    fragment.append(createNodeElement(record.node, record.depth, position, activeTheme, branchLookup.get(id), onToggleCollapse))
+    const element = createNodeElement(record.node, record.depth, position, activeTheme, branchLookup.get(id), onToggleCollapse)
+    const previous = previousPositions.get(id)
+    if (previous && (Math.abs(previous.x - position.x) > 0.5 || Math.abs(previous.y - position.y) > 0.5)) {
+      element.style.left = `${previous.x}px`
+      element.style.top = `${previous.y}px`
+      element.classList.add('is-layout-moving')
+      movingNodes.push({ element, position })
+    }
+    fragment.append(element)
   }
   nodesLayer.replaceChildren(fragment)
 
@@ -76,9 +85,15 @@ export function render(doc, positions, {
     const record = nodeLookup.get(childId)
     if (!parentPosition || !childPosition || !record) continue
     const branchColor = branchLookup.get(childId) || activeTheme.branchPalette[0]
-    paths.append(createConnection(parentPosition, childPosition, getLineAppearance(record.node, record.depth, activeTheme, branchColor)))
+    paths.append(createConnection(
+      parentPosition,
+      childPosition,
+      getLineAppearance(record.node, record.depth, activeTheme, branchColor),
+      childPosition.connector || doc.layout
+    ))
   }
   svgLayer.replaceChildren(paths)
+  animateLayoutChange(nodesLayer, svgLayer, movingNodes)
 
   const canvas = nodesLayer.closest('.canvas')
   if (canvas) canvas.style.background = doc.canvas?.background || activeTheme.canvasBg
@@ -167,24 +182,8 @@ function applyAppearance(element, appearance, branchColor) {
   }
 }
 
-function createConnection(parent, child, appearance) {
-  const goesRight = child.x >= parent.x
-  const startX = goesRight ? parent.x + parent.w : parent.x
-  const endX = goesRight ? child.x : child.x + child.w
-  const startY = parent.y + parent.h / 2
-  const endY = child.y + child.h / 2
-  const middleX = (startX + endX) / 2
-  let pathData
-  if (appearance.shape === 'straight') {
-    pathData = `M ${startX} ${startY} L ${endX} ${endY}`
-  } else if (appearance.shape === 'orthogonal') {
-    pathData = `M ${startX} ${startY} L ${middleX} ${startY} L ${middleX} ${endY} L ${endX} ${endY}`
-  } else {
-    const controlOffset = Math.max(20, Math.abs(endX - startX) * 0.5)
-    const cp1X = goesRight ? startX + controlOffset : startX - controlOffset
-    const cp2X = goesRight ? endX - controlOffset : endX + controlOffset
-    pathData = `M ${startX} ${startY} C ${cp1X} ${startY}, ${cp2X} ${endY}, ${endX} ${endY}`
-  }
+function createConnection(parent, child, appearance, layoutName) {
+  const pathData = getConnectionPath(parent, child, appearance.shape, layoutName)
 
   const path = document.createElementNS(SVG_NS, 'path')
   path.classList.add('connection-path')
@@ -194,6 +193,71 @@ function createConnection(parent, child, appearance) {
   const dash = strokeDasharray(appearance.style)
   if (dash) path.setAttribute('stroke-dasharray', dash)
   return path
+}
+
+export function getConnectionPath(parent, child, appearanceShape = 'curved', layoutName = '') {
+  if (layoutName === 'org') {
+    const startX = parent.x + parent.w / 2
+    const startY = parent.y + parent.h
+    const endX = child.x + child.w / 2
+    const endY = child.y
+    const middleY = (startY + endY) / 2
+    return `M ${startX} ${startY} L ${startX} ${middleY} L ${endX} ${middleY} L ${endX} ${endY}`
+  }
+
+  if (layoutName === 'tree-right' || layoutName === 'tree-left' || layoutName === 'tree') {
+    const leftward = layoutName === 'tree-left'
+    const startX = leftward ? parent.x + parent.w - 12 : parent.x + 12
+    const startY = parent.y + parent.h
+    const endX = leftward ? child.x + child.w : child.x
+    const endY = child.y + child.h / 2
+    return `M ${startX} ${startY} L ${startX} ${endY} L ${endX} ${endY}`
+  }
+
+  if (layoutName === 'fishbone') {
+    const startX = child.x < parent.x ? parent.x : parent.x + parent.w
+    const startY = parent.y + parent.h / 2
+    const endX = child.x < parent.x ? child.x + child.w : child.x
+    const endY = child.y + child.h / 2
+    const tailX = endX + (startX > endX ? 12 : -12)
+    return `M ${startX} ${startY} L ${tailX} ${endY} L ${endX} ${endY}`
+  }
+
+  if (layoutName === 'timeline-h') {
+    const startX = parent.x + parent.w
+    const startY = parent.y + parent.h / 2
+    const endX = child.x + child.w / 2
+    const endY = child.y < parent.y ? child.y + child.h : child.y
+    return `M ${startX} ${startY} L ${endX} ${startY} L ${endX} ${endY}`
+  }
+
+  if (layoutName === 'timeline-v') {
+    const startX = parent.x + parent.w / 2
+    const startY = parent.y + parent.h
+    const endX = child.x < parent.x ? child.x + child.w : child.x
+    const endY = child.y + child.h / 2
+    return `M ${startX} ${startY} L ${startX} ${endY} L ${endX} ${endY}`
+  }
+
+  const goesRight = child.x >= parent.x
+  const startX = goesRight ? parent.x + parent.w : parent.x
+  const endX = goesRight ? child.x : child.x + child.w
+  const startY = parent.y + parent.h / 2
+  const endY = child.y + child.h / 2
+  const middleX = (startX + endX) / 2
+  let pathData
+  if (appearanceShape === 'straight') {
+    pathData = `M ${startX} ${startY} L ${endX} ${endY}`
+  } else if (appearanceShape === 'orthogonal') {
+    pathData = `M ${startX} ${startY} L ${middleX} ${startY} L ${middleX} ${endY} L ${endX} ${endY}`
+  } else {
+    const controlOffset = Math.max(20, Math.abs(endX - startX) * 0.5)
+    const cp1X = goesRight ? startX + controlOffset : startX - controlOffset
+    const cp2X = goesRight ? endX - controlOffset : endX + controlOffset
+    pathData = `M ${startX} ${startY} C ${cp1X} ${startY}, ${cp2X} ${endY}, ${endX} ${endY}`
+  }
+
+  return pathData
 }
 
 function buildBranchLookup(root, activeTheme) {
@@ -223,17 +287,31 @@ function applyDocumentSpacing(positions, rootId, canvas) {
   }
 }
 
-function applyLayoutDirection(positions, doc) {
-  if (doc.layout !== 'mindmap-left') return
-  const root = positions.get(doc.root.id)
-  if (!root) return
-  const rootCenterX = root.x + root.w / 2
-  for (const [id, position] of positions) {
-    if (id === doc.root.id) continue
-    const centerX = position.x + position.w / 2
-    position.x = rootCenterX - (centerX - rootCenterX) - position.w / 2
-    position.side = 'left'
+function readRenderedPositions(nodesLayer) {
+  const result = new Map()
+  for (const element of nodesLayer.querySelectorAll('.mind-node')) {
+    const x = Number.parseFloat(element.style.left)
+    const y = Number.parseFloat(element.style.top)
+    if (Number.isFinite(x) && Number.isFinite(y)) result.set(element.dataset.nodeId, { x, y })
   }
+  return result
+}
+
+function animateLayoutChange(nodesLayer, svgLayer, movingNodes) {
+  if (movingNodes.length === 0 || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  // 先把新節點放回舊座標，再由 CSS left/top transition 移到演算法新座標。
+  void nodesLayer.offsetWidth
+  svgLayer.classList.add('is-layout-transitioning')
+  requestAnimationFrame(() => {
+    for (const { element, position } of movingNodes) {
+      element.style.left = `${position.x}px`
+      element.style.top = `${position.y}px`
+    }
+  })
+  window.setTimeout(() => {
+    movingNodes.forEach(({ element }) => element.classList.remove('is-layout-moving'))
+    svgLayer.classList.remove('is-layout-transitioning')
+  }, 320)
 }
 
 function setTextContent(element, plainText, richText) {

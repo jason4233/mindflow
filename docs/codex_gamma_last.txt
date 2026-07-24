@@ -1,0 +1,20 @@
+GAMMA 已完成。
+
+- 六大類、8 個方向變體佈局完成，支援局部 `node.style.structure`。
+- `org/tree/fishbone` 專用連接線與 300ms 切換動畫完成。
+- `setLayout`、`tidyLayout`、局部 Structure actions 完成。
+- 小地圖、紅框拖曳導航、三種檢視模式完成。
+- 大綱 Tab/Enter/Shift+Tab、雙向同步、雙擊跳圖完成。
+- Node 測試全綠：58/58。
+- Playwright 瀏覽器自測：8 佈局、快捷鍵、大綱、小地圖、reload 均通過，console 0 errors。
+- 未碰禁止檔案，未執行 git。
+
+主要檔案：
+
+- [layout.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\editor\layout.js)
+- [viewmode.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\editor\viewmode.js)
+- [minimap.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\editor\minimap.js)
+- [layout.test.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\tests\layout.test.mjs)
+- [CODEX_GAMMA_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_GAMMA_NOTES.md)
+
+唯一相容層：因 `model.js` 不在 GAMMA 所有權內，`timeline-v` 與局部 Structure 目前額外存於 per-document localStorage；reload 可恢復，但尚未進入原生 JSON schema。

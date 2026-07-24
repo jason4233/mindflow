@@ -15,6 +15,7 @@ export class ViewportController {
     this.panX = 0
     this.panY = 0
     this.zoom = 1
+    this.listeners = new Set()
     this.spacePressed = false
     this.initialPlacementDone = false
     this.drag = null
@@ -101,6 +102,29 @@ export class ViewportController {
     this.setZoom(1)
   }
 
+  setPan(panX, panY) {
+    const nextX = Number(panX)
+    const nextY = Number(panY)
+    if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) return false
+    if (nextX === this.panX && nextY === this.panY) return false
+    this.panX = nextX
+    this.panY = nextY
+    this.apply()
+    return true
+  }
+
+  setView({ panX = this.panX, panY = this.panY, zoom = this.zoom } = {}) {
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(zoom)))
+    const nextX = Number(panX)
+    const nextY = Number(panY)
+    if (![nextZoom, nextX, nextY].every(Number.isFinite)) return false
+    this.zoom = nextZoom
+    this.panX = nextX
+    this.panY = nextY
+    this.apply()
+    return true
+  }
+
   fit(positions, padding = 60) {
     const bounds = getLayoutBounds(positions)
     if (positions.size === 0) return
@@ -145,10 +169,28 @@ export class ViewportController {
     }
   }
 
+  getVisibleWorldRect() {
+    return {
+      x: -this.panX / this.zoom,
+      y: -this.panY / this.zoom,
+      width: this.canvas.clientWidth / this.zoom,
+      height: this.canvas.clientHeight / this.zoom
+    }
+  }
+
+  subscribe(listener) {
+    if (typeof listener !== 'function') throw new TypeError('viewport listener 必須是函式')
+    this.listeners.add(listener)
+    listener(this.getState())
+    return () => this.listeners.delete(listener)
+  }
+
   apply() {
     this.world.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`
     if (this.zoomDisplay) this.zoomDisplay.textContent = `${Math.round(this.zoom * 100)}%`
-    this.onChange(this.getState())
+    const state = this.getState()
+    this.onChange(state)
+    for (const listener of this.listeners) listener(state)
   }
 
   getState() {

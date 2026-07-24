@@ -18,6 +18,7 @@ import { initializeOutline } from './outline.js'
 
 // === PHASE-B INIT (DELTA import) ===
 import { initializeDelta } from './attachments.js'
+import { initializeGamma } from './viewmode.js'
 
 const elements = {
   canvas: document.querySelector('#canvas'),
@@ -118,6 +119,17 @@ initializeOutline()
 
 // === PHASE-B INIT (每流一行) ===
 initializeDelta({
+  doc,
+  manager,
+  selection,
+  viewport,
+  edit,
+  sidepanel,
+  elements,
+  getPositions: () => positions,
+  renderAll
+})
+initializeGamma({
   doc,
   manager,
   selection,
