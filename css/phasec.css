@@ -1,0 +1,638 @@
+/* Phase C2：歷史版本、公式、分屏與 dashboard 匯入入口。 */
+
+:root {
+  --phasec-accent: #f17e2e;
+  --phasec-accent-dark: #d96317;
+  --phasec-accent-soft: #fff3e9;
+  --phasec-border: #dde4ec;
+  --phasec-muted: #697586;
+  --phasec-text: #273244;
+  --phasec-surface: #fff;
+  --phasec-shadow: 0 20px 56px rgb(15 23 42 / 18%), 0 4px 14px rgb(15 23 42 / 8%);
+}
+
+.sidebar-import {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-top: -6px;
+  border: 1px solid #e1e5eb;
+  border-radius: 10px;
+  color: #536174;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
+}
+
+.sidebar-import svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sidebar-import:hover {
+  border-color: var(--phasec-accent);
+  color: var(--phasec-accent-dark);
+  background: var(--phasec-accent-soft);
+}
+
+.sidebar-import:focus-visible,
+.phasec-toolbar-menu button:focus-visible,
+.phasec-icon-button:focus-visible,
+.phasec-primary-button:focus-visible,
+.history-list__item:focus-visible,
+.formula-cheat-sheet button:focus-visible,
+.split-screen-divider:focus-visible {
+  outline: 3px solid rgb(241 126 46 / 25%);
+  outline-offset: 2px;
+}
+
+.phasec-toolbar-menu {
+  position: fixed;
+  z-index: 1500;
+  width: 224px;
+  padding: 6px;
+  border: 1px solid var(--phasec-border);
+  border-radius: 11px;
+  background: var(--phasec-surface);
+  box-shadow: var(--phasec-shadow);
+}
+
+.phasec-toolbar-menu[hidden] {
+  display: none;
+}
+
+.phasec-toolbar-menu button {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--phasec-text);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phasec-toolbar-menu button:hover {
+  color: var(--phasec-accent-dark);
+  background: var(--phasec-accent-soft);
+}
+
+.phasec-toolbar-menu kbd {
+  color: #98a2b3;
+  font: 10px/1.2 "Segoe UI", sans-serif;
+}
+
+.phasec-icon-button {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #667085;
+  background: transparent;
+  font: 24px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.phasec-icon-button:hover {
+  color: #253044;
+  background: #f3f5f8;
+}
+
+.phasec-primary-button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--phasec-accent);
+  border-radius: 8px;
+  color: #fff;
+  background: var(--phasec-accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.phasec-primary-button:hover:not(:disabled) {
+  border-color: var(--phasec-accent-dark);
+  background: var(--phasec-accent-dark);
+}
+
+.phasec-primary-button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.phasec-eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--phasec-accent-dark);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.phasec-drawer {
+  position: fixed;
+  z-index: 1350;
+  top: 72px;
+  right: 14px;
+  bottom: 16px;
+  width: min(620px, calc(100vw - 28px));
+  overflow: hidden;
+  border: 1px solid rgb(221 228 236 / 90%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 97%);
+  box-shadow: var(--phasec-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.phasec-drawer[hidden] {
+  display: none;
+}
+
+.phasec-drawer > header {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 10px 18px;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.phasec-drawer h2,
+.phasec-dialog h2 {
+  margin: 0;
+  color: var(--phasec-text);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.history-panel__body {
+  height: calc(100% - 62px);
+  display: grid;
+  grid-template-columns: minmax(190px, .78fr) minmax(280px, 1.22fr);
+}
+
+.history-list {
+  overflow: auto;
+  padding: 10px;
+  border-right: 1px solid #edf1f5;
+  background: #fafbfc;
+}
+
+.history-list__item {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--phasec-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-list__item:hover {
+  background: #fff;
+}
+
+.history-list__item.is-selected {
+  border-color: rgb(241 126 46 / 40%);
+  background: var(--phasec-accent-soft);
+}
+
+.history-list__item strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.history-list__item span {
+  color: var(--phasec-muted);
+  font-size: 11px;
+}
+
+.history-preview {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 14px;
+  padding: 20px;
+}
+
+.history-preview img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 360 / 202;
+  border: 1px solid var(--phasec-border);
+  border-radius: 12px;
+  background: #f7f8fa;
+  object-fit: contain;
+}
+
+.history-preview p {
+  min-height: 18px;
+  margin: 0;
+  color: var(--phasec-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.phasec-empty {
+  margin: 18px 10px;
+  color: var(--phasec-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.phasec-dialog {
+  width: min(520px, calc(100vw - 28px));
+  max-height: min(760px, calc(100dvh - 28px));
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--phasec-border);
+  border-radius: 14px;
+  color: var(--phasec-text);
+  background: #fff;
+  box-shadow: var(--phasec-shadow);
+}
+
+.phasec-dialog::backdrop {
+  background: rgb(15 23 42 / 32%);
+  backdrop-filter: blur(2px);
+}
+
+.phasec-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.phasec-dialog form > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -4px -4px 2px 0;
+}
+
+.phasec-dialog label {
+  display: grid;
+  gap: 7px;
+  color: #596579;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.phasec-dialog input[type="url"],
+.phasec-dialog input[type="file"],
+.phasec-dialog textarea {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #d8e0e9;
+  border-radius: 8px;
+  color: #263244;
+  background: #fff;
+  font: 13px/1.45 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
+.phasec-dialog textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.phasec-dialog input:focus,
+.phasec-dialog textarea:focus {
+  border-color: var(--phasec-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(241 126 46 / 13%);
+}
+
+.phasec-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 2px;
+}
+
+.phasec-dialog footer > span {
+  margin-right: auto;
+  color: #8a94a3;
+  font-size: 10px;
+}
+
+.phasec-dialog footer > button:not(.phasec-primary-button) {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--phasec-border);
+  border-radius: 8px;
+  color: #586578;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.formula-dialog h3 {
+  margin: 0;
+  color: #5d6878;
+  font-size: 12px;
+}
+
+.formula-preview {
+  min-height: 72px;
+  display: grid;
+  place-items: center;
+  padding: 12px 16px;
+  overflow-x: auto;
+  border: 1px solid #e5eaf0;
+  border-radius: 9px;
+  color: #1e293b;
+  background: #fafbfc;
+  font-size: 20px;
+}
+
+.formula-preview__empty {
+  color: #a0a8b4;
+  font: 12px/1.4 "Segoe UI", sans-serif;
+}
+
+.formula-cheat-sheet {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.formula-cheat-sheet button {
+  min-height: 38px;
+  padding: 4px 6px;
+  border: 1px solid #e0e6ed;
+  border-radius: 7px;
+  color: #536074;
+  background: #fff;
+  font: 11px/1.2 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.formula-cheat-sheet button:hover {
+  border-color: rgb(241 126 46 / 48%);
+  color: var(--phasec-accent-dark);
+  background: var(--phasec-accent-soft);
+}
+
+.phasec-formula-host,
+.phasec-formula {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.phasec-formula-host {
+  margin-inline: .12em;
+  user-select: text;
+}
+
+.phasec-formula {
+  gap: .08em;
+  font-family: Cambria, "Times New Roman", serif;
+  white-space: nowrap;
+}
+
+.phasec-formula-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+.phasec-fraction {
+  display: inline-grid;
+  grid-template-rows: auto auto;
+  align-items: center;
+  margin-inline: .12em;
+  vertical-align: middle;
+  font-size: .78em;
+  line-height: 1.04;
+  text-align: center;
+}
+
+.phasec-fraction__numerator {
+  padding: 0 .18em .08em;
+  border-bottom: 1px solid currentcolor;
+}
+
+.phasec-fraction__denominator {
+  padding: .08em .18em 0;
+}
+
+.phasec-sqrt {
+  display: inline-flex;
+  align-items: flex-start;
+  margin-inline: .08em;
+}
+
+.phasec-sqrt__radicand {
+  padding: .02em .12em 0 .06em;
+  border-top: 1px solid currentcolor;
+}
+
+.phasec-script {
+  display: inline-grid;
+  grid-template: "base sup" auto "base sub" auto / auto auto;
+  align-items: center;
+}
+
+.phasec-script > span {
+  grid-area: base;
+}
+
+.phasec-script > sup,
+.phasec-script > sub {
+  min-width: .4em;
+  font-size: .66em;
+  line-height: 1;
+}
+
+.phasec-script > sup {
+  grid-area: sup;
+  align-self: end;
+}
+
+.phasec-script > sub {
+  grid-area: sub;
+  align-self: start;
+}
+
+.phasec-formula-fallback {
+  padding: .08em .25em;
+  border-radius: 4px;
+  color: inherit;
+  background: rgb(148 163 184 / 13%);
+  font: .82em/1.3 "Cascadia Code", Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.phasec-or-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #98a2b3;
+  font-size: 10px;
+}
+
+.phasec-or-separator::before,
+.phasec-or-separator::after {
+  height: 1px;
+  flex: 1;
+  background: #e6ebf1;
+  content: "";
+}
+
+.split-pdf-picker input {
+  cursor: pointer;
+}
+
+.phasec-form-error {
+  min-height: 17px;
+  margin: -4px 0 0;
+  color: #d92d20;
+  font-size: 11px;
+}
+
+.split-screen-panel {
+  position: absolute;
+  z-index: 42;
+  top: 66px;
+  right: 0;
+  bottom: 0;
+  width: var(--split-panel-width, 50vw);
+  min-width: 280px;
+  border-left: 1px solid #cfd7e2;
+  background: #fff;
+  box-shadow: -12px 0 30px rgb(15 23 42 / 10%);
+}
+
+.split-screen-panel[hidden] {
+  display: none;
+}
+
+.split-screen-divider {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.split-screen-divider::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+  content: "";
+  transition: background-color 120ms ease;
+}
+
+.split-screen-divider:hover::after,
+.split-screen-divider:focus-visible::after {
+  background: var(--phasec-accent);
+}
+
+.split-screen-content {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 46px minmax(0, 1fr);
+}
+
+.split-screen-content > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid #e5eaf0;
+}
+
+.split-screen-content > header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #344054;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-screen-content > header a {
+  margin-left: auto;
+  color: var(--phasec-accent-dark);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.split-screen-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #f5f7fa;
+}
+
+body.is-split-screen #canvas {
+  right: var(--split-panel-width, 50vw);
+}
+
+@media (max-width: 720px) {
+  .history-panel__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(150px, .7fr) minmax(260px, 1.3fr);
+  }
+
+  .history-list {
+    border-right: 0;
+    border-bottom: 1px solid #edf1f5;
+  }
+
+  .formula-cheat-sheet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .split-screen-panel {
+    width: min(var(--split-panel-width, calc(100vw - 42px)), calc(100vw - 42px));
+  }
+
+  body.is-split-screen #canvas {
+    right: min(var(--split-panel-width, calc(100vw - 42px)), calc(100vw - 42px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-import,
+  .split-screen-divider::after {
+    transition-duration: 0ms;
+  }
+}

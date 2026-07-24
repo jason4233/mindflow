@@ -1,24 +1,32 @@
 /**
  * 節點拖曳重掛：ghost、候選父節點高亮、插入線與左右側切換。
  */
-import { findNodeContext, isDescendant } from './model.js'
+import { findNode, findNodeContext, isDescendant, structuredCloneSafe } from './model.js'
+import { getNodeWidth, withNodeWidth } from './themes.js'
+
+const MIN_NODE_WIDTH = 60
+const MAX_NODE_WIDTH = 500
 
 export class DragDropController {
-  constructor({ canvas, nodesLayer, indicator, doc, viewport, selection, onMove }) {
+  constructor({ canvas, nodesLayer, indicator, doc, viewport, selection, manager, onMove }) {
     this.canvas = canvas
     this.nodesLayer = nodesLayer
     this.indicator = indicator
     this.doc = doc
     this.viewport = viewport
     this.selection = selection
+    this.manager = manager
     this.onMove = onMove
     this.pending = null
     this.drag = null
+    this.decorateQueued = false
     this.bindEvents()
+    this.bindOwnedDecorations()
   }
 
   bindEvents() {
     this.nodesLayer.addEventListener('pointerdown', event => {
+      if (event.target.closest('.node-width-handle') || this.viewport.spacePressed) return
       const element = event.target.closest('.mind-node')
       if (event.button !== 0 || !element || event.target.closest('[data-collapse-control]') || event.target.isContentEditable) return
       const id = element.dataset.nodeId
@@ -58,6 +66,112 @@ export class DragDropController {
       window.addEventListener('pointerup', end)
       window.addEventListener('pointercancel', end)
     })
+  }
+
+  bindOwnedDecorations() {
+    const queueDecorate = () => {
+      if (this.decorateQueued) return
+      this.decorateQueued = true
+      queueMicrotask(() => {
+        this.decorateQueued = false
+        this.decorateResizeHandles()
+        this.decorateSummaryStyles()
+      })
+    }
+    window.addEventListener('mindflow:selectionchange', queueDecorate)
+    const world = this.nodesLayer.closest('.world') || this.nodesLayer
+    this.decorationObserver = new MutationObserver(queueDecorate)
+    this.decorationObserver.observe(world, { childList: true, subtree: true })
+    queueDecorate()
+  }
+
+  decorateResizeHandles() {
+    const selected = new Set(this.selection.getSelectedIds())
+    for (const element of this.nodesLayer.querySelectorAll('.mind-node')) {
+      const id = element.dataset.nodeId
+      const shouldShow = selected.has(id)
+      if (!shouldShow) {
+        element.querySelectorAll('.node-width-handle').forEach(handle => handle.remove())
+        continue
+      }
+      for (const side of ['left', 'right']) {
+        if (element.querySelector(`.node-width-handle--${side}`)) continue
+        const handle = document.createElement('span')
+        handle.className = `node-width-handle node-width-handle--${side}`
+        handle.dataset.resizeSide = side
+        handle.title = `拖曳${side === 'left' ? '左' : '右'}邊緣調整寬度`
+        handle.addEventListener('pointerdown', event => this.beginNodeResize(event, element, side))
+        element.append(handle)
+      }
+    }
+  }
+
+  decorateSummaryStyles() {
+    for (const summary of this.doc.summaries || []) {
+      const style = summary.style || {}
+      const path = this.canvas.querySelector(`[data-summary-id="${cssEscape(summary.id)}"]`)
+      const label = this.canvas.querySelector(`[data-summary-node="${cssEscape(summary.id)}"]`)
+      if (path) {
+        path.style.stroke = style.lineColor || ''
+        path.style.strokeDasharray = lineDash(style.lineStyle)
+      }
+      if (label) label.style.background = style.fill || ''
+    }
+  }
+
+  beginNodeResize(event, element, side) {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const id = element.dataset.nodeId
+    if (!this.selection.ids.has(id)) this.selection.set([id])
+    const ids = this.selection.getSelectedIds()
+    const positions = this.selection.getPositions()
+    const position = positions.get(id)
+    const startWidth = getNodeWidth(findNode(this.doc.root, id)) || position?.w || element.getBoundingClientRect().width / this.viewport.zoom
+    const startX = event.clientX
+    const pointerId = event.pointerId
+    let width = clampNodeWidth(startWidth)
+    element.setPointerCapture?.(pointerId)
+
+    const move = moveEvent => {
+      if (moveEvent.pointerId !== pointerId) return
+      const delta = (moveEvent.clientX - startX) / Math.max(0.2, this.viewport.zoom)
+      width = clampNodeWidth(startWidth + (side === 'left' ? -delta : delta))
+      for (const selectedId of ids) {
+        const selectedElement = this.nodesLayer.querySelector(`[data-node-id="${cssEscape(selectedId)}"]`)
+        if (selectedElement) selectedElement.style.width = `${width}px`
+      }
+    }
+    const end = endEvent => {
+      if (endEvent.pointerId !== pointerId) return
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', cancel)
+      if (this.manager) this.manager.execute(createNodeWidthCommand(this.doc, ids, width))
+      this.suppressNextClick()
+    }
+    const cancel = cancelEvent => {
+      if (cancelEvent.pointerId !== pointerId) return
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', cancel)
+      for (const selectedId of ids) {
+        const selectedElement = this.nodesLayer.querySelector(`[data-node-id="${cssEscape(selectedId)}"]`)
+        const selectedPosition = positions.get(selectedId)
+        if (selectedElement && selectedPosition) selectedElement.style.width = `${selectedPosition.w}px`
+      }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', cancel)
+  }
+
+  suppressNextClick() {
+    this.nodesLayer.addEventListener('click', event => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }, { capture: true, once: true })
   }
 
   handleMove(event) {
@@ -195,4 +309,41 @@ function rootInsertionIndex(root, side, clientY, nodesLayer) {
     if (element && clientY < element.getBoundingClientRect().top + element.getBoundingClientRect().height / 2) return item.index
   }
   return sideChildren.at(-1)?.index + 1 || root.children.length
+}
+
+export function clampNodeWidth(value) {
+  const width = Number(value)
+  return Math.round(Number.isFinite(width) ? Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, width)) : MIN_NODE_WIDTH)
+}
+
+export function createNodeWidthCommand(doc, ids, width) {
+  const targetIds = Array.from(new Set(ids || [])).filter(Boolean)
+  const nextWidth = clampNodeWidth(width)
+  let previous = null
+  return {
+    description: '調整節點寬度',
+    affectedIds: targetIds.slice(),
+    do: () => {
+      const nodes = targetIds.map(id => findNode(doc.root, id)).filter(Boolean)
+      const changed = nodes.filter(node => getNodeWidth(node) !== nextWidth)
+      if (changed.length === 0) return false
+      if (!previous) previous = changed.map(node => ({ id: node.id, style: structuredCloneSafe(node.style) }))
+      for (const node of changed) node.style.lineStyle = withNodeWidth(node.style.lineStyle || '', nextWidth)
+      return true
+    },
+    undo: () => {
+      for (const record of previous || []) {
+        const node = findNode(doc.root, record.id)
+        if (node) node.style = structuredCloneSafe(record.style)
+      }
+    }
+  }
+}
+
+function lineDash(style) {
+  return ({ dotted: '2 7', dashed: '9 7', 'dash-dot': '10 5 2 5', 'long-dash': '16 8' })[style] || ''
+}
+
+function cssEscape(value) {
+  return globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&')
 }

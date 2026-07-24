@@ -20,6 +20,19 @@ import { initializeOutline } from './outline.js'
 import { initializeDelta } from './attachments.js'
 import { initializeGamma } from './viewmode.js'
 
+// === PHASE-FINAL C1/C2 INIT imports ===
+import {
+  applyDefaultThemeToDocument,
+  applyScopedSpacing,
+  getTheme,
+  measureNodeWithWidth
+} from './themes.js'
+import { initPresentation } from './presentation.js'
+import { initFocus } from './focus.js'
+import { initHistory } from './history.js'
+import { initFormula } from './formula.js'
+import { initSplitscreen } from './splitscreen.js'
+
 const elements = {
   canvas: document.querySelector('#canvas'),
   world: document.querySelector('#world'),
@@ -37,6 +50,8 @@ if (!doc) {
   doc = createDocument()
   history.replaceState(null, '', `editor.html?id=${encodeURIComponent(doc.id)}`)
 }
+// === PHASE-FINAL C1 default theme hook ===
+if (applyDefaultThemeToDocument(doc)) saveDocument(doc)
 document.title = `${doc.title} — ${strings.productName}`
 
 let positions = new Map()
@@ -44,7 +59,9 @@ let saveTimer = null
 let toolbar = null
 let selection = null
 
-const measureFn = createMeasureFn(elements.measureLayer, doc)
+const baseMeasureFn = createMeasureFn(elements.measureLayer, doc)
+// === PHASE-FINAL C1 node width hook ===
+const measureFn = (node, depth) => measureNodeWithWidth(node, baseMeasureFn(node, depth), depth, getTheme(doc.themeId))
 const viewport = new ViewportController({
   canvas: elements.canvas,
   world: elements.world,
@@ -109,6 +126,7 @@ new DragDropController({
   doc,
   viewport,
   selection,
+  manager,
   onMove: (id, parentId, index, side) => {
     if (manager.execute(moveNode(doc, id, parentId, index, side))) selection.set([id])
   }
@@ -118,7 +136,7 @@ initializeContextMenu()
 initializeOutline()
 
 // === PHASE-B INIT (每流一行) ===
-initializeDelta({
+const featureContext = {
   doc,
   manager,
   selection,
@@ -128,18 +146,16 @@ initializeDelta({
   elements,
   getPositions: () => positions,
   renderAll
-})
-initializeGamma({
-  doc,
-  manager,
-  selection,
-  viewport,
-  edit,
-  sidepanel,
-  elements,
-  getPositions: () => positions,
-  renderAll
-})
+}
+initializeDelta(featureContext)
+initializeGamma(featureContext)
+
+// === PHASE-FINAL INIT (C1 owns marker; C2 modules pre-mounted) ===
+initPresentation(featureContext)
+initFocus(featureContext)
+initHistory(featureContext)
+initFormula(featureContext)
+initSplitscreen(featureContext)
 
 bindZoomControls()
 renderAll()
@@ -148,6 +164,8 @@ requestAnimationFrame(() => viewport.fit(positions))
 
 function renderAll() {
   positions = layout(doc, measureFn)
+  // === PHASE-FINAL C1 scoped spacing hook ===
+  applyScopedSpacing(doc.root, positions)
   render(doc, positions, {
     svgLayer: elements.svgLayer,
     nodesLayer: elements.nodesLayer,

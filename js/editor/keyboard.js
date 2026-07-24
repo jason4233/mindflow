@@ -21,14 +21,14 @@ import {
 } from './model.js'
 import { hasAction, registerAction, runAction } from './actions.js'
 import {
-  encodeLineToken,
   getNextThemeId,
   getLineAppearance,
   getNodeAppearance,
-  getTheme
+  getTheme,
+  withLineAppearance
 } from './themes.js'
 import { sanitizeFloatingClone } from './floating.js'
-import { deleteNodesWithOverlaysCommand } from './relations.js'
+import { deleteNodesWithOverlaysCommand, withOverlayCleanupCommand } from './relations.js'
 import { strings } from '../strings.js'
 
 export const ACTION_BINDINGS = Object.freeze([
@@ -264,7 +264,7 @@ export class KeyboardController {
     if (ids.length === 0) return false
     const fallback = findNodeContext(this.doc.root, ids[0])?.parent?.id || this.doc.root.id
     let records = null
-    const command = {
+    const treeCommand = {
       description: '刪除節點並保留子節點',
       affectedIds: [...ids, fallback],
       do: () => {
@@ -300,6 +300,7 @@ export class KeyboardController {
         }
       }
     }
+    const command = withOverlayCleanupCommand(this.doc, ids, treeCommand)
     if (!this.manager.execute(command)) return false
     this.selection.set([fallback])
     return true
@@ -432,11 +433,21 @@ export class KeyboardController {
 
   applyLineStyle(config = {}) {
     return this.mutateSelectedStyles('設定連接線樣式', (node, context) => {
-      const current = getLineAppearance(node, context.depth, getTheme(this.doc.themeId))
+      const activeTheme = getTheme(this.doc.themeId)
+      const current = getLineAppearance(node, context.depth, activeTheme)
+      const styleExplicit = Object.hasOwn(config, 'style') && Boolean(config.style)
+      const shapeExplicit = Object.hasOwn(config, 'shape') && Boolean(config.shape)
       const nextStyle = config.style || current.style
       const nextShape = config.shape || current.shape
       if (current.style === nextStyle && current.shape === nextShape) return
-      node.style.lineStyle = encodeLineToken(current.style, nextStyle, nextShape)
+      // 只有使用者明確改 shape 才寫 override；單改線型必須繼續跟隨後續主題。
+      node.style.lineStyle = withLineAppearance(node.style.lineStyle, {
+        lineStyle: nextStyle,
+        lineShape: nextShape,
+        themeShape: activeTheme.lineShape,
+        styleExplicit,
+        shapeExplicit
+      })
     })
   }
 

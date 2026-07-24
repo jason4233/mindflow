@@ -7,13 +7,13 @@ import { registerOverlay } from './render.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
-export function getSummaryRange(root, selectedIds) {
+export function getSummaryRange(root, selectedIds, layoutName = 'mindmap-both') {
   const contexts = Array.from(new Set(selectedIds)).map(id => findNodeContext(root, id)).filter(context => context?.parent)
   if (contexts.length < 2) return null
   const parent = contexts[0].parent
   if (contexts.some(context => context.parent !== parent)) return null
   // 根節點 children 會左右交錯保存；概要的「連續」必須以同側視覺順序判定。
-  const visualSiblings = getVisualSiblings(parent, contexts[0].node)
+  const visualSiblings = getVisualSiblings(parent, contexts[0].node, layoutName)
   const indexes = contexts.map(context => visualSiblings.findIndex(node => node.id === context.node.id)).sort((a, b) => a - b)
   if (indexes.some(index => index < 0)) return null
   if (indexes.some((value, index) => index > 0 && value !== indexes[index - 1] + 1)) return null
@@ -25,7 +25,7 @@ export function getSummaryRange(root, selectedIds) {
 }
 
 export function createSummaryCommand(doc, selectedIds, overrides = {}) {
-  const range = getSummaryRange(doc.root, selectedIds)
+  const range = getSummaryRange(doc.root, selectedIds, doc.layout)
   const summary = range ? {
     id: overrides.id || createId('summary'),
     ...range,
@@ -62,7 +62,7 @@ export function updateSummaryCommand(doc, summaryId, patch, description = '調�
       const candidate = { ...structuredCloneSafe(summary), ...structuredCloneSafe(next) }
       const parent = findNode(doc.root, candidate.parentId)
       if (!parent || parent.children.length === 0) return false
-      const anchors = normalizeSummaryAnchors(candidate, parent)
+      const anchors = normalizeSummaryAnchors(candidate, parent, doc.layout)
       if (!anchors) return false
       Object.assign(candidate, anchors)
       delete candidate.startIndex
@@ -99,8 +99,8 @@ export function removeSummaryCommand(doc, summaryId) {
   }
 }
 
-export function summaryGeometry(summary, parent, positions) {
-  const covered = getSummaryNodes(summary, parent).map(child => positions.get(child.id)).filter(Boolean)
+export function summaryGeometry(summary, parent, positions, layoutName = 'mindmap-both') {
+  const covered = getSummaryNodes(summary, parent, layoutName).map(child => positions.get(child.id)).filter(Boolean)
   if (covered.length === 0) return null
   const top = Math.min(...covered.map(position => position.y)) - 5
   const bottom = Math.max(...covered.map(position => position.y + position.h)) + 5
@@ -117,13 +117,13 @@ export function summaryGeometry(summary, parent, positions) {
   }
 }
 
-export function getSummaryNodes(summary, parent) {
+export function getSummaryNodes(summary, parent, layoutName = 'mindmap-both') {
   if (!summary || !parent) return []
-  const anchors = normalizeSummaryAnchors(summary, parent)
+  const anchors = normalizeSummaryAnchors(summary, parent, layoutName)
   if (!anchors) return []
   const startNode = parent.children.find(node => node.id === anchors.startNodeId)
   if (!startNode) return []
-  const siblings = getVisualSiblings(parent, startNode)
+  const siblings = getVisualSiblings(parent, startNode, layoutName)
   const start = siblings.findIndex(node => node.id === anchors.startNodeId)
   const end = siblings.findIndex(node => node.id === anchors.endNodeId)
   return start >= 0 && end >= start ? siblings.slice(start, end + 1) : []
@@ -184,7 +184,7 @@ function drawSummaries(overlayCtx, appCtx, selectSummary, editSummary) {
   for (const summary of overlayCtx.doc.summaries || []) {
     const parent = findNode(overlayCtx.doc.root, summary.parentId)
     if (!parent) continue
-    const geometry = summaryGeometry(summary, parent, overlayCtx.positions)
+    const geometry = summaryGeometry(summary, parent, overlayCtx.positions, overlayCtx.doc.layout)
     if (!geometry) continue
     const selected = appCtx.featureState.selectedOverlay?.type === 'summary' && appCtx.featureState.selectedOverlay.id === summary.id
     const path = svgElement('path', {
@@ -232,9 +232,9 @@ function beginBoundaryDrag(event, summary, parent, edge, geometry, ctx, control)
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', end)
     window.removeEventListener('pointercancel', end)
-    const covered = getSummaryNodes(summary, parent)
+    const covered = getSummaryNodes(summary, parent, ctx.doc.layout)
     const anchor = covered[0]
-    const visualSiblings = anchor ? getVisualSiblings(parent, anchor) : []
+    const visualSiblings = anchor ? getVisualSiblings(parent, anchor, ctx.doc.layout) : []
     const candidates = visualSiblings.map((child, index) => ({ child, index, position: ctx.getPositions().get(child.id) })).filter(item => item.position)
     const nearest = candidates.sort((a, b) => Math.abs(centerY(a.position) - latestY) - Math.abs(centerY(b.position) - latestY))[0]
     if (!nearest) { ctx.renderAll(); return }
@@ -250,7 +250,7 @@ function beginBoundaryDrag(event, summary, parent, edge, geometry, ctx, control)
   window.addEventListener('pointercancel', end)
 }
 
-function normalizeSummaryAnchors(summary, parent) {
+function normalizeSummaryAnchors(summary, parent, layoutName = 'mindmap-both') {
   let startNodeId = summary.startNodeId
   let endNodeId = summary.endNodeId
   // 舊文件仍可讀取 index；一旦更新便遷移為穩定 nodeId 錨點。
@@ -263,14 +263,15 @@ function normalizeSummaryAnchors(summary, parent) {
   const startNode = parent.children.find(node => node.id === startNodeId)
   const endNode = parent.children.find(node => node.id === endNodeId)
   if (!startNode || !endNode) return null
-  const siblings = getVisualSiblings(parent, startNode)
+  const siblings = getVisualSiblings(parent, startNode, layoutName)
   const start = siblings.findIndex(node => node.id === startNode.id)
   const end = siblings.findIndex(node => node.id === endNode.id)
   return start >= 0 && end >= start ? { startNodeId, endNodeId } : null
 }
 
-function getVisualSiblings(parent, anchor) {
-  if (anchor?.side === 'left' || anchor?.side === 'right') {
+function getVisualSiblings(parent, anchor, layoutName = 'mindmap-both') {
+  // 只有雙向心智圖會把 children 分到兩側；其他佈局的視覺順序就是 children 陣列順序。
+  if ((layoutName === 'mindmap-both' || layoutName === 'mindmap') && (anchor?.side === 'left' || anchor?.side === 'right')) {
     return parent.children.filter(node => node.side === anchor.side)
   }
   return parent.children.slice()

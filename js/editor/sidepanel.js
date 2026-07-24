@@ -5,14 +5,19 @@ import { hasAction, registerAction, runAction } from './actions.js'
 import {
   backgroundPresets,
   createThemePreviewSvg,
+  deleteCustomTheme,
+  getCustomThemeList,
+  getDefaultThemeId,
+  getScopedSpacing,
   getTheme,
   getThemeList,
-  parseLineToken
+  parseLineToken,
+  saveCustomTheme,
+  setDefaultThemeId
 } from './themes.js'
 import { strings } from '../strings.js'
 
 const PINNED_KEY = 'mindflow.theme.pinned'
-const DEFAULT_KEY = 'mindflow.theme.default'
 const RECENT_COLORS_KEY = 'mindflow.colors.recent'
 
 const SHAPES = [
@@ -72,36 +77,42 @@ export function initializeSidepanel() {
 function buildViews(content) {
   content.innerHTML = `
     <div class="panel-view" data-panel-view="style">
-      <section class="panel-section">
+      <section class="panel-section summary-style-controls" data-summary-style hidden>
+        <h3>概要樣式 Summary</h3>
+        <div class="control-row"><label>線色</label><span data-picker="summary-line"></span></div>
+        <div class="control-row"><label>線型</label><select data-summary-line-style>${options(LINE_STYLES)}</select></div>
+        <div class="control-row"><label>填色</label><span data-picker="summary-fill"></span></div>
+      </section>
+      <section class="panel-section" data-node-style>
         <h3>形狀 Shape</h3>
         <div class="shape-grid">${SHAPES.map(([id, label]) => `<button class="shape-option" type="button" data-shape="${id}" title="${label}" aria-label="${label}"></button>`).join('')}</div>
         <div class="control-row"><label>填色</label><span data-picker="fill"></span></div>
       </section>
-      <section class="panel-section">
+      <section class="panel-section" data-node-style>
         <h3>圓角 Radius</h3>
         <div class="control-row"><input data-style-range="radius" type="range" min="0" max="40" value="6"><output class="range-value" data-style-output="radius">6px</output></div>
       </section>
-      <section class="panel-section">
+      <section class="panel-section" data-node-style>
         <h3>邊框 Border</h3>
         <div class="control-row"><label>線型</label><select data-style-input="borderStyle">${options(LINE_STYLES)}</select></div>
         <div class="control-row"><label>顏色</label><span data-picker="border"></span><label>寬度</label><select data-style-input="borderWidth">${numberOptions(0, 5, 1, 'px')}</select></div>
       </section>
-      <section class="panel-section">
+      <section class="panel-section" data-node-style>
         <h3>連接線 Line</h3>
         <div class="control-row"><label>形狀</label><select data-line-shape><option value="curved">曲線</option><option value="straight">直線</option><option value="orthogonal">直角</option></select></div>
         <div class="control-row"><label>線型</label><select data-line-style>${options(LINE_STYLES)}</select></div>
         <div class="control-row"><label>顏色</label><span data-picker="line"></span><label>寬度</label><select data-style-input="lineWidth">${numberOptions(0, 5, 3, 'px')}</select></div>
       </section>
-      <section class="panel-section">
+      <section class="panel-section" data-node-style>
         <h3>結構 Structure</h3>
         <div class="structure-grid">${STRUCTURES.map(([id, icon, label]) => `<button class="structure-option" type="button" data-structure="${id}" title="${label}" aria-label="${label}">${icon}</button>`).join('')}</div>
         <div class="control-row"><label>方向</label><select data-layout-direction><option value="mindmap-right">向右</option><option value="mindmap-left">向左</option><option value="mindmap-both">平衡</option></select></div>
       </section>
-      <section class="panel-section">
+      <section class="panel-section" data-node-style>
         <h3>節點間距</h3>
         <div class="control-row"><label>水平</label><input data-spacing="spacingH" type="range" min="10" max="80" value="30"><output class="range-value" data-spacing-output="spacingH">30</output></div>
         <div class="control-row"><label>垂直</label><input data-spacing="spacingV" type="range" min="10" max="80" value="30"><output class="range-value" data-spacing-output="spacingV">30</output></div>
-        <div class="control-row"><label>範圍</label><select class="panel-select" data-spacing-scope><option>所有節點</option><option>目前分支</option><option>選中節點</option></select></div>
+        <div class="control-row"><label>適用範圍</label><select class="panel-select" data-spacing-scope><option value="all">所有節點</option><option value="subtree">僅選取子樹</option></select></div>
       </section>
     </div>
     <div class="panel-view" data-panel-view="theme" hidden>
@@ -109,6 +120,11 @@ function buildViews(content) {
       <div data-theme-pane="themes">
         <button type="button" class="panel-primary-button" data-random-theme>一鍵搭配</button>
         <section class="panel-section"><h3>推薦主題</h3><div class="theme-grid" data-theme-grid></div></section>
+        <section class="panel-section custom-theme-section">
+          <div class="panel-section-heading"><h3>自訂主題</h3><button type="button" class="panel-text-button" data-save-custom-theme>儲存目前樣式</button></div>
+          <div class="theme-grid" data-custom-theme-grid></div>
+          <p class="panel-empty" data-custom-theme-empty>尚無自訂主題</p>
+        </section>
       </div>
       <div data-theme-pane="background" hidden>
         <button type="button" class="panel-primary-button" data-random-background>隨機背景</button>
@@ -141,10 +157,28 @@ function buildViews(content) {
 }
 
 function mountStyleControls(view) {
-  view.querySelectorAll('[data-shape]').forEach(button => button.addEventListener('click', () => runAction('setShape', button.dataset.shape)))
+  view.querySelectorAll('[data-shape]').forEach(button => button.addEventListener('click', () => {
+    const action = hasAction('setNodeShape') ? 'setNodeShape' : 'setShape'
+    runAction(action, button.dataset.shape)
+  }))
   mountPicker(view.querySelector('[data-picker="fill"]'), stylePickerOptions('fill', '#ffffff', 'transparent'))
   mountPicker(view.querySelector('[data-picker="border"]'), stylePickerOptions('borderColor', '#64748b', 'transparent'))
-  mountPicker(view.querySelector('[data-picker="line"]'), stylePickerOptions('lineColor', '#3f89de', '#64748b'))
+  mountPicker(view.querySelector('[data-picker="line"]'), linePickerOptions())
+  mountPicker(view.querySelector('[data-picker="summary-line"]'), {
+    value: '#f17e2e',
+    defaultColor: '#f17e2e',
+    onPreview: color => previewSummaryStyle({ lineColor: color }),
+    onChange: color => runAction('applySummaryStyle', { lineColor: color })
+  })
+  mountPicker(view.querySelector('[data-picker="summary-fill"]'), {
+    value: '#fff7ed',
+    defaultColor: '#fff7ed',
+    onPreview: color => previewSummaryStyle({ fill: color }),
+    onChange: color => runAction('applySummaryStyle', { fill: color })
+  })
+  view.querySelector('[data-summary-line-style]').addEventListener('change', event => {
+    runAction('applySummaryStyle', { lineStyle: event.target.value })
+  })
 
   const radius = view.querySelector('[data-style-range="radius"]')
   radius.addEventListener('input', event => {
@@ -156,6 +190,7 @@ function mountStyleControls(view) {
     const key = input.dataset.styleInput
     const numeric = ['borderWidth', 'lineWidth'].includes(key)
     const value = numeric ? Number(input.value) : input.value
+    if (runAction('getSelectedOverlay')?.type === 'summary') return
     if (key === 'lineWidth' && runAction('getSelectedOverlay')?.type === 'relation') {
       runAction('applyRelationStyle', { lineWidth: value })
     } else {
@@ -173,14 +208,20 @@ function mountStyleControls(view) {
     else runAction('setLineStyle', { style: lineStyle.value })
   })
 
-  view.querySelectorAll('[data-structure]').forEach(button => button.addEventListener('click', () => runAction('setLayout', button.dataset.structure)))
-  view.querySelector('[data-layout-direction]').addEventListener('change', event => runAction('setLayout', event.target.value))
+  view.querySelectorAll('[data-structure]').forEach(button => button.addEventListener('click', () => runAction('setStructure', button.dataset.structure)))
+  view.querySelector('[data-layout-direction]').addEventListener('change', event => runAction('setStructure', event.target.value))
+  const spacingScope = view.querySelector('[data-spacing-scope]')
+  spacingScope.addEventListener('change', () => refreshSpacingControls(view))
   view.querySelectorAll('[data-spacing]').forEach(input => {
     input.addEventListener('input', () => {
       view.querySelector(`[data-spacing-output="${input.dataset.spacing}"]`).value = input.value
-      runAction('previewDocumentSpacing', input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) })
+      const action = spacingScope.value === 'subtree' ? 'previewScopedSpacing' : 'previewDocumentSpacing'
+      runAction(action, input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) })
     })
-    input.addEventListener('change', () => runAction('commitDocumentSpacingPreview', input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) }))
+    input.addEventListener('change', () => {
+      const action = spacingScope.value === 'subtree' ? 'commitScopedSpacing' : 'commitDocumentSpacingPreview'
+      runAction(action, input.dataset.spacing, { [input.dataset.spacing]: Number(input.value) })
+    })
   })
 }
 
@@ -214,7 +255,19 @@ function mountThemeControls(view) {
     runAction('applyTheme', choices[Math.floor(Math.random() * choices.length)]?.id)
   })
 
-  renderThemeGrid(view.querySelector('[data-theme-grid]'))
+  const recommendedGrid = view.querySelector('[data-theme-grid]')
+  const customGrid = view.querySelector('[data-custom-theme-grid]')
+  const renderAllThemeGrids = () => {
+    renderThemeGrid(recommendedGrid)
+    renderCustomThemeGrid(customGrid, view.querySelector('[data-custom-theme-empty]'))
+  }
+  renderAllThemeGrids()
+  view.querySelector('[data-save-custom-theme]').addEventListener('click', () => {
+    const saved = saveCustomTheme(runAction('getEditorSnapshot'))
+    if (!saved) return
+    renderAllThemeGrids()
+    runAction('applyTheme', saved.id)
+  })
   const quickColors = ['#FDF3BD', '#C0E4BC', '#8B8FD4', '#BDF4FC', '#C2BCE6']
   const quickContainer = view.querySelector('[data-quick-colors]')
   quickColors.forEach(color => {
@@ -269,6 +322,7 @@ function mountThemeControls(view) {
 function renderThemeGrid(container) {
   const pinned = readJson(PINNED_KEY, [])
   const active = runAction('getEditorSnapshot')?.doc?.themeId
+  const defaultTheme = getDefaultThemeId()
   const allThemes = getThemeList().sort((left, right) => pinned.indexOf(right.id) - pinned.indexOf(left.id))
   container.replaceChildren()
   for (const selectedTheme of allThemes) {
@@ -298,11 +352,16 @@ function renderThemeGrid(container) {
       event.stopPropagation()
       togglePinnedTheme(selectedTheme.id, container)
     })
-    pin.addEventListener('dblclick', () => {
-      localStorage.setItem(DEFAULT_KEY, selectedTheme.id)
-      runAction('applyTheme', selectedTheme.id)
+    const makeDefault = document.createElement('button')
+    makeDefault.type = 'button'
+    makeDefault.className = `theme-default${defaultTheme === selectedTheme.id ? ' is-default' : ''}`
+    makeDefault.textContent = defaultTheme === selectedTheme.id ? '預設' : '設為預設'
+    makeDefault.addEventListener('click', event => {
+      event.stopPropagation()
+      setDefaultThemeId(selectedTheme.id)
+      renderThemeGrid(container)
     })
-    meta.append(name, pin)
+    meta.append(name, makeDefault, pin)
     card.append(preview, meta)
     card.tabIndex = 0
     card.setAttribute('role', 'button')
@@ -313,6 +372,53 @@ function renderThemeGrid(container) {
       event.stopPropagation()
       selectTheme()
     })
+    container.append(card)
+  }
+}
+
+function renderCustomThemeGrid(container, emptyState) {
+  const active = runAction('getEditorSnapshot')?.doc?.themeId
+  const defaultTheme = getDefaultThemeId()
+  const customThemes = getCustomThemeList()
+  container.replaceChildren()
+  emptyState.hidden = customThemes.length > 0
+  for (const selectedTheme of customThemes) {
+    const card = document.createElement('article')
+    card.className = `theme-card theme-card--custom${selectedTheme.id === active ? ' is-active' : ''}`
+    card.dataset.themeId = selectedTheme.id
+    const preview = document.createElement('button')
+    preview.type = 'button'
+    preview.className = 'theme-card__preview'
+    preview.innerHTML = createThemePreviewSvg(selectedTheme, { width: 180, height: 108 })
+    preview.addEventListener('click', () => {
+      runAction('applyTheme', selectedTheme.id)
+      renderCustomThemeGrid(container, emptyState)
+    })
+    const meta = document.createElement('div')
+    meta.className = 'theme-card__meta'
+    const name = document.createElement('span')
+    name.className = 'theme-card__name'
+    name.textContent = selectedTheme.name
+    const makeDefault = document.createElement('button')
+    makeDefault.type = 'button'
+    makeDefault.className = `theme-default${defaultTheme === selectedTheme.id ? ' is-default' : ''}`
+    makeDefault.textContent = defaultTheme === selectedTheme.id ? '預設' : '設為預設'
+    makeDefault.addEventListener('click', () => {
+      setDefaultThemeId(selectedTheme.id)
+      renderCustomThemeGrid(container, emptyState)
+    })
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'theme-delete'
+    remove.textContent = '刪除'
+    remove.addEventListener('click', () => {
+      const wasActive = runAction('getEditorSnapshot')?.doc?.themeId === selectedTheme.id
+      deleteCustomTheme(selectedTheme.id)
+      if (wasActive) runAction('applyTheme', 'classic-blue')
+      renderCustomThemeGrid(container, emptyState)
+    })
+    meta.append(name, makeDefault, remove)
+    card.append(preview, meta)
     container.append(card)
   }
 }
@@ -349,8 +455,19 @@ function applyWatermark(view, mode = 'commit', key = '') {
 function refreshPanel(views) {
   const snapshot = runAction('getEditorSnapshot')
   if (!snapshot) return
+  const overlay = runAction('getSelectedOverlay')
+  const selectedSummary = overlay?.type === 'summary'
+    ? snapshot.doc.summaries?.find(item => item.id === overlay.id)
+    : null
   const appearance = snapshot.primaryAppearance
   const styleView = views.style
+  styleView.querySelector('[data-summary-style]').hidden = !selectedSummary
+  styleView.querySelectorAll('[data-node-style]').forEach(section => { section.hidden = Boolean(selectedSummary) })
+  if (selectedSummary) {
+    setValue(styleView, '[data-summary-line-style]', selectedSummary.style?.lineStyle || 'solid')
+    setPickerSwatch(styleView, 'summary-line', selectedSummary.style?.lineColor || '#f17e2e')
+    setPickerSwatch(styleView, 'summary-fill', selectedSummary.style?.fill || '#fff7ed')
+  }
   styleView.querySelectorAll('[data-shape]').forEach(button => button.classList.toggle('is-active', button.dataset.shape === appearance?.shape))
   if (appearance) {
     setValue(styleView, '[data-style-range="radius"]', appearance.radius)
@@ -362,12 +479,10 @@ function refreshPanel(views) {
     setValue(styleView, '[data-line-style]', line.lineStyle)
     setValue(styleView, '[data-line-shape]', line.lineShape)
   }
-  styleView.querySelectorAll('[data-structure]').forEach(button => button.classList.toggle('is-active', button.dataset.structure === snapshot.doc.layout))
-  setValue(styleView, '[data-layout-direction]', snapshot.doc.layout)
-  for (const key of ['spacingH', 'spacingV']) {
-    setValue(styleView, `[data-spacing="${key}"]`, snapshot.rootAppearance[key])
-    styleView.querySelector(`[data-spacing-output="${key}"]`).value = snapshot.rootAppearance[key]
-  }
+  const localStructure = snapshot.primaryNode?.style?.structure || 'mindmap-right'
+  styleView.querySelectorAll('[data-structure]').forEach(button => button.classList.toggle('is-active', button.dataset.structure === localStructure))
+  setValue(styleView, '[data-layout-direction]', localStructure)
+  refreshSpacingControls(styleView, snapshot)
 
   views.theme.querySelectorAll('.theme-card').forEach(card => card.classList.toggle('is-active', card.dataset.themeId === snapshot.doc.themeId))
   const themeView = views.theme
@@ -565,4 +680,49 @@ function stylePickerOptions(key, value, defaultColor) {
     onPreview: color => runAction('previewStyle', key, { [key]: color }),
     onChange: color => runAction('commitStylePreview', key, { [key]: color })
   }
+}
+
+function linePickerOptions() {
+  return {
+    value: '#3f89de',
+    defaultColor: '#64748b',
+    onPreview: color => {
+      if (runAction('getSelectedOverlay')?.type === 'summary') previewSummaryStyle({ lineColor: color })
+      else runAction('previewStyle', 'lineColor', { lineColor: color })
+    },
+    onChange: color => {
+      if (runAction('getSelectedOverlay')?.type === 'summary') runAction('applySummaryStyle', { lineColor: color })
+      else runAction('commitStylePreview', 'lineColor', { lineColor: color })
+    }
+  }
+}
+
+function previewSummaryStyle(patch) {
+  const overlay = runAction('getSelectedOverlay')
+  if (overlay?.type !== 'summary') return false
+  const path = document.querySelector(`[data-summary-id="${cssEscape(overlay.id)}"]`)
+  const label = document.querySelector(`[data-summary-node="${cssEscape(overlay.id)}"]`)
+  if (patch.lineColor && path) path.style.stroke = patch.lineColor
+  if (patch.fill && label) label.style.background = patch.fill
+  return true
+}
+
+function refreshSpacingControls(view, providedSnapshot = null) {
+  const snapshot = providedSnapshot || runAction('getEditorSnapshot')
+  if (!snapshot) return
+  const subtree = view.querySelector('[data-spacing-scope]').value === 'subtree'
+  const local = subtree ? getScopedSpacing(snapshot.primaryNode) : null
+  for (const key of ['spacingH', 'spacingV']) {
+    const value = local?.[key] ?? snapshot.rootAppearance[key] ?? 30
+    setValue(view, `[data-spacing="${key}"]`, value)
+    view.querySelector(`[data-spacing-output="${key}"]`).value = value
+  }
+}
+
+function setPickerSwatch(root, name, color) {
+  root.querySelector(`[data-picker="${name}"] .color-trigger`)?.style.setProperty('--swatch', color)
+}
+
+function cssEscape(value) {
+  return globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&')
 }

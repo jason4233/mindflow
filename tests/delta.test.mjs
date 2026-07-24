@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createDefaultDoc, createNode, findNode } from '../js/editor/model.js'
 import { CommandManager } from '../js/editor/commands.js'
+import { KeyboardController } from '../js/editor/keyboard.js'
 import {
   createRelationCommand,
   deleteNodesWithOverlaysCommand,
@@ -100,6 +101,23 @@ test('概要依同側視覺順序建立並以 nodeId 錨定，兄弟增刪不會
   assert.match(geometry.path, /^M .+ C /u)
 })
 
+test('單側佈局的概要依 children 視覺順序判定連續，不受持久化 side 干擾', () => {
+  const doc = createDefaultDoc()
+  doc.layout = 'org'
+  const [first, second, third] = doc.root.children
+
+  assert.deepEqual(getSummaryRange(doc.root, [first.id, second.id], doc.layout), {
+    parentId: doc.root.id,
+    startNodeId: first.id,
+    endNodeId: second.id
+  })
+  assert.equal(getSummaryRange(doc.root, [first.id, third.id], doc.layout), null)
+
+  const command = createSummaryCommand(doc, [first.id, second.id], { id: 'sum-org' })
+  assert.equal(command.do(), true)
+  assert.deepEqual(getSummaryNodes(doc.summaries[0], doc.root, doc.layout).map(node => node.id), [first.id, second.id])
+})
+
 test('概要更新驗證失敗時不修改懸空資料', () => {
   const doc = createDefaultDoc()
   doc.summaries.push({
@@ -145,6 +163,63 @@ test('刪除節點同步清理關聯線與概要，undo/redo 完整還原', () =
   assert.ok(findNode(doc.root, middle.id))
   assert.equal(doc.relations[0].id, 'rel-cleanup')
   assert.equal(doc.summaries[0].id, 'sum-cleanup')
+  manager.redo()
+  assert.equal(doc.relations.length, 0)
+  assert.equal(doc.summaries.length, 0)
+})
+
+test('dissolve 節點保留子節點時同步清理關聯線與概要，undo/redo 完整還原', () => {
+  const doc = createDefaultDoc()
+  const dissolved = doc.root.children[0]
+  const retainedA = createNode('保留 A', { side: dissolved.side })
+  const retainedB = createNode('保留 B', { side: dissolved.side })
+  dissolved.children.push(retainedA, retainedB)
+  doc.relations = [{
+    id: 'rel-dissolve',
+    fromId: doc.root.id,
+    toId: dissolved.id,
+    label: '',
+    cp1: { x: 0, y: -48 },
+    cp2: { x: 0, y: 48 },
+    style: {}
+  }]
+  doc.summaries = [{
+    id: 'sum-dissolve',
+    parentId: dissolved.id,
+    startNodeId: retainedA.id,
+    endNodeId: retainedB.id,
+    text: '子樹概要',
+    style: {}
+  }]
+  const manager = new CommandManager()
+  const selection = {
+    primaryId: dissolved.id,
+    selectedIds: [dissolved.id],
+    getSelectedIds() { return this.selectedIds.slice() },
+    set(ids) {
+      this.selectedIds = ids.slice()
+      this.primaryId = ids[0] || null
+    }
+  }
+  const controller = new KeyboardController({
+    doc,
+    manager,
+    selection,
+    viewport: {},
+    edit: { isEditing: false },
+    save: () => true,
+    getPositions: () => new Map()
+  })
+
+  assert.equal(controller.dissolveSelected(), true)
+  assert.equal(findNode(doc.root, dissolved.id), null)
+  assert.ok(findNode(doc.root, retainedA.id))
+  assert.equal(doc.relations.length, 0)
+  assert.equal(doc.summaries.length, 0)
+  manager.undo()
+  assert.ok(findNode(doc.root, dissolved.id))
+  assert.equal(doc.relations[0].id, 'rel-dissolve')
+  assert.equal(doc.summaries[0].id, 'sum-dissolve')
   manager.redo()
   assert.equal(doc.relations.length, 0)
   assert.equal(doc.summaries.length, 0)

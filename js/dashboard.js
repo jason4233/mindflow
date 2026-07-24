@@ -18,6 +18,12 @@ import {
   MIND_FLOW_TEMPLATES,
   TEMPLATE_CATEGORIES
 } from './templates.js'
+import { createId } from './editor/model.js'
+import {
+  importDocumentJson,
+  importDocumentMarkdown,
+  importDocumentTxt
+} from './io/import.js'
 
 const elements = {
   heading: document.querySelector('#view-heading'),
@@ -61,6 +67,8 @@ const state = {
 
 const previewCache = new Map()
 
+ensurePhaseCStyles()
+initializeImportEntry()
 bindEvents()
 render()
 
@@ -468,6 +476,55 @@ function createBlankDocument() {
   openDocument(doc.id)
 }
 
+function initializeImportEntry() {
+  const createButton = document.querySelector('#create-document')
+  if (!createButton || document.querySelector('[data-dashboard-import]')) return
+
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'sidebar-import'
+  button.dataset.dashboardImport = 'true'
+  button.append(createIcon('upload'), document.createTextNode('匯入'))
+
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.mindflow,.json,.txt,.md,application/json,text/plain,text/markdown'
+  input.hidden = true
+  input.setAttribute('aria-hidden', 'true')
+  button.addEventListener('click', () => input.click())
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    try {
+      const source = await file.text()
+      const imported = parseDashboardImport(file.name, source)
+      const now = new Date().toISOString()
+      // 匯入永遠建立新文件，避免相同 doc id 無提示覆蓋現有內容。
+      imported.id = createId('doc')
+      imported.createdAt = now
+      imported.updatedAt = now
+      const doc = createDocument(imported)
+      openDocument(doc.id)
+    } catch (error) {
+      console.error('MindFlow 匯入失敗', error)
+      showToast('匯入失敗，請確認檔案格式與內容。')
+    }
+  })
+
+  createButton.insertAdjacentElement('afterend', button)
+  document.body.append(input)
+}
+
+export function parseDashboardImport(filename, source) {
+  const name = String(filename || '').trim()
+  const extension = name.includes('.') ? name.slice(name.lastIndexOf('.')).toLowerCase() : ''
+  if (extension === '.mindflow' || extension === '.json') return importDocumentJson(source)
+  if (extension === '.txt') return importDocumentTxt(source)
+  if (extension === '.md') return importDocumentMarkdown(source)
+  throw new TypeError('只支援 .mindflow、.json、.txt、.md')
+}
+
 function openDocument(id, nodeId = '') {
   const params = new URLSearchParams({ id })
   if (nodeId) params.set('focus', nodeId)
@@ -533,7 +590,8 @@ function createIcon(name) {
   const paths = {
     plus: '<path d="M12 5v14M5 12h14"/>',
     star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>',
-    more: '<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>'
+    more: '<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>',
+    upload: '<path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v5h14v-5"/>'
   }
   svg.innerHTML = paths[name] || paths.plus
   return svg
@@ -557,4 +615,13 @@ function showToast(message) {
   elements.toast.textContent = message
   elements.toast.hidden = false
   state.toastTimer = window.setTimeout(() => { elements.toast.hidden = true }, 3200)
+}
+
+function ensurePhaseCStyles() {
+  if (document.querySelector('link[data-phasec-styles]')) return
+  const link = document.createElement('link')
+  link.rel = 'stylesheet'
+  link.href = 'css/phasec.css'
+  link.dataset.phasecStyles = 'true'
+  document.head.append(link)
 }

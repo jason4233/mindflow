@@ -6,9 +6,14 @@ import { dispatchGlobalShortcut, findShortcutBinding } from './keyboard.js'
 
 const COMMIT_BEFORE_GLOBAL_ACTIONS = new Set([
   'duplicate',
+  'findReplace',
   'nextTheme',
   ...Array.from({ length: 9 }, (_, index) => `priority${index + 1}`)
 ])
+
+export function shouldCommitBeforeGlobalAction(action) {
+  return action === 'save' || COMMIT_BEFORE_GLOBAL_ACTIONS.has(action)
+}
 
 export class EditController {
   constructor({ nodesLayer, onCommit }) {
@@ -55,27 +60,7 @@ export class EditController {
     this.captureRange()
     this.showToolbar(nodeElement)
 
-    const keydown = event => {
-      const shortcut = findShortcutBinding(event)
-      // 這些 action 會重繪節點層；先結束編輯，避免 renderAll 拔掉 contenteditable
-      // 後留下 detached session，造成文字延遲回寫與鍵盤失效。
-      if (shortcut?.action === 'save' || COMMIT_BEFORE_GLOBAL_ACTIONS.has(shortcut?.action)) this.commit()
-      if (dispatchGlobalShortcut(event, { formMode: true })) {
-        event.stopPropagation()
-        return
-      }
-      event.stopPropagation()
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        this.cancel()
-      } else if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault()
-        this.commit()
-      } else if ((event.ctrlKey || event.metaKey) && ['b', 'i', 'u'].includes(event.key.toLowerCase())) {
-        event.preventDefault()
-        this.executeTextCommand(({ b: 'bold', i: 'italic', u: 'underline' })[event.key.toLowerCase()])
-      }
-    }
+    const keydown = event => this.handleEditingKeydown(event)
     const blur = event => {
       if (this.toolbar?.contains(event.relatedTarget)) return
       queueMicrotask(() => {
@@ -90,6 +75,28 @@ export class EditController {
     textElement.addEventListener('blur', blur)
     document.addEventListener('selectionchange', selectionChange)
     return true
+  }
+
+  handleEditingKeydown(event) {
+    const shortcut = findShortcutBinding(event)
+    // 這些 action 會重繪節點層；先結束編輯，避免 renderAll 拔掉 contenteditable
+    // 後留下 detached session，造成文字延遲回寫與鍵盤失效。
+    if (shouldCommitBeforeGlobalAction(shortcut?.action)) this.commit()
+    if (dispatchGlobalShortcut(event, { formMode: true })) {
+      event.stopPropagation()
+      return
+    }
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      this.cancel()
+    } else if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      this.commit()
+    } else if ((event.ctrlKey || event.metaKey) && ['b', 'i', 'u'].includes(event.key.toLowerCase())) {
+      event.preventDefault()
+      this.executeTextCommand(({ b: 'bold', i: 'italic', u: 'underline' })[event.key.toLowerCase()])
+    }
   }
 
   commit() {

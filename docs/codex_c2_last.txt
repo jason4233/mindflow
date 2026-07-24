@@ -1,0 +1,12 @@
+工作流 C2 已完成。
+
+- 歷史版本：自動快照、30 份 FIFO、唯讀預覽、可 undo 還原。
+- 公式：LaTeX 子集 parser、快速插入、inline HTML、安全 fallback。
+- 分屏：URL/PDF、可調 divider、object URL 清理。
+- 匯入：`.mindflow/.json/.txt/.md`，匯入後直接開啟 editor。
+- 驗證：6/6 syntax checks、64/64 tests、C2 補充 assertions 全綠。
+- Playwright：全部流程通過，console 0 errors / 0 warnings，像素檢查正常。
+- 已清除 browser artifacts 並停止測試伺服器。
+- 未執行 git，未修改所有權外的程式檔與 `tests\`。
+
+交接紀錄：[CODEX_C2_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_C2_NOTES.md>)

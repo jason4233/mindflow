@@ -488,6 +488,94 @@ body.is-focus-mode .sidepanel,
 body.is-focus-mode .zoom-controls { display: none !important; }
 body.is-focus-mode .canvas { cursor: default; }
 
+/* C1：節點寬度拖曳把手 */
+.node-width-handle {
+  position: absolute;
+  z-index: 9;
+  top: 7px;
+  bottom: 7px;
+  width: 9px;
+  border-radius: 999px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.node-width-handle::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 22px;
+  border-radius: 999px;
+  background: #f17e2e;
+  box-shadow: 0 0 0 2px #fff;
+  content: "";
+  opacity: .8;
+  transform: translate(-50%, -50%);
+}
+
+.node-width-handle--left { left: -7px; }
+.node-width-handle--right { right: -7px; }
+
+/* C1：自訂主題與概要專用控制 */
+.panel-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-section-heading h3 { margin: 0; }
+
+.panel-text-button,
+.theme-default,
+.theme-delete {
+  border: 0;
+  border-radius: 6px;
+  color: #64748b;
+  background: #f1f5f9;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.panel-text-button {
+  padding: 6px 8px;
+  color: #c45c17;
+  background: #fff2e8;
+  font-weight: 700;
+}
+
+.theme-default,
+.theme-delete {
+  padding: 4px 6px;
+}
+
+.theme-default.is-default {
+  color: #fff;
+  background: #f17e2e;
+}
+
+.theme-delete:hover {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.theme-card--custom .theme-card__meta {
+  flex-wrap: wrap;
+}
+
+.custom-theme-section > .panel-empty {
+  margin: 10px 0 0;
+  padding: 10px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.summary-style-controls {
+  border-color: #fed7aa;
+  background: #fffaf5;
+}
+
 @media (max-width: 680px) {
   .feature-drawer { top: 122px; bottom: 12px; }
   .find-replace-panel { top: 122px; }

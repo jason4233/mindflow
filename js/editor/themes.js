@@ -4,6 +4,11 @@
 
 const FONT_STACK = 'Inter, "Segoe UI", "Noto Sans TC", sans-serif'
 const STYLE_SEPARATOR = '|'
+const CUSTOM_THEMES_KEY = 'mindflow.theme.custom'
+const DEFAULT_THEME_KEY = 'mindflow.theme.default'
+const NODE_WIDTH_MIN = 60
+const NODE_WIDTH_MAX = 500
+const DEFAULT_SPACING = 30
 
 function style(overrides = {}) {
   return Object.freeze({
@@ -153,11 +158,63 @@ export const backgroundPresets = Object.freeze([
 ])
 
 export function getTheme(themeId) {
-  return themes[themeId] || themes['classic-blue']
+  return themes[themeId] || getCustomThemeList().find(item => item.id === themeId) || themes['classic-blue']
 }
 
 export function getThemeList() {
   return THEME_LIST.slice()
+}
+
+export function getCustomThemeList() {
+  const records = readStorageJson(CUSTOM_THEMES_KEY, [])
+  if (!Array.isArray(records)) return []
+  return records
+    .map(normalizeCustomTheme)
+    .filter(Boolean)
+}
+
+export function saveCustomTheme(snapshot, name = '') {
+  const definition = customThemeDefinition(snapshot, name)
+  if (!definition) return null
+  const current = getCustomThemeList()
+  const next = [definition, ...current.filter(item => item.id !== definition.id)].slice(0, 24)
+  writeStorageJson(CUSTOM_THEMES_KEY, next)
+  return definition
+}
+
+export function deleteCustomTheme(themeId) {
+  const current = getCustomThemeList()
+  const next = current.filter(item => item.id !== themeId)
+  if (next.length === current.length) return false
+  const wasDefault = globalThis.localStorage?.getItem(DEFAULT_THEME_KEY) === themeId
+  writeStorageJson(CUSTOM_THEMES_KEY, next)
+  if (wasDefault) setDefaultThemeId('classic-blue')
+  return true
+}
+
+export function setDefaultThemeId(themeId) {
+  const id = String(themeId || '')
+  const exists = themeIds.includes(id) || getCustomThemeList().some(item => item.id === id)
+  if (!exists || !globalThis.localStorage) return false
+  globalThis.localStorage.setItem(DEFAULT_THEME_KEY, id)
+  return true
+}
+
+export function getDefaultThemeId() {
+  if (!globalThis.localStorage) return 'classic-blue'
+  const id = globalThis.localStorage.getItem(DEFAULT_THEME_KEY) || 'classic-blue'
+  return themeIds.includes(id) || getCustomThemeList().some(item => item.id === id) ? id : 'classic-blue'
+}
+
+export function applyDefaultThemeToDocument(doc, { force = false } = {}) {
+  if (!doc?.root || !doc.canvas) return false
+  const themeId = getDefaultThemeId()
+  if (!force && !looksLikeNewBlankDocument(doc)) return false
+  const selectedTheme = getTheme(themeId)
+  if (doc.themeId === selectedTheme.id && doc.canvas.background === selectedTheme.canvasBg) return false
+  doc.themeId = selectedTheme.id
+  doc.canvas.background = selectedTheme.canvasBg
+  return true
 }
 
 export function getNextThemeId(themeId) {
@@ -195,22 +252,134 @@ export function encodeStyleToken(value, patch = {}, shapeOverride = null) {
 }
 
 export function parseLineToken(value, fallbackStyle = 'solid', fallbackShape = 'curved') {
+  const parsed = parseLineTokenDetails(value, fallbackStyle, fallbackShape)
+  return { lineStyle: parsed.lineStyle, lineShape: parsed.lineShape }
+}
+
+function parseLineTokenDetails(value, fallbackStyle = 'solid', fallbackShape = 'curved') {
   const parsed = parseStyleToken(value || fallbackStyle, fallbackStyle)
-  return { lineStyle: parsed.shape, lineShape: parsed.metadata.shape || fallbackShape }
+  return {
+    lineStyle: parsed.shape,
+    lineShape: parsed.metadata.shape || fallbackShape,
+    hasShapeOverride: Boolean(parsed.metadata.shape),
+    metadata: { ...parsed.metadata }
+  }
 }
 
 export function encodeLineToken(value, lineStyle, lineShape) {
-  const parsed = parseLineToken(value)
+  const parsed = parseLineTokenDetails(value)
   return encodeStyleToken(lineStyle || parsed.lineStyle, { shape: lineShape || parsed.lineShape }, lineStyle || parsed.lineStyle)
+}
+
+export function withLineAppearance(value, {
+  lineStyle,
+  lineShape,
+  themeShape = 'curved',
+  shapeExplicit = false,
+  styleExplicit = lineStyle !== undefined
+} = {}) {
+  const parsed = parseLineTokenDetails(value || 'inherit', 'inherit', themeShape)
+  const metadata = { ...parsed.metadata }
+  const nextStyle = styleExplicit ? (lineStyle || 'solid') : parsed.lineStyle
+  if (shapeExplicit) {
+    if (!lineShape || lineShape === themeShape) delete metadata.shape
+    else metadata.shape = lineShape
+  }
+  return encodeStyleToken(nextStyle, metadata, nextStyle)
+}
+
+export function getNodeWidth(node) {
+  const token = parseLineTokenDetails(node?.style?.lineStyle || 'inherit', 'inherit')
+  const width = Number(token.metadata.width)
+  return Number.isFinite(width) ? clamp(width, NODE_WIDTH_MIN, NODE_WIDTH_MAX) : null
+}
+
+export function withNodeWidth(value, width) {
+  const token = parseLineTokenDetails(value || 'inherit', 'inherit')
+  return encodeStyleToken(token.lineStyle, {
+    ...token.metadata,
+    width: Math.round(clamp(width, NODE_WIDTH_MIN, NODE_WIDTH_MAX))
+  }, token.lineStyle)
+}
+
+export function withNodeShape(value, shape) {
+  const token = parseStyleToken(value || 'inherit', 'inherit')
+  const nextShape = String(shape || 'inherit')
+  return encodeStyleToken(nextShape, token.metadata, nextShape)
+}
+
+export function measureNodeWithWidth(node, measured, depth = 0, selectedTheme = null) {
+  const width = getNodeWidth(node)
+  if (!width) return measured
+  const appearance = getNodeAppearance(node, depth, selectedTheme || themes['classic-blue'])
+  const horizontalPadding = Math.max(0, Number(appearance.paddingX) || 0) * 2
+  const naturalContentWidth = Math.max(1, Number(measured?.w) - horizontalPadding)
+  const availableContentWidth = Math.max(1, width - horizontalPadding)
+  const lines = Math.max(1, Math.ceil(naturalContentWidth / availableContentWidth))
+  return {
+    w: width,
+    h: Math.max(Number(measured?.h) || 1, Math.ceil((Number(measured?.h) || 1) * lines))
+  }
+}
+
+export function getScopedSpacing(node) {
+  const parsed = parseLineTokenDetails(node?.style?.lineStyle || 'solid')
+  const spacingH = Number(parsed.metadata.spacingH)
+  const spacingV = Number(parsed.metadata.spacingV)
+  if (!Number.isFinite(spacingH) && !Number.isFinite(spacingV)) return null
+  return {
+    spacingH: Number.isFinite(spacingH) ? clamp(spacingH, 10, 80) : DEFAULT_SPACING,
+    spacingV: Number.isFinite(spacingV) ? clamp(spacingV, 10, 80) : DEFAULT_SPACING
+  }
+}
+
+export function withScopedSpacing(value, patch = {}) {
+  const parsed = parseLineTokenDetails(value || 'inherit', 'inherit')
+  const metadata = { ...parsed.metadata }
+  for (const key of ['spacingH', 'spacingV']) {
+    if (!Object.hasOwn(patch, key)) continue
+    metadata[key] = String(Math.round(clamp(patch[key], 10, 80)))
+  }
+  return encodeStyleToken(parsed.lineStyle, metadata, parsed.lineStyle)
+}
+
+export function applyScopedSpacing(root, positions) {
+  if (!root || !(positions instanceof Map)) return positions
+  walkThemeNodes(root, node => {
+    const spacing = getScopedSpacing(node)
+    const anchor = positions.get(node.id)
+    if (!spacing || !anchor) return
+    const descendants = collectDescendantIds(node)
+    const anchorX = anchor.x + anchor.w / 2
+    const anchorY = anchor.y + anchor.h / 2
+    const scaleX = spacing.spacingH / DEFAULT_SPACING
+    const scaleY = spacing.spacingV / DEFAULT_SPACING
+    for (const id of descendants) {
+      const position = positions.get(id)
+      if (!position) continue
+      const centerX = position.x + position.w / 2
+      const centerY = position.y + position.h / 2
+      position.x = anchorX + (centerX - anchorX) * scaleX - position.w / 2
+      position.y = anchorY + (centerY - anchorY) * scaleY - position.h / 2
+    }
+  })
+  return positions
 }
 
 export function getNodeAppearance(node, depth, selectedTheme) {
   const activeTheme = selectedTheme || themes['classic-blue']
   const base = depth === 0 ? activeTheme.rootStyle : depth === 1 ? activeTheme.level2Style : activeTheme.leafStyle
-  const merged = { ...base, ...node.style }
+  const shapeToken = parseStyleToken(node.style?.shape || 'inherit', 'inherit')
+  const explicitShape = shapeToken.shape !== 'inherit' ? shapeToken.shape : null
+  const lineToken = parseLineTokenDetails(node.style?.lineStyle || base.lineStyle, base.lineStyle, activeTheme.lineShape)
+  const effectiveLineStyle = lineToken.lineStyle === 'inherit'
+    ? encodeStyleToken(base.lineStyle, lineToken.metadata, base.lineStyle)
+    : node.style?.lineStyle || base.lineStyle
+  const merged = { ...base, ...node.style, shape: explicitShape || base.shape, lineStyle: effectiveLineStyle }
   return {
     ...merged,
     shape: merged.shape || base.shape,
+    width: getNodeWidth(node),
     hasCustomRadius: Object.hasOwn(node.style, 'radius'),
     radius: Number.isFinite(Number(merged.radius)) ? Number(merged.radius) : Number(base.radius) || 6,
     textAlign: ['left', 'center', 'right'].includes(merged.align) ? merged.align : 'center',
@@ -245,4 +414,114 @@ export function createThemePreviewSvg(selectedTheme, { width = 180, height = 108
 
 function escapeXml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character])
+}
+
+function customThemeDefinition(snapshot, name) {
+  const doc = snapshot?.doc || snapshot
+  if (!doc?.root) return null
+  const base = getTheme(doc.themeId)
+  const representatives = findThemeRepresentatives(doc.root)
+  const createdAt = Date.now()
+  return normalizeCustomTheme({
+    id: `custom-${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: String(name || `自訂主題 ${new Date(createdAt).toLocaleDateString('zh-TW')}`).slice(0, 32),
+    canvasBg: String(doc.canvas?.background || base.canvasBg),
+    branchPalette: base.branchPalette.slice(),
+    rainbow: base.rainbow,
+    lineShape: base.lineShape,
+    lineWidthByDepth: base.lineWidthByDepth.slice(),
+    rootStyle: themeStyleFromNode(doc.root, 0, base),
+    level2Style: themeStyleFromNode(representatives.level2, 1, base),
+    leafStyle: themeStyleFromNode(representatives.leaf, 2, base),
+    createdAt
+  })
+}
+
+function normalizeCustomTheme(input) {
+  if (!input || typeof input !== 'object' || !String(input.id || '').startsWith('custom-')) return null
+  const palette = Array.isArray(input.branchPalette)
+    ? input.branchPalette.filter(color => typeof color === 'string' && color).slice(0, 12)
+    : []
+  if (palette.length === 0) return null
+  return theme({
+    id: String(input.id),
+    name: String(input.name || '自訂主題').slice(0, 32),
+    canvasBg: String(input.canvasBg || '#f4f7fb'),
+    branchPalette: palette,
+    rainbow: input.rainbow !== false,
+    lineShape: ['curved', 'straight', 'orthogonal'].includes(input.lineShape) ? input.lineShape : 'curved',
+    lineWidthByDepth: Array.isArray(input.lineWidthByDepth) ? input.lineWidthByDepth.slice(0, 6) : [4, 3, 2, 1],
+    rootStyle: cleanThemeStyle(input.rootStyle),
+    level2Style: cleanThemeStyle(input.level2Style),
+    leafStyle: cleanThemeStyle(input.leafStyle),
+    createdAt: Number(input.createdAt) || Date.now(),
+    custom: true
+  })
+}
+
+function themeStyleFromNode(node, depth, selectedTheme) {
+  return cleanThemeStyle(node ? getNodeAppearance(node, depth, selectedTheme) : (
+    depth === 0 ? selectedTheme.rootStyle : depth === 1 ? selectedTheme.level2Style : selectedTheme.leafStyle
+  ))
+}
+
+function cleanThemeStyle(input = {}) {
+  const keys = [
+    'fill', 'textColor', 'borderColor', 'borderWidth', 'borderStyle',
+    'fontSize', 'fontFamily', 'bold', 'italic', 'underline', 'strike',
+    'shape', 'radius', 'paddingX', 'paddingY', 'lineColor', 'lineWidth', 'lineStyle'
+  ]
+  return Object.fromEntries(keys.filter(key => input[key] !== undefined).map(key => [key, input[key]]))
+}
+
+function findThemeRepresentatives(root) {
+  const level2 = root.children?.[0] || null
+  let leaf = level2?.children?.[0] || null
+  if (!leaf) {
+    walkThemeNodes(root, (node, depth) => {
+      if (!leaf && depth >= 2) leaf = node
+    })
+  }
+  return { level2, leaf }
+}
+
+function walkThemeNodes(root, visitor, depth = 0) {
+  visitor(root, depth)
+  for (const child of root.children || []) walkThemeNodes(child, visitor, depth + 1)
+}
+
+function collectDescendantIds(node) {
+  const ids = []
+  for (const child of node.children || []) {
+    ids.push(child.id, ...collectDescendantIds(child))
+  }
+  return ids
+}
+
+function looksLikeNewBlankDocument(doc) {
+  if (doc.themeId !== 'classic-blue' || doc.canvas?.background !== '#f5f5f5') return false
+  const children = Array.isArray(doc.root?.children) ? doc.root.children : []
+  return children.length === 4
+    && children.every(child => (child.children || []).length === 0 && Object.keys(child.style || {}).length === 0)
+    && Object.keys(doc.root.style || {}).length === 0
+}
+
+function readStorageJson(key, fallback) {
+  if (!globalThis.localStorage) return fallback
+  try {
+    return JSON.parse(globalThis.localStorage.getItem(key) || 'null') ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeStorageJson(key, value) {
+  if (!globalThis.localStorage) return false
+  globalThis.localStorage.setItem(key, JSON.stringify(value))
+  return true
+}
+
+function clamp(value, min, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min
 }

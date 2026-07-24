@@ -3,6 +3,7 @@
  */
 import { getLayoutBounds, layout } from '../editor/layout.js'
 import { serializeDoc, walkNodes } from '../editor/model.js'
+import { getConnectionPath } from '../editor/render.js'
 import { getLineAppearance, getNodeAppearance, getTheme } from '../editor/themes.js'
 
 const DEFAULT_MARGIN = 80
@@ -84,7 +85,7 @@ export function documentToSvg(doc, options = {}) {
   const textLayouts = new Map()
   const measure = (node, depth) => measureSvgNode(node, depth, activeTheme, textLayouts, options)
   const positions = layout(workingDoc, measure)
-  mirrorLeftLayout(positions, workingRoot.id, doc.layout)
+  applyDocumentSpacing(positions, workingRoot.id, doc.canvas)
 
   const bounds = getLayoutBounds(positions)
   const width = Math.max(1, Math.ceil(bounds.width + margin * 2))
@@ -117,7 +118,7 @@ export function documentToSvg(doc, options = {}) {
     if (!parent || !child || !record) continue
     const branchColor = branches.get(childId) || activeTheme.branchPalette[0]
     const appearance = getLineAppearance(record.node, record.depth, activeTheme, branchColor)
-    pieces.push(svgConnection(parent, child, appearance))
+    pieces.push(svgConnection(parent, child, appearance, child.connector || doc.layout))
   }
   pieces.push(...svgRelations(doc.relations, positions))
 
@@ -205,7 +206,8 @@ function measureSvgNode(node, depth, activeTheme, cache, options) {
   const maxTextWidth = finiteNumber(options.maxTextWidth, DEFAULT_MAX_TEXT_WIDTH, 40, 2000)
   const lineHeight = fontSize * finiteNumber(appearance.lineHeight, 1.35, 0.8, 4)
   const textLayout = wrapSvgRichText(node.richText, node.text, fontSize, maxTextWidth)
-  const iconPrefix = Array.isArray(node.icons) && node.icons.length > 0 ? `${node.icons.join(' ')} ` : ''
+  const iconLabels = Array.isArray(node.icons) ? node.icons.map(exportIconLabel).filter(Boolean) : []
+  const iconPrefix = iconLabels.length > 0 ? `${iconLabels.join(' ')} ` : ''
   if (iconPrefix) {
     textLayout.lines[0] = `${iconPrefix}${textLayout.lines[0]}`
     textLayout.runLines[0].unshift({ text: iconPrefix, style: {} })
@@ -347,7 +349,22 @@ function estimateTextWidth(value, fontSize) {
   return units * fontSize
 }
 
-function svgConnection(parent, child, appearance) {
+function exportIconLabel(token) {
+  const value = String(token || '')
+  if (!value || value.startsWith('__floating__:')) return ''
+  const splitAt = value.indexOf(':')
+  if (splitAt < 0) return value
+  const category = value.slice(0, splitAt)
+  const detail = value.slice(splitAt + 1)
+  if (category === 'priority') return detail ? `P${detail}` : ''
+  if (category === 'progress') return detail ? `${detail}%` : ''
+  if (category === 'flag') return detail ? '⚑' : ''
+  if (category === 'emoji' || category === 'symbol') return detail
+  if (category === 'sticker') return detail ? '▣' : ''
+  return detail || category
+}
+
+function svgConnection(parent, child, appearance, connector) {
   const goesRight = child.x >= parent.x
   const startX = goesRight ? parent.x + parent.w : parent.x
   const endX = goesRight ? child.x : child.x + child.w
@@ -355,7 +372,9 @@ function svgConnection(parent, child, appearance) {
   const endY = child.y + child.h / 2
   const middleX = (startX + endX) / 2
   let pathData
-  if (appearance.shape === 'straight') {
+  if (['org', 'tree-right', 'tree-left', 'tree', 'timeline-h', 'timeline-v', 'fishbone'].includes(connector)) {
+    pathData = getConnectionPath(parent, child, appearance.shape, connector)
+  } else if (appearance.shape === 'straight') {
     pathData = `M ${formatNumber(startX)} ${formatNumber(startY)} L ${formatNumber(endX)} ${formatNumber(endY)}`
   } else if (appearance.shape === 'orthogonal') {
     pathData = `M ${formatNumber(startX)} ${formatNumber(startY)} H ${formatNumber(middleX)} V ${formatNumber(endY)} H ${formatNumber(endX)}`
@@ -544,15 +563,21 @@ function expandedClone(root) {
   return clone
 }
 
-function mirrorLeftLayout(positions, rootId, layoutName) {
-  if (layoutName !== 'mindmap-left' && layoutName !== 'tree-left') return
+function applyDocumentSpacing(positions, rootId, canvas) {
   const root = positions.get(rootId)
   if (!root) return
-  const axis = root.x + root.w / 2
+  const horizontalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingH) || 30) - 30) / 50))
+  const verticalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingV) || 30) - 30) / 50))
+  if (horizontalScale === 1 && verticalScale === 1) return
+  const rootCenterX = root.x + root.w / 2
+  const rootCenterY = root.y + root.h / 2
+  // 與畫面渲染相同：只縮放節點中心距離，節點本身尺寸不變。
   for (const [id, position] of positions) {
     if (id === rootId) continue
-    position.x = axis - (position.x + position.w - axis)
-    position.side = 'left'
+    const centerX = position.x + position.w / 2
+    const centerY = position.y + position.h / 2
+    position.x = rootCenterX + (centerX - rootCenterX) * horizontalScale - position.w / 2
+    position.y = rootCenterY + (centerY - rootCenterY) * verticalScale - position.h / 2
   }
 }
 

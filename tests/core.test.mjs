@@ -27,11 +27,12 @@ import {
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
 import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
-import { ACTION_BINDINGS, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget } from '../js/editor/keyboard.js'
+import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget } from '../js/editor/keyboard.js'
 import {
   createThemePreviewSvg,
   encodeLineToken,
   encodeStyleToken,
+  getLineAppearance,
   getNodeAppearance,
   getTheme,
   getThemeList,
@@ -357,6 +358,31 @@ test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽�
   cleanups.forEach(cleanup => cleanup())
 })
 
+test('編輯中的 Ctrl+F 會先 commit，避免搜尋重繪留下 detached session', async () => {
+  const { EditController } = await import('../js/editor/edit.js')
+  const controller = Object.create(EditController.prototype)
+  const order = []
+  controller.commit = () => { order.push('commit'); return true }
+  const cleanup = registerAction('findReplace', () => { order.push('findReplace'); return true })
+  const event = {
+    key: 'f',
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true },
+    stopPropagation() { this.propagationStopped = true }
+  }
+
+  assert.equal(typeof controller.handleEditingKeydown, 'function')
+  controller.handleEditingKeydown(event)
+  assert.deepEqual(order, ['commit', 'findReplace'])
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(event.propagationStopped, true)
+  cleanup()
+})
+
 test('內建主題至少 12 個且包含 ALPHA 指定主題與完整資料欄位', () => {
   const builtIns = getThemeList()
   assert.ok(builtIns.length >= 12)
@@ -403,6 +429,30 @@ test('樣式 token 與線型 token 可保留 shape、進階控制及繁中文字
 
   const lineToken = encodeLineToken('solid', 'dash-dot', 'orthogonal')
   assert.deepEqual(parseLineToken(lineToken), { lineStyle: 'dash-dot', lineShape: 'orthogonal' })
+})
+
+test('只改線型不會釘住主題 shape，切換主題後節點連線仍跟隨', () => {
+  const doc = createDefaultDoc()
+  doc.themeId = 'monochrome-outline'
+  const target = doc.root.children[0]
+  const manager = new CommandManager()
+  const controller = new KeyboardController({
+    doc,
+    manager,
+    selection: {
+      primaryId: target.id,
+      getSelectedIds: () => [target.id]
+    },
+    viewport: {},
+    edit: { isEditing: false },
+    save: () => true,
+    getPositions: () => new Map()
+  })
+
+  assert.equal(controller.applyLineStyle({ style: 'dotted' }), true)
+  assert.equal(getLineAppearance(target, 1, getTheme('monochrome-outline')).shape, 'orthogonal')
+  doc.themeId = 'classic-blue'
+  assert.equal(getLineAppearance(target, 1, getTheme('classic-blue')).shape, 'curved')
 })
 
 test('舊 shape 複合 token 載入時遷移到 node、style 與 canvas 一級欄位', () => {

@@ -84,6 +84,22 @@ function countOccurrences(source, needle) {
   return source.split(needle).length - 1
 }
 
+function connectionPaths(svg) {
+  const drawing = svg.slice(svg.indexOf('<g transform='))
+  return Array.from(drawing.matchAll(/<path d="([^"]+)" fill="none" stroke=/gu), match => match[1])
+}
+
+function nodeRect(svg, id) {
+  const start = svg.indexOf(`<g data-node-id="${id}">`)
+  assert.ok(start >= 0, `找不到節點 ${id}`)
+  const end = svg.indexOf('</g>', start)
+  const group = svg.slice(start, end)
+  const match = group.match(/<rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/u)
+  assert.ok(match, `節點 ${id} 不是可量測 rect`)
+  const [, x, y, w, h] = match.map(Number)
+  return { x, y, w, h, centerX: x + w / 2, centerY: y + h / 2 }
+}
+
 test('原生 JSON export→import 完整深度相等且不修改來源', () => {
   const doc = fixtureDoc()
   const before = structuredClone(doc)
@@ -236,6 +252,105 @@ test('SVG 以 tspan run 保留 richText 局部粗斜體、底線與顏色', () =
   assert.match(svg, /<tspan[^>]*font-weight="700"[^>]*fill="#dc2626"[^>]*>重點<\/tspan>/u)
   assert.match(svg, /<tspan[^>]*font-style="italic"[^>]*>提示<\/tspan>/u)
   assert.match(svg, /<tspan[^>]*text-decoration="underline"[^>]*>底線<\/tspan>/u)
+})
+
+test('SVG 圖示輸出人類可讀符號並隱藏 floating metadata token', () => {
+  const doc = fixtureDoc()
+  doc.root.icons = ['priority:1', 'progress:50', 'flag:blue', 'emoji:😀', 'symbol:★', '__floating__:300,200']
+  const svg = documentToSvg(doc)
+
+  assert.doesNotMatch(svg, /priority:|progress:|flag:|emoji:|symbol:|__floating__:/u)
+  assert.match(svg, /P1/u)
+  assert.match(svg, /50%/u)
+  assert.match(svg, /⚑/u)
+  assert.match(svg, /😀/u)
+  assert.match(svg, /★/u)
+})
+
+test('SVG 對 org/tree/timeline/fishbone 使用畫面同款 connector 幾何', () => {
+  const cases = [
+    ['org', 3],
+    ['tree-right', 2],
+    ['tree-left', 2],
+    ['timeline-h', 2],
+    ['timeline-v', 2],
+    ['fishbone', 2]
+  ]
+  for (const [layoutName, lineCount] of cases) {
+    const doc = fixtureDoc()
+    doc.layout = layoutName
+    doc.themeId = 'classic-blue'
+    doc.relations = []
+    doc.summaries = []
+    doc.root = node('root', '根', [
+      node('child', '子', [], { side: 'right', style: { shape: 'rect' } })
+    ], { style: { shape: 'rect' } })
+    const paths = connectionPaths(documentToSvg(doc, { includeCollapsedChildren: true }))
+    assert.equal(paths.length, 1, `${layoutName} 應只有一條親子連線`)
+    assert.equal((paths[0].match(/ L /gu) || []).length, lineCount, `${layoutName} connector`)
+    assert.doesNotMatch(paths[0], /[CQ]/u, `${layoutName} 不應退回水平貝茲線`)
+  }
+})
+
+test('SVG 依 child.connector 匯出局部 structure override', () => {
+  const doc = fixtureDoc()
+  doc.layout = 'mindmap-right'
+  doc.themeId = 'classic-blue'
+  doc.relations = []
+  doc.summaries = []
+  doc.root = node('root', '根', [
+    node('branch', '局部組織圖', [
+      node('leaf', '葉', [], { style: { shape: 'rect' } })
+    ], { side: 'right', style: { shape: 'rect', structure: 'org' } })
+  ], { style: { shape: 'rect' } })
+  const paths = connectionPaths(documentToSvg(doc, { includeCollapsedChildren: true }))
+
+  assert.equal(paths.length, 2)
+  assert.match(paths[0], / C /u)
+  assert.equal((paths[1].match(/ L /gu) || []).length, 3)
+})
+
+test('mindmap-left SVG 保留 layout 原生向左座標，不做二次鏡像', () => {
+  const doc = fixtureDoc()
+  doc.layout = 'mindmap-left'
+  doc.themeId = 'classic-blue'
+  doc.relations = []
+  doc.summaries = []
+  doc.root = node('root', '根', [
+    node('child', '左分支', [], { side: 'left', style: { shape: 'rect' } })
+  ], { style: { shape: 'rect' } })
+  const svg = documentToSvg(doc, { includeCollapsedChildren: true })
+
+  assert.ok(nodeRect(svg, 'child').centerX < nodeRect(svg, 'root').centerX)
+})
+
+test('SVG 套用文件水平與垂直 spacing，與畫面採相同比例', () => {
+  const doc = fixtureDoc()
+  doc.layout = 'mindmap-right'
+  doc.themeId = 'classic-blue'
+  doc.relations = []
+  doc.summaries = []
+  doc.root = node('root', '根', [
+    node('child-a', 'A', [], { side: 'right', style: { shape: 'rect' } }),
+    node('child-b', 'B', [], { side: 'left', style: { shape: 'rect' } })
+  ], { style: { shape: 'rect' } })
+  doc.canvas.spacingH = 30
+  doc.canvas.spacingV = 30
+  const baseSvg = documentToSvg(doc, { includeCollapsedChildren: true })
+  doc.canvas.spacingH = 80
+  doc.canvas.spacingV = 80
+  const spacedSvg = documentToSvg(doc, { includeCollapsedChildren: true })
+  const baseRoot = nodeRect(baseSvg, 'root')
+  const baseA = nodeRect(baseSvg, 'child-a')
+  const baseB = nodeRect(baseSvg, 'child-b')
+  const spacedRoot = nodeRect(spacedSvg, 'root')
+  const spacedA = nodeRect(spacedSvg, 'child-a')
+  const spacedB = nodeRect(spacedSvg, 'child-b')
+
+  const horizontalRatio = Math.abs(spacedA.centerX - spacedRoot.centerX) / Math.abs(baseA.centerX - baseRoot.centerX)
+  const verticalRatio = Math.abs(spacedA.centerY - spacedB.centerY) / Math.abs(baseA.centerY - baseB.centerY)
+  assert.equal(Number(horizontalRatio.toFixed(4)), 2)
+  assert.equal(Number(verticalRatio.toFixed(4)), 2)
 })
 
 test('匯出彈窗提供 SPEC 指定六格式', () => {

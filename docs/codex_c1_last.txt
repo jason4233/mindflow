@@ -1,0 +1,12 @@
+工作流 C1 已完成。
+
+- 完成 REVIEW_D #4、#9–#14、#16。
+- 完成演示模式、專注模式、手形工具、節點批次調寬。
+- `main.js` 已預掛五個 init。
+- 38 個 JS syntax check 全過。
+- 正式 tests：64/64 通過。
+- Playwright 瀏覽器流程全過，console 0 errors / 0 warnings。
+- `tests/` 屬 FIX3，C1 補測採臨時 RED/GREEN 行為 suite，未越權寫入。
+- 未 commit 或執行 git 寫入。
+
+完整紀錄：[CODEX_C1_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_C1_NOTES.md>)

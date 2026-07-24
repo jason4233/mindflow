@@ -13,7 +13,11 @@ import { getTheme } from './editor/themes.js'
 
 export const INDEX_KEY = 'mindflow.docs.index'
 export const DOC_KEY_PREFIX = 'mindflow.doc.'
+export const HISTORY_KEY_PREFIX = 'mindflow.history.'
 export const INDEX_VERSION = 2
+export const SNAPSHOT_LIMIT = 30
+export const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000
+export const SNAPSHOT_NODE_CHANGE_RATIO = 0.1
 
 function storage() {
   if (!globalThis.localStorage) throw new Error('此環境不支援 localStorage')
@@ -126,6 +130,38 @@ export function loadDocument(id) {
   }
 }
 
+/**
+ * 版本快照與目前文件分開存放，避免升級既有 index schema。
+ * 對外一律回傳 clone，面板預覽或還原不會誤改 localStorage 內的版本。
+ */
+export function listDocumentSnapshots(id) {
+  return readSnapshots(id)
+    .slice()
+    .reverse()
+    .map(snapshot => structuredCloneSafe(snapshot))
+}
+
+export function getDocumentSnapshot(documentId, snapshotId) {
+  const snapshot = readSnapshots(documentId).find(item => item.id === snapshotId)
+  return snapshot ? structuredCloneSafe(snapshot) : null
+}
+
+export function createDocumentSnapshot(doc, options = {}) {
+  if (!doc?.id || !doc.root) return null
+  const document = structuredCloneSafe(normalizeDoc(doc))
+  const createdAt = resolveTimestamp(options.now)
+  const snapshot = {
+    id: createId('snapshot'),
+    createdAt,
+    nodeCount: countDocumentNodes(document),
+    document
+  }
+  const snapshots = readSnapshots(document.id)
+  snapshots.push(snapshot)
+  writeSnapshots(document.id, snapshots.slice(-SNAPSHOT_LIMIT))
+  return structuredCloneSafe(snapshot)
+}
+
 export function saveDocument(doc, options = {}) {
   const index = readIndex()
   const documentKey = `${DOC_KEY_PREFIX}${doc?.id || ''}`
@@ -133,7 +169,7 @@ export function saveDocument(doc, options = {}) {
   // 永久刪除後，殘留編輯器分頁不可再用 autosave 把文件加回 index。
   if (!options.allowCreate && !known && storage().getItem(documentKey) === null) return false
   const persisted = structuredCloneSafe(normalizeDoc(doc))
-  persisted.updatedAt = new Date().toISOString()
+  persisted.updatedAt = resolveTimestamp(options.now)
   persisted.thumbnail = isSvgThumbnail(options.thumbnail)
     ? options.thumbnail
     : createDocumentThumbnail(persisted)
@@ -152,6 +188,7 @@ export function saveDocument(doc, options = {}) {
   else if (trashIndex !== -1) index.trash[trashIndex] = { ...meta, deletedAt: index.trash[trashIndex].deletedAt }
   else index.docs.push(meta)
   writeIndex(index)
+  maybeCreateDocumentSnapshot(persisted, options)
   return persisted.updatedAt
 }
 
@@ -185,6 +222,7 @@ export function permanentlyDeleteDocument(id) {
   index.trash = index.trash.filter(meta => meta.id !== id)
   index.favorites = index.favorites.filter(favoriteId => favoriteId !== id)
   storage().removeItem(`${DOC_KEY_PREFIX}${id}`)
+  storage().removeItem(`${HISTORY_KEY_PREFIX}${id}`)
   writeIndex(index)
   return true
 }
@@ -316,6 +354,56 @@ function isSvgThumbnail(value) {
 
 function validDate(value) {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value))
+}
+
+function readSnapshots(id) {
+  if (typeof id !== 'string' || !id) return []
+  try {
+    const parsed = JSON.parse(storage().getItem(`${HISTORY_KEY_PREFIX}${id}`) || '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter(snapshot => (
+        snapshot &&
+        typeof snapshot.id === 'string' &&
+        validDate(snapshot.createdAt) &&
+        Number.isInteger(snapshot.nodeCount) &&
+        snapshot.nodeCount > 0 &&
+        snapshot.document &&
+        typeof snapshot.document === 'object'
+      ))
+      .slice(-SNAPSHOT_LIMIT)
+  } catch {
+    return []
+  }
+}
+
+function writeSnapshots(id, snapshots) {
+  storage().setItem(`${HISTORY_KEY_PREFIX}${id}`, JSON.stringify(snapshots))
+}
+
+function maybeCreateDocumentSnapshot(doc, options) {
+  if (options.snapshot === false) return null
+  const snapshots = readSnapshots(doc.id)
+  const latest = snapshots.at(-1)
+  const nodeCount = countDocumentNodes(doc)
+  const timestamp = Date.parse(doc.updatedAt)
+  const elapsed = latest ? timestamp - Date.parse(latest.createdAt) : Infinity
+  const nodeRatio = latest
+    ? Math.abs(nodeCount - latest.nodeCount) / Math.max(1, latest.nodeCount)
+    : Infinity
+  if (latest && elapsed <= SNAPSHOT_INTERVAL_MS && nodeRatio <= SNAPSHOT_NODE_CHANGE_RATIO) return null
+  return createDocumentSnapshot(doc, { now: doc.updatedAt })
+}
+
+function countDocumentNodes(doc) {
+  let count = 0
+  walkNodes(doc.root, () => { count += 1 })
+  return count
+}
+
+function resolveTimestamp(value) {
+  const date = value === undefined ? new Date() : new Date(value)
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString()
 }
 
 function shorten(value, length) {

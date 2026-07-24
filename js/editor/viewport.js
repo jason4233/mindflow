@@ -17,16 +17,40 @@ export class ViewportController {
     this.zoom = 1
     this.listeners = new Set()
     this.spacePressed = false
+    this.spaceKeyPressed = false
+    this.handToolActive = false
     this.initialPlacementDone = false
     this.drag = null
     this.bindEvents()
+    this.mountHandTool()
     this.apply()
   }
 
   bindEvents() {
     this.canvas.addEventListener('wheel', event => this.handleWheel(event), { passive: false })
-    this.canvas.addEventListener('pointerdown', event => this.handlePointerDown(event))
+    // capture 先於節點拖曳；手形模式才能可靠地把節點上的左鍵改成平移。
+    this.canvas.addEventListener('pointerdown', event => this.handlePointerDown(event), true)
+    this.canvas.addEventListener('click', event => {
+      if (!this.spacePressed || event.target.closest?.('.zoom-controls')) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }, true)
     this.canvas.addEventListener('contextmenu', event => event.preventDefault())
+    window.addEventListener('keydown', event => {
+      if (event.code !== 'Space' || event.repeat || isEditableTarget(event.target)) return
+      this.spaceKeyPressed = true
+      this.updatePanMode()
+      event.preventDefault()
+    })
+    window.addEventListener('keyup', event => {
+      if (event.code !== 'Space') return
+      this.spaceKeyPressed = false
+      this.updatePanMode()
+    })
+    window.addEventListener('blur', () => {
+      this.spaceKeyPressed = false
+      this.updatePanMode()
+    })
   }
 
   handleWheel(event) {
@@ -49,10 +73,15 @@ export class ViewportController {
 
   handlePointerDown(event) {
     // 官方操作是直接拖曳空白平移；Ctrl/Meta+拖曳保留給框選。
+    if (event.target.closest?.('.zoom-controls')) return
     const interactive = event.target.closest?.('.mind-node, button, input, select, textarea, [contenteditable="true"]')
-    const shouldPan = event.button === 0 && !event.ctrlKey && !event.metaKey && !interactive
+    const forcedPan = this.spacePressed
+    const shouldPan = event.button === 0 && (
+      forcedPan || (!event.ctrlKey && !event.metaKey && !interactive)
+    )
     if (!shouldPan) return
     event.preventDefault()
+    if (forcedPan) event.stopImmediatePropagation()
     this.drag = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -80,6 +109,38 @@ export class ViewportController {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', end)
     window.addEventListener('pointercancel', end)
+  }
+
+  mountHandTool() {
+    const controls = this.canvas.querySelector('.zoom-controls')
+    if (!controls || controls.querySelector('[data-hand-tool]')) return
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'zoom-button hand-tool-button'
+    button.dataset.handTool = 'true'
+    button.textContent = '✋'
+    button.title = '手形工具'
+    button.setAttribute('aria-label', '手形工具：拖曳任意位置平移畫布')
+    button.setAttribute('aria-pressed', 'false')
+    button.addEventListener('click', () => this.setHandTool(!this.handToolActive))
+    const fullscreen = controls.querySelector('#fullscreen-button')
+    controls.insertBefore(button, fullscreen || null)
+    this.handToolButton = button
+  }
+
+  setHandTool(active) {
+    const next = Boolean(active)
+    if (next === this.handToolActive) return false
+    this.handToolActive = next
+    this.updatePanMode()
+    return true
+  }
+
+  updatePanMode() {
+    this.spacePressed = this.handToolActive || this.spaceKeyPressed
+    this.canvas.classList.toggle('is-hand-tool', this.handToolActive)
+    this.handToolButton?.classList.toggle('is-active', this.handToolActive)
+    this.handToolButton?.setAttribute('aria-pressed', String(this.handToolActive))
   }
 
   setZoom(value, anchor = null) {

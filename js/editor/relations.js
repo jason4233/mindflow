@@ -72,6 +72,11 @@ export function setRelationStyleCommand(doc, relationId, patch) {
 export function deleteNodesWithOverlaysCommand(doc, ids) {
   const treeCommand = deleteNodes(doc, ids)
   const deletedIds = collectSubtreeIds(doc.root, treeCommand.deletedIds || [])
+  return withOverlayCleanupCommand(doc, deletedIds, treeCommand)
+}
+
+export function withOverlayCleanupCommand(doc, ids, treeCommand) {
+  const deletedIds = new Set(ids || [])
   let removedRelations = null
   let removedSummaries = null
   return {
@@ -393,7 +398,7 @@ function summaryTouchesDeletedNode(doc, summary, deletedIds) {
   const parent = findNode(doc.root, summary.parentId)
   if (!parent) return false
   if (summary.startNodeId && summary.endNodeId) {
-    return getSummaryNodes(summary, parent).some(node => deletedIds.has(node.id))
+    return getSummaryNodes(summary, parent, doc.layout).some(node => deletedIds.has(node.id))
   }
   if (!Number.isFinite(Number(summary.startIndex)) || !Number.isFinite(Number(summary.endIndex))) return false
   const start = Math.max(0, Number(summary.startIndex))

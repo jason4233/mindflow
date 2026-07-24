@@ -1,0 +1,10 @@
+FIX3-resume 已完成。
+
+- Review D #1–#8 全部標記「已完成」，含 Ctrl+F commit 守衛、dissolve overlay 清理、summary 單側排序，以及完整 SVG connector/spacing/left-layout 修復。
+- 新增對應回歸測試。
+- 完整測試：5/5 test files、73/73 assertions 通過。
+- 修改檔語法檢查全部 exit 0。
+- 修改範圍符合限制；未執行 git。`tools\serve.mjs` 是本輪開始前的既有變更，未碰觸。
+- 初次 `node --test tests` 因 Node 不接受目錄參數而失敗；改為明確傳入所有 `*.test.mjs` 後全綠。
+
+逐條證據與修改範圍已寫入 [CODEX_FIX3_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_FIX3_NOTES.md>)。

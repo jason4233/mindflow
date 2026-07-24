@@ -8,6 +8,8 @@ import { strings } from '../strings.js'
 
 export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
   initializeExportDialog({ doc })
+  ensurePhaseCStyles()
+  upgradeDeferredMenuEntries()
   const back = document.querySelector('#back-home')
   const undo = document.querySelector('#undo-button')
   const redo = document.querySelector('#redo-button')
@@ -89,4 +91,41 @@ function updateSaveStatus(element) {
   if (!element) return
   const time = new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
   element.textContent = `已保存 ${time}`
+}
+
+function upgradeDeferredMenuEntries() {
+  const upgrade = () => {
+    const formula = document.querySelector('[data-insert-action="formula"]')
+    if (formula) formula.dataset.insertAction = 'insertFormula'
+
+    const moreMenu = document.querySelector('.more-menu')
+    if (moreMenu && !moreMenu.querySelector('[data-more-action="splitScreen"]')) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.dataset.moreAction = 'splitScreen'
+      const label = document.createElement('span')
+      label.textContent = '分屏參考'
+      const key = document.createElement('kbd')
+      key.textContent = ''
+      button.append(label, key)
+      const history = moreMenu.querySelector('[data-more-action="history"]')
+      if (history) history.insertAdjacentElement('afterend', button)
+      else moreMenu.prepend(button)
+    }
+    return Boolean(formula && moreMenu)
+  }
+  if (upgrade()) return
+  const observer = new MutationObserver(() => {
+    if (upgrade()) observer.disconnect()
+  })
+  observer.observe(document.body, { childList: true, subtree: true })
+}
+
+function ensurePhaseCStyles() {
+  if (document.querySelector('link[data-phasec-styles]')) return
+  const link = document.createElement('link')
+  link.rel = 'stylesheet'
+  link.href = 'css/phasec.css'
+  link.dataset.phasecStyles = 'true'
+  document.head.append(link)
 }
