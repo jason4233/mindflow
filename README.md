@@ -4,6 +4,8 @@
 
 ## 安裝與啟動
 
+**[下載桌面版（Windows portable EXE）](https://github.com/jason4233/mindflow/releases/download/v1.0.0/MindFlow-1.0.0-portable.exe)**
+
 **任何電腦一行指令**（只需 Node.js ≥18）：
 
 ```bash

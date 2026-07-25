@@ -1,4 +1,6 @@
 node_modules/
+desktop/node_modules/
+desktop/dist/
 *.log
 .playwright-mcp/
 .playwright-cli/
