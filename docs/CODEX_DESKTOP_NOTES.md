@@ -28,8 +28,8 @@ npm run smoke
 - Portable smoke：頁面與 `assets/stickers/manifest.json` 載入成功，manifest 共 6 類。
 - Windows `user32` probe：視窗 1280×800、標題 `MindFlow`、menu handle 為 0。
 - ICO：7 個 image entries，372,526 bytes。
-- Portable EXE：90,070,489 bytes。
-- SHA-256：`856DB95134FA8DBD151A710578360F64ADF3C1D8DBC26F8165B8BAE6EE0C901E`。
+- Portable EXE：90,070,741 bytes。
+- SHA-256：`51E87E8102576C45FCFE80FBE039EE0D559A2626CC9A03133E4526B1D2194585`。
 
 ## Release
 
