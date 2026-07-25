@@ -1,0 +1,13 @@
+已完成 ARROWS 方向鍵導覽。
+
+- `↑↓←→` 使用通用 90° 空間圓錐與軸向加權距離，不含佈局特例。
+- 未選取時選中根節點；編輯中保留原生游標。
+- 懸浮節點納入候選；`Shift+↑/↓` 行為保留。
+- 快捷鍵面板已加入四向導覽。
+- 六種佈局及邊界條件共新增 11 案。
+- 完整測試：6 suites、84/84 通過。
+- Playwright 實測通過，console 0 errors / 0 warnings。
+- `git diff --check` 通過。
+- 未 commit、未 push，未碰並行 CICD 檔案。
+
+主要檔案：[keyboard.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/editor/keyboard.js:48>)、[selection.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/editor/selection.js:178>)、[空間導覽測試](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/tests/spatial-navigation.test.mjs:1>)、[交付紀錄](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_ARROWS_NOTES.md:1>)。

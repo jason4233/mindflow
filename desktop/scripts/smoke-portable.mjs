@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const desktopDir = join(dirname(fileURLToPath(import.meta.url)), '..')
-const packageJson = JSON.parse(await readFile(join(desktopDir, 'package.json'), 'utf8'))
-const executable = join(desktopDir, 'dist', `MindFlow-${packageJson.version}-portable.exe`)
+await readFile(join(desktopDir, 'package.json'), 'utf8')
+const executable = join(desktopDir, 'dist', 'MindFlow-portable.exe')
 
 async function getAvailablePort() {
   const server = createServer()
@@ -31,7 +31,7 @@ async function waitForTarget(debugPort, timeoutMs = 60000) {
       const targets = await response.json()
       const page = targets.find(target => (
         target.type === 'page'
-        && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(target.url)
+        && target.url === 'mindflow://app/index.html'
         && /^MindFlow(?:\s|—|-)/.test(target.title)
       ))
       if (page) return page
@@ -42,6 +42,43 @@ async function waitForTarget(debugPort, timeoutMs = 60000) {
   }
 
   throw new Error(`Portable app did not expose the MindFlow page: ${lastError?.message || 'timed out'}`)
+}
+
+async function evaluate(page, expression) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(page.webSocketDebuggerUrl)
+    const timer = setTimeout(() => {
+      socket.close()
+      reject(new Error('Timed out while evaluating in the portable app'))
+    }, 10000)
+
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: {
+          expression,
+          awaitPromise: true,
+          returnByValue: true
+        }
+      }))
+    })
+    socket.addEventListener('message', event => {
+      const message = JSON.parse(event.data)
+      if (message.id !== 1) return
+      clearTimeout(timer)
+      socket.close()
+      if (message.error || message.result?.exceptionDetails) {
+        reject(new Error(message.error?.message || message.result.exceptionDetails.text))
+        return
+      }
+      resolve(message.result?.result?.value)
+    })
+    socket.addEventListener('error', event => {
+      clearTimeout(timer)
+      reject(event.error || new Error('DevTools WebSocket failed'))
+    })
+  })
 }
 
 async function closeBrowser(debugPort) {
@@ -96,17 +133,23 @@ const earlyExit = new Promise((_, reject) => {
 
 try {
   const page = await Promise.race([waitForTarget(debugPort), earlyExit])
-  const origin = new URL(page.url).origin
-  const manifestResponse = await fetch(`${origin}/assets/stickers/manifest.json`)
+  const manifest = await evaluate(page, `(async () => {
+    const response = await fetch('assets/stickers/manifest.json');
+    return {
+      status: response.status,
+      contentType: response.headers.get('content-type'),
+      body: await response.json()
+    };
+  })()`)
 
   assert.match(page.title, /^MindFlow(?:\s|—|-)/)
-  assert.equal(manifestResponse.status, 200)
-  assert.match(manifestResponse.headers.get('content-type') || '', /^application\/json/)
-  const manifest = await manifestResponse.json()
-  assert.ok(Object.keys(manifest).length > 0)
+  assert.equal(page.url, 'mindflow://app/index.html')
+  assert.equal(manifest.status, 200)
+  assert.match(manifest.contentType || '', /^application\/json/)
+  assert.ok(Object.keys(manifest.body).length > 0)
 
   console.log(`Portable smoke test passed: ${page.title} at ${page.url}`)
-  console.log(`Sticker manifest categories: ${Object.keys(manifest).length}`)
+  console.log(`Sticker manifest categories: ${Object.keys(manifest.body).length}`)
 } finally {
   try {
     await closeBrowser(debugPort)

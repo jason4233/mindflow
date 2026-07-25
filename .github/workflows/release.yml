@@ -35,34 +35,35 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build portable executable
+      - name: Build setup and portable executables
         working-directory: desktop
         run: npm run build
 
-      - name: Prepare fixed release filename
+      - name: Verify fixed release filenames
         shell: pwsh
         run: |
-          $package = Get-Content -LiteralPath "desktop/package.json" -Raw | ConvertFrom-Json
-          $builtAsset = "desktop/dist/MindFlow-$($package.version)-portable.exe"
-          $releaseAsset = "desktop/dist/MindFlow-portable.exe"
-
-          if (-not (Test-Path -LiteralPath $builtAsset)) {
-            throw "electron-builder output not found: $builtAsset"
+          $assets = @(
+            "desktop/dist/MindFlow-Setup.exe",
+            "desktop/dist/MindFlow-portable.exe"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) {
+              throw "electron-builder output not found: $asset"
+            }
           }
-
-          Copy-Item -LiteralPath $builtAsset -Destination $releaseAsset -Force
 
       - name: Publish GitHub releases
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $asset = "desktop/dist/MindFlow-portable.exe"
+          $setupAsset = "desktop/dist/MindFlow-Setup.exe"
+          $portableAsset = "desktop/dist/MindFlow-portable.exe"
           $repo = $env:GITHUB_REPOSITORY
           $tag = $env:GITHUB_REF_NAME
           $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
           $notes = @"
-          Automated portable Windows build.
+          Automated Windows setup and portable builds.
 
           Commit: $env:GITHUB_SHA
           Updated: $timestamp
@@ -73,12 +74,12 @@ jobs:
             $versionReleaseExists = $LASTEXITCODE -eq 0
 
             if ($versionReleaseExists) {
-              gh release upload $tag $asset --clobber --repo $repo
+              gh release upload $tag $setupAsset $portableAsset --clobber --repo $repo
               if ($LASTEXITCODE -ne 0) {
-                throw "Failed to replace asset on version release $tag"
+                throw "Failed to replace assets on version release $tag"
               }
             } else {
-              gh release create $tag $asset `
+              gh release create $tag $setupAsset $portableAsset `
                 --verify-tag `
                 --generate-notes `
                 --title "MindFlow $tag" `
@@ -115,7 +116,7 @@ jobs:
             }
           }
 
-          gh release upload latest $asset --clobber --repo $repo
+          gh release upload latest $setupAsset $portableAsset --clobber --repo $repo
           if ($LASTEXITCODE -ne 0) {
-            throw "Failed to upload rolling release asset"
+            throw "Failed to upload rolling release assets"
           }

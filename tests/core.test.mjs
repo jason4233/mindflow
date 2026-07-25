@@ -294,7 +294,7 @@ test('action registry 可註冊、執行、覆寫並以精確 cleanup 移除', (
   assert.equal(runAction(name), false)
 })
 
-test('ALPHA 快捷鍵表對齊 SPEC，且明確移除 Phase A 錯誤綁定', () => {
+test('快捷鍵表對齊最新 SPEC，含四向空間導覽且保留 Shift 同級選取', () => {
   const hasBinding = (action, key, modifiers = {}) => ACTION_BINDINGS.some(binding => binding.action === action
     && binding.key === key
     && Boolean(binding.ctrl) === Boolean(modifiers.ctrl)
@@ -311,7 +311,12 @@ test('ALPHA 快捷鍵表對齊 SPEC，且明確移除 Phase A 錯誤綁定', () 
   assert.equal(hasBinding('openStylePanel', 'y', { alt: true }), true)
   assert.equal(hasBinding('edit', ' '), true)
   assert.equal(ACTION_BINDINGS.some(binding => binding.key === 'F2'), false)
-  assert.equal(ACTION_BINDINGS.some(binding => ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(binding.key) && !binding.alt && !binding.shift), false)
+  assert.equal(hasBinding('navigateUp', 'ArrowUp'), true)
+  assert.equal(hasBinding('navigateDown', 'ArrowDown'), true)
+  assert.equal(hasBinding('navigateLeft', 'ArrowLeft'), true)
+  assert.equal(hasBinding('navigateRight', 'ArrowRight'), true)
+  assert.equal(hasBinding('selectPreviousSibling', 'ArrowUp', { shift: true }), true)
+  assert.equal(hasBinding('selectNextSibling', 'ArrowDown', { shift: true }), true)
   assert.equal(ACTION_BINDINGS.some(binding => binding.key === 'f' && binding.ctrl && binding.shift), false)
 })
 
@@ -322,7 +327,8 @@ test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽�
     registerAction('duplicate', () => calls.push('duplicate')),
     registerAction('priority1', () => calls.push('priority1')),
     registerAction('nextTheme', () => calls.push('nextTheme')),
-    registerAction('paste', () => calls.push('paste'))
+    registerAction('paste', () => calls.push('paste')),
+    registerAction('navigateRight', () => calls.push('navigateRight'))
   ]
   const event = (key, modifiers = {}) => ({
     key,
@@ -344,11 +350,17 @@ test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽�
   const paste = event('v', { ctrlKey: true })
   assert.equal(dispatchGlobalShortcut(paste), false)
   assert.equal(paste.prevented, false)
+  const editingArrow = event('ArrowRight')
+  assert.equal(dispatchGlobalShortcut(editingArrow, { formMode: true }), false)
+  assert.equal(editingArrow.prevented, false)
   for (const current of [event('s', { ctrlKey: true }), event('d', { ctrlKey: true }), event('1', { ctrlKey: true }), event('F6')]) {
     assert.equal(dispatchGlobalShortcut(current, { formMode: true }), true)
     assert.equal(current.prevented, true)
   }
-  assert.deepEqual(calls, ['save', 'duplicate', 'priority1', 'nextTheme'])
+  const canvasArrow = event('ArrowRight')
+  assert.equal(dispatchGlobalShortcut(canvasArrow), true)
+  assert.equal(canvasArrow.prevented, true)
+  assert.deepEqual(calls, ['save', 'duplicate', 'priority1', 'nextTheme', 'navigateRight'])
   const handled = event('Enter', { defaultPrevented: true })
   assert.equal(dispatchGlobalShortcut(handled), false)
   assert.equal(isFormTarget({ tagName: 'BUTTON', isContentEditable: false }), true)

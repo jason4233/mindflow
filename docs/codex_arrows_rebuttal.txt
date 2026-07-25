@@ -1,0 +1,8 @@
+已完成並寫入 [CODEX_ARROWS_REBUTTAL.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_ARROWS_REBUTTAL.md>)。
+
+結論：同意 review，但列出 6 項保留事項，其中兩項中度風險：
+
+- 演示模式 `↑/↓` 會洩漏至全域節點導覽。
+- 90° 圓錐加權 heuristic 不等同字面上的「最近」。
+
+已重跑 84/84 測試及 `git diff --check`，均通過。本次未修改任何程式碼。

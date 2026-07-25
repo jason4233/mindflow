@@ -1,0 +1,9 @@
+ARROWS-FIX 已完成。
+
+- 演示模式 consume 四方向鍵：`↑/←` 上一步、`↓/→` 下一步。
+- 純大綱模式方向鍵 no-op，不改隱藏 map selection。
+- 補齊事件優先序與大綱 guard 測試。
+- 建立 [KNOWN_LIMITS.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/KNOWN_LIMITS.md>)，記錄 2.2–2.5。
+- 交付紀錄：[CODEX_ARROWSFIX_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_ARROWSFIX_NOTES.md>)
+- 完整測試：6 個 test file，86/86 通過。
+- 未執行 git，未碰 `desktop/**`、workflow；`viewmode.js` 無需修改。

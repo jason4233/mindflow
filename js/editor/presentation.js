@@ -57,7 +57,7 @@ export function initPresentation(ctx) {
   return controller
 }
 
-class PresentationController {
+export class PresentationController {
   constructor(ctx) {
     this.ctx = ctx
     this.steps = []
@@ -161,13 +161,13 @@ class PresentationController {
       this.exit()
       return
     }
-    if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'Enter') {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === ' ' || event.key === 'Enter') {
       event.preventDefault()
       event.stopImmediatePropagation()
       this.next()
       return
     }
-    if (event.key === 'ArrowLeft') {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
       event.preventDefault()
       event.stopImmediatePropagation()
       this.previous()

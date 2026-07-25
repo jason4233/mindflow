@@ -1,0 +1,19 @@
+已完成並推送 `origin/main`。
+
+- 新增 [release.yml](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\.github\workflows\release.yml>)
+  - main push、`v*` tag、手動觸發
+  - Windows portable EXE
+  - `latest` rolling release + `--clobber`
+  - `v*` 對應版本 release
+- README 改為「永遠是最新版」下載連結。
+- `desktop/package.json` 無須調整。
+- 驗證紀錄：[CODEX_CICD_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_CICD_NOTES.md>)
+
+最終驗證：
+
+- [Actions run 30152450246](https://github.com/jason4233/mindflow/actions/runs/30152450246)：`completed / success`
+- [Rolling release](https://github.com/jason4233/mindflow/releases/tag/latest)：`MindFlow Latest Build`
+- `MindFlow-portable.exe`：uploaded，90,070,895 bytes
+- [永久下載連結](https://github.com/jason4233/mindflow/releases/latest/download/MindFlow-portable.exe)：HTTP 200
+- 本機 HEAD 與 `origin/main` 一致：`f6a74ea`
+- 其他既有未提交修改均未碰觸。

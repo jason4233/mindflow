@@ -45,6 +45,10 @@ export const ACTION_BINDINGS = Object.freeze([
   { action: 'toggleCollapse', key: '/', ctrl: true },
   { action: 'dissolve', key: 'Delete', ctrl: true },
   { action: 'remove', key: 'Delete' },
+  { action: 'navigateUp', key: 'ArrowUp' },
+  { action: 'navigateDown', key: 'ArrowDown' },
+  { action: 'navigateLeft', key: 'ArrowLeft' },
+  { action: 'navigateRight', key: 'ArrowRight' },
   { action: 'moveUp', key: 'ArrowUp', alt: true },
   { action: 'moveDown', key: 'ArrowDown', alt: true },
   { action: 'selectPreviousSibling', key: 'ArrowUp', shift: true },
@@ -122,6 +126,8 @@ export class KeyboardController {
 
   handleKeydown(event) {
     const formMode = this.edit.isEditing || isFormTarget(event.target)
+    // 純大綱模式沒有 map 導覽語意；保留方向鍵給大綱本身，避免改到隱藏畫布的 selection。
+    if (this.selection.canvas?.hidden && event.key.startsWith('Arrow')) return
     if (dispatchGlobalShortcut(event, { formMode })) return
     if (formMode) return
 
@@ -158,6 +164,10 @@ export class KeyboardController {
       remove: () => this.removeSelected(),
       dissolve: () => this.dissolveSelected(),
       toggleCollapse: () => this.toggleSelectedCollapse(),
+      navigateUp: () => this.selection.navigate('up'),
+      navigateDown: () => this.selection.navigate('down'),
+      navigateLeft: () => this.selection.navigate('left'),
+      navigateRight: () => this.selection.navigate('right'),
       moveUp: () => this.moveSelected(-1),
       moveDown: () => this.moveSelected(1),
       selectPreviousSibling: () => this.selectSibling(-1),

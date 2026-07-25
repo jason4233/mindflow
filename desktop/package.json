@@ -10,7 +10,7 @@
     "test": "node --test test/*.test.mjs",
     "icon": "node scripts/build-icon.mjs",
     "start": "npm run icon && electron .",
-    "build": "npm test && npm run icon && electron-builder --win portable --x64",
+    "build": "npm test && npm run icon && electron-builder --win nsis portable --x64",
     "smoke": "node scripts/smoke-portable.mjs"
   },
   "devDependencies": {
@@ -22,7 +22,6 @@
   "build": {
     "appId": "com.mindflow.desktop",
     "productName": "MindFlow",
-    "artifactName": "MindFlow-${version}-portable.${ext}",
     "asar": true,
     "directories": {
       "output": "dist",
@@ -30,8 +29,10 @@
     },
     "files": [
       "main.mjs",
-      "server.mjs",
       "app-paths.mjs",
+      "backup-store.mjs",
+      "legacy-storage.mjs",
+      "protocol.mjs",
       "assets/icon.ico"
     ],
     "extraResources": [
@@ -60,12 +61,35 @@
       "icon": "assets/icon.ico",
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "portable",
           "arch": [
             "x64"
           ]
         }
       ]
+    },
+    "nsis": {
+      "artifactName": "MindFlow-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "selectPerMachineByDefault": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "MindFlow",
+      "uninstallDisplayName": "MindFlow"
+    },
+    "portable": {
+      "artifactName": "MindFlow-portable.${ext}",
+      "requestExecutionLevel": "user"
     }
   }
 }

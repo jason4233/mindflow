@@ -9,6 +9,7 @@ const ACTION_LABELS = {
   undo: '復原', redo: '重做', copy: '複製', cut: '剪下', paste: '貼上', selectAll: '全選', save: '儲存',
   insertParent: '插入上級節點', insertChild: '插入下級節點', insertAfter: '插入同級節點', toggleCollapse: '展開／收合',
   dissolve: '分解節點', remove: '刪除', moveUp: '同級上移', moveDown: '同級下移', duplicate: '複製節點', edit: '編輯文字',
+  navigateUp: '選取上方節點', navigateDown: '選取下方節點', navigateLeft: '選取左方節點', navigateRight: '選取右方節點',
   formatPainter: '格式刷', insertLink: '插入連結', insertNote: '插入備註', insertSummary: '新增概要', insertImage: '插入圖片',
   openIcons: '開啟圖示', insertRelation: '新增關聯線', findReplace: '尋找與取代', floatingNode: '新增懸浮節點',
   fit: '適合畫布', centerRoot: '根節點置中', zoomReset: '縮放 100%', toggleFullscreen: '全螢幕', nextTheme: '下一個主題'
@@ -119,7 +120,7 @@ function shortcutText(binding) {
   if (binding.ctrl) parts.push('Ctrl')
   if (binding.shift) parts.push('Shift')
   if (binding.alt) parts.push('Alt')
-  const names = { ' ': 'Space', ArrowUp: '↑', ArrowDown: '↓', Delete: 'Delete', Tab: 'Tab', Enter: 'Enter', Escape: 'Esc' }
+  const names = { ' ': 'Space', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Delete: 'Delete', Tab: 'Tab', Enter: 'Enter', Escape: 'Esc' }
   parts.push(names[binding.key] || (binding.key.length === 1 ? binding.key.toUpperCase() : binding.key))
   return parts.join(' + ')
 }

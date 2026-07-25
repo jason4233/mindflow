@@ -1,0 +1,13 @@
+DESKTOP2 本機驗收完成。
+
+- 已安裝版建檔後重開 3 次皆保留，origin 均為 `mindflow://app`。
+- 實際 interval 備份間隔：120029 ms；滾動備份、關窗 flush、空資料自動還原皆通過。
+- Setup 安裝、桌面／開始捷徑、解除安裝乾淨、重新安裝皆通過；目前維持已安裝狀態。
+- 測試 18/18 通過，portable smoke 通過。
+- 修正驗收腳本兩個 DevTools timing race。
+- 無殘留測試程序。
+- 未執行任何 git 操作。
+
+完整證據與主動自首已寫入 [docs\CODEX_DESKTOP2_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_DESKTOP2_NOTES.md>)。
+
+重要保留事項：本機 release workflow 已包含 Setup＋portable，但本次未 push，所以目前遠端 `latest` 仍只有 portable；兩個 exe 亦尚未做 Authenticode 簽章。

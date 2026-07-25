@@ -1,7 +1,15 @@
 /**
  * 節點單選、多選、空白框選與方向鍵視覺導覽。
  */
-import { findNodeContext, visibleNodeIds } from './model.js'
+import { visibleNodeIds } from './model.js'
+
+const DIRECTION_VECTORS = Object.freeze({
+  up: Object.freeze({ x: 0, y: -1 }),
+  down: Object.freeze({ x: 0, y: 1 }),
+  left: Object.freeze({ x: -1, y: 0 }),
+  right: Object.freeze({ x: 1, y: 0 })
+})
+const AXIS_ALIGNMENT_WEIGHT = 2
 
 export class SelectionManager {
   constructor({ canvas, nodesLayer, selectionRectangle, getDoc, getPositions, isPanMode = () => false }) {
@@ -154,44 +162,44 @@ export class SelectionManager {
   }
 
   navigate(direction) {
+    // keyboard 之外的 action 也可能直接呼叫 navigate，隱藏 map 時不得悄悄改 selection。
+    if (this.canvas?.hidden) return null
     const doc = this.getDoc()
     const positions = this.getPositions()
-    const currentId = this.primaryId || doc.root.id
-    const targetId = findDirectionalTarget(doc, positions, currentId, direction)
+    if (!this.primaryId) {
+      if (!positions.has(doc.root.id)) return null
+      this.set([doc.root.id])
+      return doc.root.id
+    }
+    const targetId = findDirectionalTarget(positions, this.primaryId, direction)
     if (targetId) this.set([targetId])
     return targetId
   }
 }
 
-function findDirectionalTarget(doc, positions, currentId, direction) {
+export function findDirectionalTarget(positions, currentId, direction) {
+  const vector = DIRECTION_VECTORS[direction]
   const current = positions.get(currentId)
-  const context = findNodeContext(doc.root, currentId)
-  if (!current || !context) return null
-
-  if (direction === 'left' || direction === 'right') {
-    if (currentId === doc.root.id) {
-      const wantedSide = direction
-      return doc.root.children
-        .filter(child => positions.get(child.id)?.side === wantedSide)
-        .sort((a, b) => verticalDistance(positions.get(a.id), current) - verticalDistance(positions.get(b.id), current))[0]?.id || null
-    }
-    const outward = (current.side === 'right' && direction === 'right') || (current.side === 'left' && direction === 'left')
-    if (!outward) return context.parent?.id || null
-    return context.node.children
-      .filter(child => positions.has(child.id))
-      .sort((a, b) => verticalDistance(positions.get(a.id), current) - verticalDistance(positions.get(b.id), current))[0]?.id || null
-  }
+  if (!vector || !isFinitePosition(current)) return null
 
   const currentCenter = center(current)
-  const sign = direction === 'up' ? -1 : 1
   let best = null
   for (const [id, position] of positions) {
-    if (id === currentId || (position.side || '') !== (current.side || '')) continue
+    if (id === currentId || !isFinitePosition(position)) continue
     const point = center(position)
+    const deltaX = point.x - currentCenter.x
     const deltaY = point.y - currentCenter.y
-    if (Math.sign(deltaY) !== sign) continue
-    const score = Math.abs(deltaY) + Math.abs(point.x - currentCenter.x) * 0.2
-    if (!best || score < best.score) best = { id, score }
+    const axial = deltaX * vector.x + deltaY * vector.y
+    const lateral = Math.abs(deltaX * vector.y - deltaY * vector.x)
+    // 90° 圓錐即方向軸左右各 45°；偏軸距離加倍，讓視覺對齊優先於斜向捷徑。
+    if (axial <= 0 || lateral > axial) continue
+    const score = axial + lateral * AXIS_ALIGNMENT_WEIGHT
+    if (!best
+      || score < best.score
+      || (score === best.score && lateral < best.lateral)
+      || (score === best.score && lateral === best.lateral && axial < best.axial)) {
+      best = { id, score, lateral, axial }
+    }
   }
   return best?.id || null
 }
@@ -200,6 +208,6 @@ function center(position) {
   return { x: position.x + position.w / 2, y: position.y + position.h / 2 }
 }
 
-function verticalDistance(a, b) {
-  return Math.abs(center(a).y - center(b).y)
+function isFinitePosition(position) {
+  return position && [position.x, position.y, position.w, position.h].every(Number.isFinite)
 }

@@ -1,0 +1,24 @@
+完成，MindFlow Windows 桌面版已正式發布。
+
+- [下載 MindFlow v1.0.0 portable EXE](https://github.com/jason4233/mindflow/releases/download/v1.0.0/MindFlow-1.0.0-portable.exe)
+- [GitHub Release](https://github.com/jason4233/mindflow/releases/tag/v1.0.0)
+- 大小：90,070,741 bytes
+- SHA-256：`51E87E8102576C45FCFE80FBE039EE0D559A2626CC9A03133E4526B1D2194585`
+
+驗證結果：
+
+- Desktop tests：5/5
+- 原有 MindFlow tests：73/73
+- Portable EXE 實際啟動、隨機 HTTP port、manifest fetch 全部通過
+- 視窗實測：1280×800、標題 `MindFlow`、menu handle `0`
+- `HEAD`、`origin/main`、`v1.0.0` 均指向 `125bce2`
+- Worktree 乾淨
+
+Commit：
+
+- `ecffda2` — Electron desktop source、README、build config
+- `125bce2` — 最終 artifact hash 與驗證紀錄
+
+完整紀錄：[CODEX_DESKTOP_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_DESKTOP_NOTES.md>)
+
+目前 EXE 未做正式 Authenticode 簽章，首次執行可能出現 Windows SmartScreen 未知發行者警告。
