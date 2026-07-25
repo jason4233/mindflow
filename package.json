@@ -1,0 +1,16 @@
+{
+  "name": "mindflow-mindmap",
+  "version": "1.0.0",
+  "description": "MindFlow — 純前端心智圖工具（零依賴、本機儲存）",
+  "type": "module",
+  "bin": {
+    "mindflow": "bin/mindflow.mjs"
+  },
+  "scripts": {
+    "start": "node bin/mindflow.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

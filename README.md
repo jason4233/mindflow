@@ -2,17 +2,25 @@
 
 純前端心智圖應用：零依賴、零建置、資料全存本機（localStorage）。功能與操作對齊 GitMind：完整快捷鍵、12 內建主題、6 種佈局、關聯線/概要/備註/圖示/貼紙、大綱模式、演示模式、歷史版本、公式、匯出六格式。
 
-## 啟動
+## 安裝與啟動
 
-雙擊 `start.bat`（會啟動本地伺服器並開啟瀏覽器），或手動：
+**任何電腦一行指令**（只需 Node.js ≥18）：
 
 ```bash
-node tools/serve.mjs 8931
+npx github:jason4233/mindflow
 ```
 
-再開 http://127.0.0.1:8931/
+會自動下載、啟動本地伺服器並開啟瀏覽器。
 
-> 需要 Node.js（任何近代版本）。不要用 `python -m http.server`（無 no-store 標頭，改代碼後瀏覽器會吃到舊快取）。
+其他方式：
+
+```bash
+git clone https://github.com/jason4233/mindflow.git && cd mindflow && npm start
+```
+
+本機已 clone 的話：雙擊 `start.bat`（Windows）或 `npm start`，或手動 `node tools/serve.mjs 8931` 再開 http://127.0.0.1:8931/
+
+> 不要用 `python -m http.server`（無 no-store 標頭，改代碼後瀏覽器會吃到舊快取）。
 
 ## 常用快捷鍵（完整表見編輯器 ··· → 快速鍵）
 
