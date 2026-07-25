@@ -1,0 +1,121 @@
+name: Build and publish desktop release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mindflow-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build portable executable
+        working-directory: desktop
+        run: npm run build
+
+      - name: Prepare fixed release filename
+        shell: pwsh
+        run: |
+          $package = Get-Content -LiteralPath "desktop/package.json" -Raw | ConvertFrom-Json
+          $builtAsset = "desktop/dist/MindFlow-$($package.version)-portable.exe"
+          $releaseAsset = "desktop/dist/MindFlow-portable.exe"
+
+          if (-not (Test-Path -LiteralPath $builtAsset)) {
+            throw "electron-builder output not found: $builtAsset"
+          }
+
+          Copy-Item -LiteralPath $builtAsset -Destination $releaseAsset -Force
+
+      - name: Publish GitHub releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $asset = "desktop/dist/MindFlow-portable.exe"
+          $repo = $env:GITHUB_REPOSITORY
+          $tag = $env:GITHUB_REF_NAME
+          $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+          $notes = @"
+          Automated portable Windows build.
+
+          Commit: $env:GITHUB_SHA
+          Updated: $timestamp
+          "@
+
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $tag -like "v*") {
+            $null = gh release view $tag --repo $repo 2>$null
+            $versionReleaseExists = $LASTEXITCODE -eq 0
+
+            if ($versionReleaseExists) {
+              gh release upload $tag $asset --clobber --repo $repo
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to replace asset on version release $tag"
+              }
+            } else {
+              gh release create $tag $asset `
+                --verify-tag `
+                --generate-notes `
+                --title "MindFlow $tag" `
+                --latest=false `
+                --repo $repo
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to create version release $tag"
+              }
+            }
+          }
+
+          $null = gh release view latest --repo $repo 2>$null
+          $rollingReleaseExists = $LASTEXITCODE -eq 0
+
+          if ($rollingReleaseExists) {
+            gh release edit latest `
+              --title "MindFlow Latest Build" `
+              --notes $notes `
+              --target $env:GITHUB_SHA `
+              --latest `
+              --repo $repo
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to update rolling release metadata"
+            }
+          } else {
+            gh release create latest `
+              --title "MindFlow Latest Build" `
+              --notes $notes `
+              --target $env:GITHUB_SHA `
+              --latest `
+              --repo $repo
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create rolling release"
+            }
+          }
+
+          gh release upload latest $asset --clobber --repo $repo
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload rolling release asset"
+          }
