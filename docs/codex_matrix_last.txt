@@ -1,0 +1,16 @@
+完成，未執行 git、未修改 `desktop/`。
+
+- E2E 矩陣：Chromium 92/92、Electron CDP 14/14，合計 **106/106 PASS**
+- Root tests：86/86 PASS
+- Desktop tests：18/18 PASS
+- 修復 Space 被 pan 攔截
+- 修復文字色／反白色原生 picker 的 Range 保存與 change 回填
+- 修復文字工具列格式刷接錯 action
+- 備註及同批附加功能目前 source 已掛載正常，已用永久矩陣鎖定
+- 變更僅 5 個允許路徑，無殘留測試程序
+
+交付：
+
+- [shortcuts.matrix.mjs](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\tests\e2e\shortcuts.matrix.mjs>)
+- [SHORTCUT_MATRIX.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\SHORTCUT_MATRIX.md>)
+- [CODEX_MATRIX_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_MATRIX_NOTES.md>)

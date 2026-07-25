@@ -38,6 +38,12 @@ export class ViewportController {
     this.canvas.addEventListener('contextmenu', event => event.preventDefault())
     window.addEventListener('keydown', event => {
       if (event.code !== 'Space' || event.repeat || isEditableTarget(event.target)) return
+      // Space 在有明確編輯目標時屬於「編輯」快捷鍵；不能先被 pan mode
+      // preventDefault，否則 KeyboardController 會把它視為已處理而 no-op。
+      const hasEditableSelection = this.canvas.querySelector(
+        '.mind-node.is-selected, .relation-overlay.is-selected, .summary-node.is-selected'
+      )
+      if (hasEditableSelection) return
       this.spaceKeyPressed = true
       this.updatePanMode()
       event.preventDefault()

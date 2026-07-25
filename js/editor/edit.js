@@ -166,23 +166,46 @@ export class EditController {
       if (this.session) this.session.pendingStyle.fontSize = size
       this.refocus()
     })
-    this.toolbar.querySelector('#text-color')?.addEventListener('input', event => {
-      this.restoreRange()
-      document.execCommand('foreColor', false, event.target.value)
-      this.refocus()
-    })
-    this.toolbar.querySelector('#text-highlight')?.addEventListener('input', event => {
-      this.restoreRange()
-      document.execCommand('hiliteColor', false, event.target.value)
-      this.refocus()
-    })
+    this.bindNativeColor('#text-color', 'foreColor')
+    this.bindNativeColor('#text-highlight', 'hiliteColor')
     this.toolbar.querySelector('#text-line-height')?.addEventListener('change', event => {
       if (this.session) this.session.pendingMetadata.lineHeight = event.target.value
       this.refocus()
     })
     this.toolbar.querySelector('#text-format-painter')?.addEventListener('click', () => {
-      runAction('copyStyle')
+      runAction('formatPainter')
       this.refocus()
+    })
+  }
+
+  bindNativeColor(selector, command) {
+    const input = this.toolbar?.querySelector(selector)
+    if (!input) return
+    let appliedDuringGesture = false
+
+    input.addEventListener('pointerdown', () => {
+      // 原生 picker 取得焦點後 Selection 會消失；必須在預設行為前保存 Range。
+      this.captureRange()
+      appliedDuringGesture = false
+    }, { capture: true })
+
+    const apply = event => {
+      if (!this.session) return false
+      this.restoreRange()
+      document.execCommand(command, false, event.target.value)
+      this.captureRange()
+      this.refocus()
+      return true
+    }
+
+    input.addEventListener('input', event => {
+      appliedDuringGesture = apply(event)
+    })
+    input.addEventListener('change', event => {
+      // 部分 Chromium / Electron 只在關閉 OS picker 時可靠送 change。
+      if (!appliedDuringGesture) apply(event)
+      else this.refocus()
+      appliedDuringGesture = false
     })
   }
 
