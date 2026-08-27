@@ -1,7 +1,11 @@
 /**
- * 編輯器右側參考分屏：支援 HTTP(S) URL 與本機 PDF，分隔線可拖曳。
+ * 編輯器右側參考分屏：支援 HTTPS 網址與本機 PDF，分隔線可拖曳。
+ * 明文 http 會自動升級成 https（CSP frame-src 也只放行 https），純 HTTP 內網站點不支援。
  */
 import { registerAction } from './actions.js'
+
+// 外部網頁分屏的 iframe 限制：沒有 allow-top-navigation，外站不能把整個編輯器導走。
+const EXTERNAL_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups'
 
 export function normalizeSplitUrl(value) {
   const input = String(value ?? '').trim()
@@ -9,7 +13,10 @@ export function normalizeSplitUrl(value) {
   const candidate = /^[a-z][a-z\d+.-]*:/iu.test(input) ? input : `https://${input}`
   try {
     const parsed = new URL(candidate)
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : ''
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+    // 明文 http 一律升級成 https 再載入，分屏內容不走可被竄改的連線。
+    parsed.protocol = 'https:'
+    return parsed.href
   } catch {
     return ''
   }
@@ -83,7 +90,11 @@ function createSplitScreen(ctx) {
     objectUrl = ''
   }
 
-  const show = ({ source, label, externalUrl = '' }) => {
+  const show = ({ source, label, externalUrl = '', sandboxed = false }) => {
+    // sandbox 只能套在外部網站上：本機 PDF 用的是 Chromium 內建 viewer，加了會壞掉。
+    // 屬性必須在指定 src 之前設好，導覽當下才會套用。
+    if (sandboxed) frame.setAttribute('sandbox', EXTERNAL_FRAME_SANDBOX)
+    else frame.removeAttribute('sandbox')
     frame.src = source
     title.textContent = label
     sourceLink.href = externalUrl
@@ -97,6 +108,7 @@ function createSplitScreen(ctx) {
     panel.hidden = true
     document.body.classList.remove('is-split-screen')
     document.body.style.removeProperty('--split-panel-width')
+    frame.removeAttribute('sandbox')
     frame.src = 'about:blank'
     revokeObjectUrl()
     window.dispatchEvent(new Event('resize'))
@@ -107,7 +119,7 @@ function createSplitScreen(ctx) {
     const url = normalizeSplitUrl(value)
     if (!url) return false
     revokeObjectUrl()
-    show({ source: url, label: new URL(url).hostname, externalUrl: url })
+    show({ source: url, label: new URL(url).hostname, externalUrl: url, sandboxed: true })
     return true
   }
 
@@ -125,7 +137,7 @@ function createSplitScreen(ctx) {
     const file = dialog.file.files?.[0]
     const opened = url ? openUrl(url) : openPdf(file)
     if (!opened) {
-      dialog.error.textContent = url ? '請輸入有效的 HTTP(S) 網址。' : '請選擇 PDF 文件或輸入網址。'
+      dialog.error.textContent = url ? '請輸入有效的 HTTPS 網址（http 會自動升級）。' : '請選擇 PDF 文件或輸入網址。'
       return
     }
     dialog.element.close('open')

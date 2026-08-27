@@ -19,6 +19,13 @@ import { strings } from '../strings.js'
 
 const PINNED_KEY = 'mindflow.theme.pinned'
 const RECENT_COLORS_KEY = 'mindflow.colors.recent'
+const SAFE_COLOR_TOKEN = /^[#a-zA-Z0-9(),.%\s-]{1,64}$/
+const FALLBACK_PREVIEW_COLORS = Object.freeze({
+  fill: '#ffffff',
+  borderColor: 'transparent',
+  canvasBg: '#f4f7fb',
+  branch: '#64748b'
+})
 
 const SHAPES = [
   ['rounded', '小圓角矩形'], ['rounded-large', '大圓角矩形'], ['pill-narrow', '窄藥丸'], ['pill-wide', '寬藥丸'], ['soft-rect', '大圓角卡片'],
@@ -333,7 +340,7 @@ function renderThemeGrid(container) {
     const preview = document.createElement('button')
     preview.type = 'button'
     preview.className = 'theme-card__preview'
-    preview.innerHTML = createThemePreviewSvg(selectedTheme, { width: 180, height: 108 })
+    preview.innerHTML = safeThemePreviewSvg(selectedTheme, { width: 180, height: 108 })
     const selectTheme = () => {
       runAction('applyTheme', selectedTheme.id)
       renderThemeGrid(container)
@@ -389,7 +396,7 @@ function renderCustomThemeGrid(container, emptyState) {
     const preview = document.createElement('button')
     preview.type = 'button'
     preview.className = 'theme-card__preview'
-    preview.innerHTML = createThemePreviewSvg(selectedTheme, { width: 180, height: 108 })
+    preview.innerHTML = safeThemePreviewSvg(selectedTheme, { width: 180, height: 108 })
     preview.addEventListener('click', () => {
       runAction('applyTheme', selectedTheme.id)
       renderCustomThemeGrid(container, emptyState)
@@ -656,6 +663,51 @@ function readJson(key, fallback) {
   } catch {
     return fallback
   }
+}
+
+/*
+ * 主題預覽 SVG 由 themes.js createThemePreviewSvg 以字串模板組成，之後直接進 innerHTML；
+ * 而主題值可能來自 localStorage 或匯入的 .mindflow，屬於不可信輸入。
+ * 這裡在進模板前先用白名單擋掉顏色類 token，再一律跳脫，避免屬性逃逸後注入 SVG 事件屬性。
+ */
+function safeThemePreviewSvg(selectedTheme, options) {
+  return createThemePreviewSvg(sanitizeThemeForPreview(selectedTheme), options)
+}
+
+function sanitizeThemeForPreview(selectedTheme) {
+  const source = typeof selectedTheme === 'string' ? getTheme(selectedTheme) : selectedTheme
+  if (!source || typeof source !== 'object') return source
+  const palette = Array.isArray(source.branchPalette) && source.branchPalette.length > 0
+    ? source.branchPalette.map(color => safeColorToken(color, FALLBACK_PREVIEW_COLORS.branch))
+    : [FALLBACK_PREVIEW_COLORS.branch]
+  return {
+    ...source,
+    canvasBg: safeColorToken(source.canvasBg, FALLBACK_PREVIEW_COLORS.canvasBg),
+    branchPalette: palette,
+    rootStyle: safeThemeStyleForPreview(source.rootStyle),
+    level2Style: safeThemeStyleForPreview(source.level2Style)
+  }
+}
+
+function safeThemeStyleForPreview(themeStyle = {}) {
+  const borderWidth = Number(themeStyle.borderWidth)
+  return {
+    ...themeStyle,
+    fill: safeColorToken(themeStyle.fill, FALLBACK_PREVIEW_COLORS.fill),
+    borderColor: safeColorToken(themeStyle.borderColor, FALLBACK_PREVIEW_COLORS.borderColor),
+    borderWidth: Number.isFinite(borderWidth) ? borderWidth : 0
+  }
+}
+
+// 顏色 token 只放行 #hex、rgb()/hsl() 與具名色會用到的字元；不合法就換成主題預設值。
+function safeColorToken(value, fallback) {
+  const token = String(value ?? '').trim()
+  return SAFE_COLOR_TOKEN.test(token) ? escapeHtml(token) : fallback
+}
+
+// 與專案其他檔案的 escapeXml 同一套寫法，插入 HTML/SVG 屬性前一律先過這層。
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character])
 }
 
 function options(entries) {
