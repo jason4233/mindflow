@@ -32,7 +32,8 @@ export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
   addSibling.setAttribute('aria-label', strings.editor.addSibling)
   exportButton.setAttribute('aria-label', strings.editor.export)
   title.value = doc.title
-  updateSaveStatus(saveStatus)
+  // 載入完成＝記憶體與儲存區一致，顯示已保存但不冒充「剛剛存過」的時間
+  if (saveStatus) saveStatus.textContent = '已保存'
 
   undo.addEventListener('click', actions.undo)
   redo.addEventListener('click', actions.redo)
@@ -77,7 +78,20 @@ export function initializeToolbar({ doc, manager, onTitleChange, actions }) {
       undo.disabled = !manager.canUndo
       redo.disabled = !manager.canRedo
       if (document.activeElement !== title) title.value = doc.title
-      updateSaveStatus(saveStatus)
+    },
+    // 儲存狀態只由真實存檔結果驅動：pending（有變更未寫入）/ saved（寫入成功）/ failed（寫入失敗）
+    setSaveStatus(state) {
+      if (!saveStatus) return
+      if (state === 'pending') {
+        saveStatus.textContent = '變更未儲存…'
+        saveStatus.style.color = ''
+      } else if (state === 'failed') {
+        saveStatus.textContent = '⚠ 儲存失敗'
+        saveStatus.style.color = '#dc2626'
+      } else {
+        updateSaveStatus(saveStatus)
+        saveStatus.style.color = ''
+      }
     }
   }
 }

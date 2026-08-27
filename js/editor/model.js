@@ -15,6 +15,20 @@ export const LAYOUTS = Object.freeze([
   'fishbone'
 ])
 
+// 連結協議白名單：輸入端與反序列化端共用同一套（http/https 之外一律清空）
+export function normalizeUrl(value) {
+  const input = String(value || '').trim()
+  if (!input) return ''
+  const candidate = /^www\./iu.test(input) ? `https://${input}` : input
+  if (!/^https?:\/\//iu.test(candidate)) return ''
+  try {
+    const parsed = new URL(candidate)
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : ''
+  } catch {
+    return ''
+  }
+}
+
 export const NODE_STYLE_KEYS = Object.freeze([
   'fill', 'textColor', 'borderColor', 'borderWidth', 'borderStyle',
   'fontSize', 'fontFamily', 'bold', 'italic', 'underline', 'strike', 'shape',
@@ -127,7 +141,7 @@ export function normalizeNode(input = {}, seenIds = new Set()) {
     style,
     richText: sourceRichText || null,
     notes: typeof input.notes === 'string' ? input.notes : null,
-    link: typeof input.link === 'string' ? input.link : null,
+    link: typeof input.link === 'string' ? (normalizeUrl(input.link) || null) : null,
     icons: Array.isArray(input.icons) ? input.icons.filter(icon => typeof icon === 'string') : [],
     image: normalizeImage(input.image)
   }

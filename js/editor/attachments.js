@@ -2,7 +2,7 @@
  * DELTA 組裝入口，以及節點備註、連結、圖片的 command 與 DOM overlay。
  */
 import { registerAction, runAction } from './actions.js'
-import { findNode, structuredCloneSafe, walkNodes } from './model.js'
+import { findNode, normalizeUrl, structuredCloneSafe, walkNodes } from './model.js'
 import { registerOverlay } from './render.js'
 import { initializeRelations } from './relations.js'
 import { initializeSummaries } from './summary.js'
@@ -39,22 +39,17 @@ export function updateNodeFieldsCommand(doc, nodeId, patch, description = '更�
   }
 }
 
-export function normalizeUrl(value) {
-  const input = String(value || '').trim()
-  if (!input) return ''
-  const candidate = /^www\./iu.test(input) ? `https://${input}` : input
-  if (!/^https?:\/\//iu.test(candidate)) return ''
-  try {
-    const parsed = new URL(candidate)
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : ''
-  } catch {
-    return ''
-  }
-}
+// normalizeUrl 移居 model.js（反序列化也要用同一套白名單），此處轉出口維持既有 import 路徑
+export { normalizeUrl }
 
 export function isLikelyUrl(value) {
   return URL_PATTERN.test(String(value || '').trim()) && Boolean(normalizeUrl(value))
 }
+
+// 圖片入庫上限：重新編碼到有限像素與位元組。原本直接存原檔 base64，一張手機照片（數 MB）
+// 就能打爆 localStorage 配額，且 30 份版本快照會把佔用再放大 30 倍。
+const IMAGE_MAX_EDGE = 1280
+const IMAGE_BYTE_CAP = 512 * 1024
 
 export function readImageFile(file) {
   if (!file || !String(file.type || '').startsWith('image/')) return Promise.reject(new TypeError('只接受圖片檔案'))
@@ -66,16 +61,45 @@ export function readImageFile(file) {
       image.onerror = () => reject(new Error('圖片格式無法解析'))
       image.onload = () => {
         const scale = Math.min(1, 240 / Math.max(1, image.naturalWidth), 160 / Math.max(1, image.naturalHeight))
-        resolve({
-          src: String(reader.result),
-          w: Math.max(48, Math.round(image.naturalWidth * scale)),
-          h: Math.max(36, Math.round(image.naturalHeight * scale))
-        })
+        try {
+          resolve({
+            src: reencodeImage(image, file.type),
+            w: Math.max(48, Math.round(image.naturalWidth * scale)),
+            h: Math.max(36, Math.round(image.naturalHeight * scale))
+          })
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error('圖片壓縮失敗'))
+        }
       }
       image.src = String(reader.result)
     }
     reader.readAsDataURL(file)
   })
+}
+
+// 重新編碼：壓像素並剝除 metadata（EXIF 方向在瀏覽器解碼時已套用，不會轉錯邊）。
+// 透明格式（PNG/WebP/GIF/SVG）保留 alpha 走 PNG；不透明走 JPEG 逐級降質；還是太大就逐半縮邊長。
+function reencodeImage(image, mimeType) {
+  const keepAlpha = /png|webp|gif|svg/iu.test(mimeType)
+  let edgeCap = IMAGE_MAX_EDGE
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const ratio = Math.min(1, edgeCap / Math.max(1, image.naturalWidth, image.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio))
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
+    if (keepAlpha) {
+      const encoded = canvas.toDataURL('image/png')
+      if (encoded.length <= IMAGE_BYTE_CAP) return encoded
+    } else {
+      for (const quality of [0.85, 0.7, 0.55]) {
+        const encoded = canvas.toDataURL('image/jpeg', quality)
+        if (encoded.length <= IMAGE_BYTE_CAP) return encoded
+      }
+    }
+    edgeCap = Math.round(edgeCap / 2)
+  }
+  throw new Error('圖片太大，壓縮後仍超過 512KB，請先縮小圖片再插入')
 }
 
 export function initializeDelta(ctx) {
@@ -210,10 +234,10 @@ export function setAllCollapsedCommand(doc, collapsed) {
   }
 }
 
-function decorateNodeAttachments({ doc, positions, nodesLayer }, ctx, noteDrawer, linkDialog) {
+function decorateNodeAttachments({ doc, positions, nodesLayer, nodeLookup }, ctx, noteDrawer, linkDialog) {
   const selected = new Set(ctx.selection.getSelectedIds())
   for (const [id, position] of positions) {
-    const node = findNode(doc.root, id)
+    const node = nodeLookup?.get(id)?.node || findNode(doc.root, id)
     const element = nodesLayer.querySelector(`[data-node-id="${cssEscape(id)}"]`)
     if (!node || !element) continue
 
@@ -427,7 +451,7 @@ async function attachImageFile(ctx, nodeId, file) {
     if (ctx.manager.execute(updateNodeFieldsCommand(ctx.doc, nodeId, { image }, '插入節點圖片'))) ctx.notify('圖片已嵌入節點')
   } catch (error) {
     console.error(error)
-    ctx.notify('圖片讀取失敗')
+    ctx.notify(error?.message || '圖片讀取失敗')
   }
 }
 

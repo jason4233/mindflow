@@ -28,6 +28,13 @@ function emptyIndex() {
   return { version: INDEX_VERSION, docs: [], trash: [], favorites: [] }
 }
 
+// 每個 session 的最新快照 meta 快取：讓 autosave 的節流判斷不必每次 parse 整包歷史
+const snapshotMetaCache = new Map()
+
+function isQuotaError(error) {
+  return error?.name === 'QuotaExceededError' || error?.code === 22
+}
+
 function normalizeMeta(meta, extras = {}) {
   if (!meta || typeof meta.id !== 'string' || !meta.id) return null
   return {
@@ -41,8 +48,11 @@ function normalizeMeta(meta, extras = {}) {
 }
 
 function readIndex() {
+  const raw = storage().getItem(INDEX_KEY)
+  // 沒有索引＝第一次使用，不是損毀；空字串同樣視為全新
+  if (raw === null || raw === '') return emptyIndex()
   try {
-    const parsed = JSON.parse(storage().getItem(INDEX_KEY) || '')
+    const parsed = JSON.parse(raw)
     if (!parsed) return emptyIndex()
 
     // v1 只有 docs；這裡在記憶體中補齊欄位，第一次寫入時才升級為 v2。
@@ -68,8 +78,32 @@ function readIndex() {
 
     return { version: INDEX_VERSION, docs: uniqueMeta(docs), trash: uniqueMeta(trash), favorites }
   } catch {
-    return emptyIndex()
+    return rebuildIndexFromDocuments(raw)
   }
+}
+
+/**
+ * 索引損毀時的自癒：先把壞掉的原文隔離備份，再掃描既存文件 blob 重建目錄。
+ * 不這麼做的話整個文件庫會從 UI 消失，且下一次 autosave 會把空索引固化、其餘文件永久孤兒化。
+ * 已知取捨：回收筒歸屬與收藏無法還原，一律放回文件列表（看得見比藏起來安全）。
+ */
+function rebuildIndexFromDocuments(corruptRaw) {
+  try { storage().setItem(`${INDEX_KEY}.corrupt`, corruptRaw) } catch { /* 空間不足時放棄隔離備份 */ }
+  const store = storage()
+  const docs = []
+  for (let i = 0; i < store.length; i += 1) {
+    const key = store.key(i)
+    if (!key || !key.startsWith(DOC_KEY_PREFIX)) continue
+    try {
+      const doc = JSON.parse(store.getItem(key))
+      const id = key.slice(DOC_KEY_PREFIX.length)
+      if (!doc || typeof doc !== 'object' || doc.id !== id || !doc.root) continue
+      docs.push(normalizeMeta({ id, title: doc.title, createdAt: doc.createdAt, updatedAt: doc.updatedAt, thumbnail: doc.thumbnail }))
+    } catch { /* 單一文件 blob 壞掉就跳過，不拖累其他文件重建 */ }
+  }
+  const rebuilt = { ...emptyIndex(), docs: uniqueMeta(docs.filter(Boolean)) }
+  console.warn(`MindFlow 文件索引損毀，已從 ${rebuilt.docs.length} 份既存文件重建；原始索引備份於 ${INDEX_KEY}.corrupt`)
+  return rebuilt
 }
 
 function writeIndex(index) {
@@ -141,6 +175,29 @@ export function listDocumentSnapshots(id) {
     .map(snapshot => structuredCloneSafe(snapshot))
 }
 
+/**
+ * 壞檔救援：主檔 JSON 解析失敗時，從版本快照（新到舊）找第一份可用的還原並寫回同一個 id。
+ * 完全救不回來時回傳 null，且不動原始 blob（留給使用者或工程手動處理）。
+ */
+export function recoverDocument(id) {
+  if (!id) return null
+  for (const snapshot of listDocumentSnapshots(id)) {
+    try {
+      // normalizeDoc 對空物件會「編造」一份預設文件而不是拋錯——必須先驗結構，
+      // 否則一份壞掉的 {} 快照會蓋過更舊但完整的快照
+      const source = snapshot.document
+      if (!source || typeof source !== 'object' || !source.root || typeof source.root !== 'object' || typeof source.root.id !== 'string') continue
+      const doc = normalizeDoc(source)
+      doc.id = id
+      const stamp = saveDocument(doc, { allowCreate: true, snapshot: false })
+      // 寫入產生了新的 updatedAt；回傳的 doc 必須同步，否則呼叫端第一次存檔就誤判 CAS 衝突
+      if (typeof stamp === 'string') doc.updatedAt = stamp
+      return doc
+    } catch { /* 這份快照也壞，往更舊的找 */ }
+  }
+  return null
+}
+
 export function getDocumentSnapshot(documentId, snapshotId) {
   const snapshot = readSnapshots(documentId).find(item => item.id === snapshotId)
   return snapshot ? structuredCloneSafe(snapshot) : null
@@ -159,6 +216,7 @@ export function createDocumentSnapshot(doc, options = {}) {
   const snapshots = readSnapshots(document.id)
   snapshots.push(snapshot)
   writeSnapshots(document.id, snapshots.slice(-SNAPSHOT_LIMIT))
+  snapshotMetaCache.set(document.id, { createdAt: snapshot.createdAt, nodeCount: snapshot.nodeCount })
   return structuredCloneSafe(snapshot)
 }
 
@@ -168,12 +226,34 @@ export function saveDocument(doc, options = {}) {
   const known = index.docs.some(meta => meta.id === doc?.id) || index.trash.some(meta => meta.id === doc?.id)
   // 永久刪除後，殘留編輯器分頁不可再用 autosave 把文件加回 index。
   if (!options.allowCreate && !known && storage().getItem(documentKey) === null) return false
+  // CAS 版本比對：呼叫端聲明它所知的最後版本，儲存區已被別的視窗改過就拒寫，避免舊內容蓋掉新內容
+  if (options.expectedUpdatedAt) {
+    const rawExisting = storage().getItem(documentKey)
+    if (rawExisting) {
+      let existingUpdatedAt = null
+      try { existingUpdatedAt = JSON.parse(rawExisting)?.updatedAt || null } catch { /* 壞檔不擋覆寫，本次寫入即修復 */ }
+      if (existingUpdatedAt && existingUpdatedAt !== options.expectedUpdatedAt) {
+        const conflict = new Error('文件已被其他視窗修改')
+        conflict.name = 'MindflowSaveConflictError'
+        conflict.currentUpdatedAt = existingUpdatedAt
+        throw conflict
+      }
+    }
+  }
   const persisted = structuredCloneSafe(normalizeDoc(doc))
   persisted.updatedAt = resolveTimestamp(options.now)
   persisted.thumbnail = isSvgThumbnail(options.thumbnail)
     ? options.thumbnail
     : createDocumentThumbnail(persisted)
-  storage().setItem(documentKey, JSON.stringify(persisted))
+  try {
+    storage().setItem(documentKey, JSON.stringify(persisted))
+  } catch (error) {
+    if (!isQuotaError(error)) throw error
+    // 空間滿：先丟掉這份文件的版本快照騰出空間再試一次；仍失敗就把錯誤交給呼叫端顯示警告
+    try { writeSnapshots(persisted.id, []) } catch { /* 快照清不掉也繼續重試主檔 */ }
+    snapshotMetaCache.delete(persisted.id)
+    storage().setItem(documentKey, JSON.stringify(persisted))
+  }
 
   const meta = {
     id: persisted.id,
@@ -223,6 +303,14 @@ export function permanentlyDeleteDocument(id) {
   index.favorites = index.favorites.filter(favoriteId => favoriteId !== id)
   storage().removeItem(`${DOC_KEY_PREFIX}${id}`)
   storage().removeItem(`${HISTORY_KEY_PREFIX}${id}`)
+  snapshotMetaCache.delete(id)
+  // 掃掉影子狀態（mindflow.gamma.*、mindflow.viewmode.* 等），永久刪除不留殘渣吃空間
+  const residue = []
+  for (let i = 0; i < storage().length; i += 1) {
+    const key = storage().key(i)
+    if (key && key.startsWith('mindflow.') && key.endsWith(`.${id}`)) residue.push(key)
+  }
+  residue.forEach(key => storage().removeItem(key))
   writeIndex(index)
   return true
 }
@@ -246,7 +334,24 @@ export function duplicateDocument(id) {
   copy.createdAt = now
   copy.updatedAt = now
   // 不共用節點 ID，避免日後跨文件操作或匯入時產生識別衝突。
-  walkNodes(copy.root, node => { node.id = createId('node') })
+  const idMap = new Map()
+  walkNodes(copy.root, node => {
+    const nextId = createId('node')
+    idMap.set(node.id, nextId)
+    node.id = nextId
+  })
+  // 關聯線與概要引用節點 id，必須跟著重映射；映射不到的整筆丟棄（原本就指向不存在節點的垃圾）
+  copy.relations = (Array.isArray(copy.relations) ? copy.relations : [])
+    .map(relation => ({ ...relation, fromId: idMap.get(relation.fromId), toId: idMap.get(relation.toId) }))
+    .filter(relation => relation.fromId && relation.toId)
+  copy.summaries = (Array.isArray(copy.summaries) ? copy.summaries : [])
+    .map(summary => ({
+      ...summary,
+      parentId: idMap.get(summary.parentId),
+      ...(summary.startNodeId ? { startNodeId: idMap.get(summary.startNodeId) } : {}),
+      ...(summary.endNodeId ? { endNodeId: idMap.get(summary.endNodeId) } : {})
+    }))
+    .filter(summary => summary.parentId && (!('startNodeId' in summary) || summary.startNodeId) && (!('endNodeId' in summary) || summary.endNodeId))
   return createDocument(copy)
 }
 
@@ -383,11 +488,16 @@ function writeSnapshots(id, snapshots) {
 
 function maybeCreateDocumentSnapshot(doc, options) {
   if (options.snapshot === false) return null
-  const snapshots = readSnapshots(doc.id)
-  const latest = snapshots.at(-1)
+  let latest = snapshotMetaCache.get(doc.id)
+  if (latest === undefined) {
+    const last = readSnapshots(doc.id).at(-1)
+    latest = last ? { createdAt: last.createdAt, nodeCount: last.nodeCount } : null
+    snapshotMetaCache.set(doc.id, latest)
+  }
   const nodeCount = countDocumentNodes(doc)
   const timestamp = Date.parse(doc.updatedAt)
-  const elapsed = latest ? timestamp - Date.parse(latest.createdAt) : Infinity
+  // Math.abs：時鐘倒退或匯入未來時間戳時，不得讓節流恆成立、快照永久停擺
+  const elapsed = latest ? Math.abs(timestamp - Date.parse(latest.createdAt)) : Infinity
   const nodeRatio = latest
     ? Math.abs(nodeCount - latest.nodeCount) / Math.max(1, latest.nodeCount)
     : Infinity
