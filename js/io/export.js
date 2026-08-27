@@ -9,6 +9,9 @@ import { getLineAppearance, getNodeAppearance, getTheme } from '../editor/themes
 const DEFAULT_MARGIN = 80
 const DEFAULT_MAX_TEXT_WIDTH = 220
 const DEFAULT_INDENT = '  '
+// overlay 樣式對齊 css/features.css 的 .relation-label / .summary-bracket / .summary-node。
+const OVERLAY_FONT_FAMILY = 'Segoe UI, Noto Sans TC, sans-serif'
+const SUMMARY_LABEL_HEIGHT = 28
 
 /** 匯出原生 MindFlow JSON；預設維持舊 API 的緊湊格式。 */
 export function exportDocumentJson(doc, options = {}) {
@@ -87,11 +90,6 @@ export function documentToSvg(doc, options = {}) {
   const positions = layout(workingDoc, measure)
   applyDocumentSpacing(positions, workingRoot.id, doc.canvas)
 
-  const bounds = getLayoutBounds(positions)
-  const width = Math.max(1, Math.ceil(bounds.width + margin * 2))
-  const height = Math.max(1, Math.ceil(bounds.height + margin * 2))
-  const offsetX = margin - bounds.minX
-  const offsetY = margin - bounds.minY
   const nodes = new Map()
   const parents = new Map()
   const branches = buildBranchLookup(workingRoot, activeTheme)
@@ -100,6 +98,15 @@ export function documentToSvg(doc, options = {}) {
     nodes.set(node.id, { node, depth })
     if (parent) parents.set(node.id, parent.id)
   }, { includeHidden: true })
+
+  // overlay 幾何先算好，才能把關聯線標籤與概要括弧納入畫布邊界，避免匯出後被裁掉。
+  const relationLayer = svgRelations(doc.relations, positions)
+  const summaryLayer = svgSummaries(doc.summaries, nodes, positions, doc.layout)
+  const bounds = expandBounds(getLayoutBounds(positions), [...relationLayer.boxes, ...summaryLayer.boxes])
+  const width = Math.max(1, Math.ceil(bounds.width + margin * 2))
+  const height = Math.max(1, Math.ceil(bounds.height + margin * 2))
+  const offsetX = margin - bounds.minX
+  const offsetY = margin - bounds.minY
 
   const pieces = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(doc.title || workingRoot.text || 'MindFlow')}" shape-rendering="geometricPrecision" text-rendering="optimizeLegibility">`
@@ -120,7 +127,7 @@ export function documentToSvg(doc, options = {}) {
     const appearance = getLineAppearance(record.node, record.depth, activeTheme, branchColor)
     pieces.push(svgConnection(parent, child, appearance, child.connector || doc.layout))
   }
-  pieces.push(...svgRelations(doc.relations, positions))
+  pieces.push(...relationLayer.pieces, ...summaryLayer.pieces)
 
   for (const [id, position] of positions) {
     const record = nodes.get(id)
@@ -389,8 +396,9 @@ function svgConnection(parent, child, appearance, connector) {
 }
 
 function svgRelations(relations, positions) {
-  if (!Array.isArray(relations)) return []
   const pieces = []
+  const boxes = []
+  if (!Array.isArray(relations)) return { pieces, boxes }
   for (const relation of relations) {
     const from = positions.get(relation?.fromId)
     const to = positions.get(relation?.toId)
@@ -402,8 +410,46 @@ function svgRelations(relations, positions) {
     const color = safeString(relation.style?.color || relation.color || '#f59e0b')
     const width = finiteNumber(relation.style?.width ?? relation.width, 2, 0.5, 30)
     pieces.push(`<path d="M ${formatNumber(start.x)} ${formatNumber(start.y)} C ${formatNumber(cp1.x)} ${formatNumber(cp1.y)}, ${formatNumber(cp2.x)} ${formatNumber(cp2.y)}, ${formatNumber(end.x)} ${formatNumber(end.y)}" fill="none" stroke="${escapeXml(color)}" stroke-width="${formatNumber(width)}" stroke-dasharray="7 5" stroke-linecap="round"/>`)
+
+    const label = safeString(relation.label).trim()
+    if (!label) continue
+    // 與畫面一致：標籤釘在曲線 t=0.5 的位置，寬度沿用 relations.js drawRelations 的估算。
+    const middle = cubicPoint(start, cp1, cp2, end, 0.5)
+    const labelWidth = Math.max(48, Math.min(180, label.length * 14 + 16))
+    pieces.push(`<g transform="translate(${formatNumber(middle.x)} ${formatNumber(middle.y)})"><rect x="${formatNumber(-labelWidth / 2)}" y="-13" width="${formatNumber(labelWidth)}" height="26" rx="7" fill="#ffffff" stroke="#f1a56f" stroke-width="1"/><text x="0" y="1" text-anchor="middle" dominant-baseline="middle" font-family="${OVERLAY_FONT_FAMILY}" font-size="12" font-weight="600" fill="#7c3b11">${escapeXml(label)}</text></g>`)
+    boxes.push({ minX: middle.x - labelWidth / 2, minY: middle.y - 13, maxX: middle.x + labelWidth / 2, maxY: middle.y + 13 })
   }
-  return pieces
+  return { pieces, boxes }
+}
+
+function svgSummaries(summaries, nodes, positions, layoutName) {
+  const pieces = []
+  const boxes = []
+  if (!Array.isArray(summaries)) return { pieces, boxes }
+  for (const summary of summaries) {
+    const parent = nodes.get(summary?.parentId)?.node
+    if (!parent) continue
+    const geometry = summaryGeometry(summary, parent, positions, layoutName)
+    if (!geometry) continue
+    const text = safeString(summary.text) || '概要'
+    const labelWidth = Math.max(62, Math.min(180, estimateTextWidth(text, 12) + 20))
+    const labelTop = geometry.middle - SUMMARY_LABEL_HEIGHT / 2
+    // 尊重使用者自訂樣式（與畫面端 dnd.js decorateSummaryStyles 同一套對映）
+    const summaryStyle = summary.style || {}
+    const strokeColor = safeString(summaryStyle.lineColor) || '#f17e2e'
+    const dash = ({ dotted: '2 7', dashed: '9 7', 'dash-dot': '10 5 2 5', 'long-dash': '16 8' })[summaryStyle.lineStyle] || ''
+    const labelFill = safeString(summaryStyle.fill) || '#fff7ed'
+    pieces.push(`<path d="${geometry.path}" stroke="${escapeXml(strokeColor)}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"${dash ? ` stroke-dasharray="${dash}"` : ''} fill="none"/>`)
+    pieces.push(`<rect x="${formatNumber(geometry.labelX)}" y="${formatNumber(labelTop)}" width="${formatNumber(labelWidth)}" height="${SUMMARY_LABEL_HEIGHT}" rx="9" fill="${escapeXml(labelFill)}" stroke="#f2b487" stroke-width="1"/>`)
+    pieces.push(`<text x="${formatNumber(geometry.labelX + 10)}" y="${formatNumber(geometry.middle)}" dominant-baseline="central" font-family="${OVERLAY_FONT_FAMILY}" font-size="12" font-weight="600" fill="#7c3b11">${escapeXml(text)}</text>`)
+    boxes.push({
+      minX: geometry.x,
+      minY: Math.min(geometry.top, labelTop),
+      maxX: geometry.labelX + labelWidth,
+      maxY: Math.max(geometry.bottom, labelTop + SUMMARY_LABEL_HEIGHT)
+    })
+  }
+  return { pieces, boxes }
 }
 
 function svgNode(node, position, appearance, branchColor, textLayout) {
@@ -601,6 +647,88 @@ function validPoint(value) {
   return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null
 }
 
+// 與 js/editor/relations.js 的 cubicPoint 同式；io 層自帶一份，不相依編輯器 overlay 模組。
+function cubicPoint(p0, p1, p2, p3, t) {
+  const a = (1 - t) ** 3
+  const b = 3 * (1 - t) ** 2 * t
+  const c = 3 * (1 - t) * t ** 2
+  const d = t ** 3
+  return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y }
+}
+
+/*
+ * 以下四個概要幾何函數複製自 js/editor/summary.js（皆為純函數、無 DOM 依賴），
+ * 讓 io 層不必相依編輯器 overlay 模組；那邊改幾何時，這裡要同步改。
+ */
+function summaryGeometry(summary, parent, positions, layoutName = 'mindmap-both') {
+  const covered = getSummaryNodes(summary, parent, layoutName).map(child => positions.get(child.id)).filter(Boolean)
+  if (covered.length === 0) return null
+  const top = Math.min(...covered.map(position => position.y)) - 5
+  const bottom = Math.max(...covered.map(position => position.y + position.h)) + 5
+  const x = Math.max(...covered.map(position => position.x + position.w)) + 24
+  const middle = (top + bottom) / 2
+  const depth = Math.max(12, Math.min(24, (bottom - top) * 0.16))
+  return {
+    top,
+    bottom,
+    middle,
+    x,
+    labelX: x + 32,
+    path: `M ${x + depth} ${top} C ${x + 5} ${top}, ${x + 8} ${middle - depth}, ${x} ${middle} C ${x + 8} ${middle + depth}, ${x + 5} ${bottom}, ${x + depth} ${bottom}`
+  }
+}
+
+function getSummaryNodes(summary, parent, layoutName = 'mindmap-both') {
+  if (!summary || !parent) return []
+  const anchors = normalizeSummaryAnchors(summary, parent, layoutName)
+  if (!anchors) return []
+  const startNode = parent.children.find(node => node.id === anchors.startNodeId)
+  if (!startNode) return []
+  const siblings = getVisualSiblings(parent, startNode, layoutName)
+  const start = siblings.findIndex(node => node.id === anchors.startNodeId)
+  const end = siblings.findIndex(node => node.id === anchors.endNodeId)
+  return start >= 0 && end >= start ? siblings.slice(start, end + 1) : []
+}
+
+function normalizeSummaryAnchors(summary, parent, layoutName = 'mindmap-both') {
+  let startNodeId = summary.startNodeId
+  let endNodeId = summary.endNodeId
+  // 舊文件仍可讀取 index；一旦更新便遷移為穩定 nodeId 錨點。
+  if (!startNodeId && Number.isFinite(Number(summary.startIndex))) {
+    startNodeId = parent.children[Math.max(0, Math.min(parent.children.length - 1, Number(summary.startIndex)))]?.id
+  }
+  if (!endNodeId && Number.isFinite(Number(summary.endIndex))) {
+    endNodeId = parent.children[Math.max(0, Math.min(parent.children.length - 1, Number(summary.endIndex)))]?.id
+  }
+  const startNode = parent.children.find(node => node.id === startNodeId)
+  const endNode = parent.children.find(node => node.id === endNodeId)
+  if (!startNode || !endNode) return null
+  const siblings = getVisualSiblings(parent, startNode, layoutName)
+  const start = siblings.findIndex(node => node.id === startNode.id)
+  const end = siblings.findIndex(node => node.id === endNode.id)
+  return start >= 0 && end >= start ? { startNodeId, endNodeId } : null
+}
+
+function getVisualSiblings(parent, anchor, layoutName = 'mindmap-both') {
+  // 只有雙向心智圖會把 children 分到兩側；其他佈局的視覺順序就是 children 陣列順序。
+  if ((layoutName === 'mindmap-both' || layoutName === 'mindmap') && (anchor?.side === 'left' || anchor?.side === 'right')) {
+    return parent.children.filter(node => node.side === anchor.side)
+  }
+  return parent.children.slice()
+}
+
+function expandBounds(bounds, boxes) {
+  if (boxes.length === 0) return bounds
+  let { minX, minY, maxX, maxY } = bounds
+  for (const box of boxes) {
+    minX = Math.min(minX, box.minX)
+    minY = Math.min(minY, box.minY)
+    maxX = Math.max(maxX, box.maxX)
+    maxY = Math.max(maxY, box.maxY)
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY }
+}
+
 function strokeDasharray(value) {
   return ({ dotted: '2 5', dashed: '7 5', 'dash-dot': '10 4 2 4', 'long-dash': '14 6 3 6' })[value] || ''
 }
@@ -635,20 +763,3 @@ function escapeXml(value) {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character])
 }
-
-// 常見命名別名，讓 UI 層可依下載格式直接對映，不重複邏輯。
-export const exportDocumentMindflow = exportDocumentJson
-export const exportDocumentDoc = exportDocumentWord
-export const exportDocumentSvg = documentToSvg
-export const exportToTxt = exportDocumentTxt
-export const exportToTXT = exportDocumentTxt
-export const exportToMarkdown = exportDocumentMarkdown
-export const exportToWord = exportDocumentWord
-export const exportToDoc = exportDocumentWord
-export const exportToJson = exportDocumentJson
-export const exportToJSON = exportDocumentJson
-export const exportToMindflow = exportDocumentJson
-export const exportToSvg = documentToSvg
-export const exportToSVG = documentToSvg
-export const docToSvg = documentToSvg
-export const docToSVG = documentToSvg

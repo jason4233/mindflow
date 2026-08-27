@@ -267,6 +267,32 @@ test('SVG 圖示輸出人類可讀符號並隱藏 floating metadata token', () =
   assert.match(svg, /★/u)
 })
 
+test('SVG 匯出概要大括弧與關聯線標籤，且畫布容得下兩者', () => {
+  const doc = fixtureDoc()
+  doc.themeId = 'classic-blue'
+  doc.root = node('root', '根', [
+    node('child-a', 'A', [], { side: 'right', style: { shape: 'rect' } }),
+    node('child-b', 'B', [], { side: 'right', style: { shape: 'rect' } })
+  ], { style: { shape: 'rect' } })
+  doc.relations = [{
+    id: 'rel-1', fromId: 'child-a', toId: 'child-b', label: '關聯 <說明>',
+    cp1: { x: 10, y: -20 }, cp2: { x: 30, y: 20 }, style: { color: '#f59e0b', width: 2 }
+  }]
+  doc.summaries = [{ id: 'sum-1', parentId: 'root', startNodeId: 'child-a', endNodeId: 'child-b', text: '概要 & 合併', style: {} }]
+  const svg = documentToSvg(doc, { includeCollapsedChildren: true })
+
+  assert.match(svg, /<text[^>]*>關聯 &lt;說明&gt;<\/text>/u)
+  assert.match(svg, /<text[^>]*>概要 &amp; 合併<\/text>/u)
+  // 大括弧是兩段 cubic，且用 features.css 的概要線色。
+  assert.match(svg, /<path d="M [^"]+ C [^"]+ C [^"]+" stroke="#f17e2e"/u)
+
+  const svgWidth = Number(svg.match(/^<svg[^>]*\bwidth="(\d+)"/u)[1])
+  const offsetX = Number(svg.match(/<g transform="translate\((-?[\d.]+) (-?[\d.]+)\)"/u)[1])
+  const labelRect = svg.match(/<rect x="(-?[\d.]+)" y="-?[\d.]+" width="([\d.]+)" height="28" rx="9" fill="#fff7ed"/u)
+  assert.ok(labelRect, '找不到概要標籤底框')
+  assert.ok(Number(labelRect[1]) + Number(labelRect[2]) + offsetX <= svgWidth, '概要標籤被畫布裁掉')
+})
+
 test('SVG 對 org/tree/timeline/fishbone 使用畫面同款 connector 幾何', () => {
   const cases = [
     ['org', 3],

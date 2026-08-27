@@ -133,7 +133,8 @@ export async function exportSelectedFormat(doc, format, options = {}) {
     transparent: format === 'png' && Boolean(options.transparent)
   })
   if (format === 'pdf') {
-    openPrintWindow(svg, filename)
+    // 等列印圖真的載入才算成功，否則呼叫端會在空白視窗上顯示「已開啟列印視窗」。
+    await openPrintWindow(svg, filename)
     return true
   }
   if (format !== 'png' && format !== 'jpg') throw new TypeError(`不支援的匯出格式：${format}`)
@@ -184,11 +185,20 @@ function openPrintWindow(svg, title) {
   printWindow.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>@page{margin:0}html,body{margin:0;min-height:100%;display:grid;place-items:center;background:#fff}img{display:block;max-width:100%;height:auto}</style></head><body><img src="${escapeHtml(url)}" alt=""></body></html>`)
   printWindow.document.close()
   const image = printWindow.document.querySelector('img')
-  image.addEventListener('load', () => {
-    printWindow.focus()
-    printWindow.print()
-    window.setTimeout(() => URL.revokeObjectURL(url), 30000)
-  }, { once: true })
+  return new Promise((resolve, reject) => {
+    image.addEventListener('load', () => {
+      printWindow.focus()
+      printWindow.print()
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000)
+      resolve(true)
+    }, { once: true })
+    // 載入失敗要收乾淨：撤銷 object URL、關掉留在畫面上的空白視窗，再讓上層顯示失敗訊息。
+    image.addEventListener('error', () => {
+      URL.revokeObjectURL(url)
+      printWindow.close()
+      reject(new Error('列印預覽圖載入失敗'))
+    }, { once: true })
+  })
 }
 
 function downloadBlob(blob, filename) {

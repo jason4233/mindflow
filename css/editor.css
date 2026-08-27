@@ -990,7 +990,8 @@ body.is-c1-focus-mode .canvas {
 
 @media (max-width: 720px) {
   .toolbar-section--center { max-width: calc(100vw - 20px); overflow-x: auto; }
-  .save-status, .toolbar-section--right .icon-button { display: none; }
+  /* 匯出與更多必須留著：整段隱藏右側 icon-button 會讓手機完全無法匯出。 */
+  .save-status, #ai-button, #share-button { display: none; }
   .document-title { width: 145px; }
   .sidepanel { top: 120px; right: 8px; bottom: 60px; width: min(326px, calc(100vw - 16px)); }
   .text-toolbar { max-width: calc(100vw - 16px); overflow-x: auto; }

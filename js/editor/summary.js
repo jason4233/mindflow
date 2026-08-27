@@ -280,7 +280,7 @@ function getVisualSiblings(parent, anchor, layoutName = 'mindmap-both') {
 function centerY(position) { return position.y + position.h / 2 }
 function svgElement(name, attributes = {}) {
   const element = document.createElementNS(SVG_NS, name)
-  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)))
+  Object.entries(attributes).forEach(([key, value]) => { if (value !== '') element.setAttribute(key, String(value)) })
   return element
 }
 function cssEscape(value) { return globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^\w-]/g, '\\$&') }

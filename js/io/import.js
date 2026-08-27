@@ -231,14 +231,3 @@ function hashString(value) {
   }
   return (hash >>> 0).toString(36).padStart(7, '0')
 }
-
-export const importDocumentMindflow = importDocumentJson
-export const importDocumentText = importDocumentTxt
-export const importFromJson = importDocumentJson
-export const importFromJSON = importDocumentJson
-export const importFromMindflow = importDocumentJson
-export const importFromTxt = importDocumentTxt
-export const importFromTXT = importDocumentTxt
-export const importFromText = importDocumentTxt
-export const importFromMarkdown = importDocumentMarkdown
-export const importFromOutline = importOutline

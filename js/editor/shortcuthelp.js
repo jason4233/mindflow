@@ -22,11 +22,8 @@ export function initializeShortcutHelp(ctx) {
 
   registerAction('moreMenu', () => { menu.toggle(); return true })
   registerAction('shortcutHelp', () => { menu.close(); if (!dialog.open) dialog.showModal(); return true })
-  registerAction('focusMode', () => {
-    document.body.classList.toggle('is-focus-mode')
-    menu.close()
-    return true
-  })
+  // focusMode 由 focus.js 的 FocusController 全權實作（含 Esc 退出與 is-c1-focus-mode class）；
+  // 這裡不再註冊舊版 toggle，避免依賴初始化順序的雙註冊互相覆蓋。
   if (!hasAction('history')) registerAction('history', () => { ctx.notify('歷史版本尚未接入'); return false })
 
   dialog.querySelector('[data-shortcut-close]').addEventListener('click', closeDialog)
@@ -36,7 +33,6 @@ export function initializeShortcutHelp(ctx) {
   ctx.featureHandlers.escape.push(() => {
     menu.close()
     closeDialog()
-    document.body.classList.remove('is-focus-mode')
   })
 }
 
