@@ -1,10 +1,12 @@
-import { app, BrowserWindow, protocol } from 'electron'
-import { dirname, join } from 'node:path'
+import { app, BrowserWindow, protocol, shell } from 'electron'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { resolveStaticRoot } from './app-paths.mjs'
 import {
   BACKUP_INTERVAL_MS,
+  hasIntentionalMindflowState,
+  hasMindflowDocuments,
   readLatestMindflowBackup,
   writeMindflowBackup
 } from './backup-store.mjs'
@@ -14,6 +16,7 @@ import {
   readLegacyOriginEntries
 } from './legacy-storage.mjs'
 import {
+  APP_HOST,
   APP_SCHEME,
   APP_START_URL,
   createProtocolHandler
@@ -21,6 +24,12 @@ import {
 
 const DESKTOP_DIR = dirname(fileURLToPath(import.meta.url))
 const CLOSE_FLUSH_TIMEOUT_MS = 8000
+const APP_URL_PREFIX = `${APP_SCHEME}://${APP_HOST}/`
+
+// 煙霧測試用完即丟的 userData，避免測試把使用者真正的十份備份輪替掉。必須在 ready 前設定。
+if (process.env.MINDFLOW_USER_DATA_DIR) {
+  app.setPath('userData', resolve(process.env.MINDFLOW_USER_DATA_DIR))
+}
 
 // 必須在 ready 前宣告為 standard scheme，relative URL、ES modules 與 localStorage 才共享固定 origin。
 protocol.registerSchemesAsPrivileged([{
@@ -103,7 +112,9 @@ async function showRendererToast(window, message) {
 
 async function restoreLatestBackupIfEmpty(window, userDataPath) {
   const current = await captureMindflowStorage(window)
-  if (Object.keys(current).length !== 0) return false
+  // 索引消失或損毀、且文件掉光才發動救援；偏好設定殘留不阻止還原，
+  // 但使用者刻意清空（合法空索引）不得被自動復活。
+  if (hasIntentionalMindflowState(current)) return false
 
   const backup = await readLatestMindflowBackup({ userDataPath })
   if (!backup) return false
@@ -115,12 +126,13 @@ async function restoreLatestBackupIfEmpty(window, userDataPath) {
 
 async function migrateLegacyStorageIfEmpty(window, userDataPaths) {
   const current = await captureMindflowStorage(window)
-  if (Object.keys(current).length !== 0) return 0
+  if (hasIntentionalMindflowState(current)) return 0
 
   const origins = await discoverLegacyOrigins(userDataPaths)
   const candidates = await readLegacyOriginEntries(window.webContents, origins)
   const merged = mergeLegacyMindflowEntries(candidates)
-  if (!merged['mindflow.docs.index']) return 0
+  // 索引存在但零文件不算遷移成功，否則會吃掉後面的備份還原機會。
+  if (!hasMindflowDocuments(merged)) return 0
 
   const importedCount = await restoreRendererStorage(window, merged)
   await reloadWindow(window)
@@ -150,6 +162,35 @@ async function withTimeout(promise, timeoutMs) {
   } finally {
     clearTimeout(timeout)
   }
+}
+
+function urlProtocol(url) {
+  try {
+    return new URL(url).protocol
+  } catch {
+    return ''
+  }
+}
+
+function bindNavigationGuards(window) {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    // 匯出列印靠 window.open('', '_blank') 拿到 about:blank 視窗，擋掉等於拿掉列印功能。
+    // 空字串 URL 在 Chromium 內部不會被補成文件網址，Electron 兩種形式都可能回報，都要放行。
+    if (url === '' || url === 'about:blank') return { action: 'allow' }
+    if (['http:', 'https:'].includes(urlProtocol(url))) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  window.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith(APP_URL_PREFIX)) return
+    event.preventDefault()
+    if (['http:', 'https:'].includes(urlProtocol(url))) void shell.openExternal(url)
+  })
+
+  // 這個離線應用不需要任何裝置權限；一律拒絕，網頁分屏也拿不到定位或相機。
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false)
+  })
 }
 
 function bindCloseFlush(window, userDataPath) {
@@ -196,6 +237,7 @@ async function launch() {
 
   mainWindow.setMenuBarVisibility(false)
   mainWindow.on('page-title-updated', event => event.preventDefault())
+  bindNavigationGuards(mainWindow)
 
   const userDataPath = app.getPath('userData')
   const legacyUserDataPaths = [
@@ -221,16 +263,34 @@ async function launch() {
     console.error('MindFlow startup recovery failed:', error)
   }
 
-  await enqueueBackup(mainWindow, userDataPath, { reason: 'startup' })
+  try {
+    await enqueueBackup(mainWindow, userDataPath, { reason: 'startup' })
+  } catch (error) {
+    // 開機備份失敗只降級，不能讓整個 app 起不來——使用者的資料還在 localStorage 裡。
+    console.error('MindFlow startup backup failed:', error)
+  }
+
   backupTimer = setInterval(() => {
     void enqueueBackup(mainWindow, userDataPath, { reason: 'interval' })
       .catch(error => console.error('MindFlow interval backup failed:', error))
   }, BACKUP_INTERVAL_MS)
 }
 
-app.whenReady()
-  .then(launch)
-  .catch(error => {
-    console.error('MindFlow desktop failed to start:', error)
-    app.exit(1)
+// 第二個實例會用同一份 localStorage 與同一組備份檔，兩邊各寫各的必然互相覆蓋；只准一個。
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
   })
+
+  app.whenReady()
+    .then(launch)
+    .catch(error => {
+      console.error('MindFlow desktop failed to start:', error)
+      app.exit(1)
+    })
+}

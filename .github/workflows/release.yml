@@ -6,6 +6,9 @@ on:
       - main
     tags:
       - "v*"
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   workflow_dispatch:
 
 permissions:
@@ -31,9 +34,32 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
+      # Electron 與 electron-builder 的二進位不在 node_modules 裡，setup-node 的 npm 快取抓不到。
+      - name: Cache Electron and electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
+
+      # 打包產物的版本號要跟 tag 一致，否則安裝檔永遠停在 package.json 寫死的版本。
+      - name: Stamp the release version from the tag
+        if: github.ref_type == 'tag'
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          npm version $version --no-git-tag-version --allow-same-version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to stamp desktop package version $version"
+          }
 
       - name: Build setup and portable executables
         working-directory: desktop
@@ -89,6 +115,17 @@ jobs:
                 throw "Failed to create version release $tag"
               }
             }
+          }
+
+          # 重跑一個舊 workflow 會把 latest 指回舊 commit，等於對使用者發降版。
+          # main 的當前 HEAD 不是這次建的東西，就整段跳過（版本 release 已在上面處理完）。
+          $mainSha = (gh api "repos/$repo/commits/main" --jq ".sha" 2>$null | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to read the current HEAD of main"
+          }
+          if ($mainSha -ne $env:GITHUB_SHA) {
+            Write-Host "Skipping the rolling latest release: main is at $mainSha but this run built $env:GITHUB_SHA."
+            exit 0
           }
 
           $null = gh release view latest --repo $repo 2>$null

@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import {
   APP_START_URL,
+  CONTENT_SECURITY_POLICY,
   createProtocolHandler,
   resolveProtocolPath
 } from '../protocol.mjs'
+
+const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), 'mindflow-protocol-'))
@@ -56,6 +60,25 @@ test('blocks other hosts and encoded traversal outside the static root', async (
     assert.equal(traversal.status, 403)
     assert.equal(resolved.isOutside, true)
   })
+})
+
+test('sends the CSP with documents and keeps the HTML meta copies in sync', async () => {
+  await withFixture(async ({ handler }) => {
+    const html = await handler({ url: APP_START_URL, method: 'GET' })
+    const json = await handler({ url: 'mindflow://app/assets/manifest.json', method: 'GET' })
+
+    assert.equal(html.headers.get('content-security-policy'), CONTENT_SECURITY_POLICY)
+    assert.equal(json.headers.get('content-security-policy'), null)
+  })
+
+  // 同一條政策有 header 與兩份 <meta> 三處複本，任何一處漂掉都只有在真機上才會爆。
+  for (const page of ['index.html', 'editor.html']) {
+    const source = await readFile(join(repositoryRoot, page), 'utf8')
+    const meta = source.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)
+
+    assert.ok(meta, `${page} is missing its Content-Security-Policy meta tag`)
+    assert.equal(meta[1], CONTENT_SECURITY_POLICY)
+  }
 })
 
 test('returns 404 for missing files and omits the body for HEAD', async () => {

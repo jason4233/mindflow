@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -119,10 +120,13 @@ function killProcessTree(pid) {
 }
 
 const debugPort = await getAvailablePort()
+// 用完即丟的 userData：煙霧測試不得動到使用者真正的 localStorage 與十份備份輪替。
+const userDataDir = await mkdtemp(join(tmpdir(), 'mindflow-smoke-'))
 const child = spawn(executable, [`--remote-debugging-port=${debugPort}`], {
   detached: false,
   stdio: 'ignore',
-  windowsHide: true
+  windowsHide: true,
+  env: { ...process.env, MINDFLOW_USER_DATA_DIR: userDataDir }
 })
 const startedAt = Date.now()
 const earlyExit = new Promise((_, reject) => {
@@ -156,5 +160,12 @@ try {
   } catch {
     // NSIS wrapper 與 Electron child 是兩層 process；只殺 wrapper 會留下鎖住解壓目錄的孤兒。
     killProcessTree(child.pid)
+  }
+
+  try {
+    // Chromium 收檔比 process 結束慢，鎖住的檔案要重試幾次才刪得掉。
+    await rm(userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  } catch (error) {
+    console.warn(`Could not remove the smoke userData directory ${userDataDir}: ${error.message}`)
   }
 }
