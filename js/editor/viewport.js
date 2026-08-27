@@ -86,6 +86,8 @@ export class ViewportController {
       forcedPan || (!event.ctrlKey && !event.metaKey && !interactive)
     )
     if (!shouldPan) return
+    // 重入守衛：第二個 pointer（觸控雙指）不得覆蓋進行中的拖曳，否則舊的 window listener 永遠拆不掉
+    if (this.drag) return
     event.preventDefault()
     if (forcedPan) event.stopImmediatePropagation()
     this.drag = {

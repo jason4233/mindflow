@@ -184,9 +184,9 @@ function refreshActiveIcons(view, ctx) {
   })
 }
 
-function decorateNodeIcons({ doc, positions, nodesLayer }, stickerMap) {
+function decorateNodeIcons({ doc, positions, nodesLayer, nodeLookup }, stickerMap) {
   for (const id of positions.keys()) {
-    const node = findNode(doc.root, id)
+    const node = nodeLookup?.get(id)?.node || findNode(doc.root, id)
     const element = nodesLayer.querySelector(`[data-node-id="${cssEscape(id)}"]`)
     if (!node || !element || !node.icons?.length) continue
     const strip = document.createElement('span')

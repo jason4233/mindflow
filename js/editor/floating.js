@@ -157,11 +157,11 @@ function drawFloatingNodes({ doc, positions, nodesLayer, svgLayer, nodeLookup },
   const orderedIds = Array.from(nodeLookup.keys()).filter(id => id !== doc.root.id)
   const connectionPaths = Array.from(svgLayer.querySelectorAll(':scope > .connection-path'))
   for (const [id, position] of positions) {
-    const node = findNode(doc.root, id)
-    const context = findNodeContext(doc.root, id)
+    const record = nodeLookup.get(id)
+    const node = record?.node || findNode(doc.root, id)
     const meta = getFloatingMeta(node)
     // 舊資料若把 token 洩漏到樹內子節點，不再讓它脫離父節點與隱藏連線。
-    if (!meta || context?.parent !== doc.root) continue
+    if (!meta || record?.parent !== doc.root) continue
     // overlay 先改 positions，讓後續關聯線/概要 hook 讀到自由座標。
     position.x = meta.x
     position.y = meta.y

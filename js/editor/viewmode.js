@@ -167,6 +167,8 @@ function mountLayoutPanel(ctx) {
 
   return {
     refresh() {
+      // 面板收起來就不重建（每次 render 與每次選取變更都會呼叫進來）
+      if (view.closest('[hidden]')) return
       const current = normalizeLayoutName(ctx.doc.layout)
       view.querySelectorAll('[data-layout-id]').forEach(button => {
         const active = button.dataset.layoutId === current

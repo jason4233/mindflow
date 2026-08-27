@@ -222,7 +222,14 @@ export function getNextThemeId(themeId) {
   return themeIds[(index + 1 + themeIds.length) % themeIds.length]
 }
 
+// token 解析 memo：getNodeAppearance 每次重繪對每個節點解析多次，大圖下一輪 render 有上萬次字串解析
+const styleTokenCache = new Map()
+const STYLE_TOKEN_CACHE_LIMIT = 500
+
 export function parseStyleToken(value, fallbackShape = 'rounded') {
+  const cacheKey = `${fallbackShape}||${value ?? ''}`
+  const cached = styleTokenCache.get(cacheKey)
+  if (cached) return { shape: cached.shape, metadata: { ...cached.metadata } }
   const [rawShape, ...parts] = String(value || fallbackShape).split(STYLE_SEPARATOR)
   const metadata = {}
   for (const part of parts) {
@@ -235,7 +242,9 @@ export function parseStyleToken(value, fallbackShape = 'rounded') {
       metadata[key] = part.slice(splitAt + 1)
     }
   }
-  return { shape: rawShape || fallbackShape, metadata }
+  if (styleTokenCache.size >= STYLE_TOKEN_CACHE_LIMIT) styleTokenCache.clear()
+  styleTokenCache.set(cacheKey, { shape: rawShape || fallbackShape, metadata })
+  return { shape: rawShape || fallbackShape, metadata: { ...metadata } }
 }
 
 export function encodeStyleToken(value, patch = {}, shapeOverride = null) {

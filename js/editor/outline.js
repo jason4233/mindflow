@@ -151,6 +151,8 @@ class OutlineController {
 
   refresh(force = false) {
     if (this.suspendRefresh) return
+    // 面板關閉時不重建（open() 會補一次 refresh(true)），避免大圖每次重繪都白建整份大綱
+    if (!force && !this.opened) return
     const active = document.activeElement
     if (!force && active?.closest?.('[data-outline-list]') === this.list) return
     const records = []

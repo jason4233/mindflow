@@ -12,16 +12,19 @@ const DIRECTION_VECTORS = Object.freeze({
 const AXIS_ALIGNMENT_WEIGHT = 2
 
 export class SelectionManager {
-  constructor({ canvas, nodesLayer, selectionRectangle, getDoc, getPositions, isPanMode = () => false }) {
+  constructor({ canvas, nodesLayer, selectionRectangle, getDoc, getPositions, viewport = null, isPanMode = () => false }) {
     this.canvas = canvas
     this.nodesLayer = nodesLayer
     this.selectionRectangle = selectionRectangle
     this.getDoc = getDoc
     this.getPositions = getPositions
+    this.viewport = viewport
     this.isPanMode = isPanMode
     this.ids = new Set()
     this.primaryId = null
     this.frame = null
+    // apply() 的差異快取：框選拖曳時只動有變化的節點；重繪後由 prune() 全量重套
+    this.lastAppliedIds = null
     this.handleCommandSelection = this.handleCommandSelection.bind(this)
     this.handleFocusRequest = this.handleFocusRequest.bind(this)
     this.bindEvents()
@@ -58,6 +61,8 @@ export class SelectionManager {
   }
 
   startFrame(event) {
+    // 重入守衛：第二個 pointer 進來時不得覆蓋進行中的框選（否則舊的 window listener 永遠拆不掉）
+    if (this.frame) return
     event.preventDefault()
     const canvasRect = this.canvas.getBoundingClientRect()
     const start = { x: event.clientX - canvasRect.left, y: event.clientY - canvasRect.top }
@@ -100,17 +105,44 @@ export class SelectionManager {
 
   selectInsideFrame(canvasRect) {
     const { start, current, baseSelection } = this.frame
-    const frameRect = {
-      left: canvasRect.left + Math.min(start.x, current.x),
-      right: canvasRect.left + Math.max(start.x, current.x),
-      top: canvasRect.top + Math.min(start.y, current.y),
-      bottom: canvasRect.top + Math.max(start.y, current.y)
-    }
     const next = new Set(baseSelection)
-    for (const element of this.nodesLayer.querySelectorAll('.mind-node')) {
-      const rect = element.getBoundingClientRect()
-      if (rect.right >= frameRect.left && rect.left <= frameRect.right && rect.bottom >= frameRect.top && rect.top <= frameRect.bottom) {
-        next.add(element.dataset.nodeId)
+    const positions = this.viewport ? this.getPositions() : null
+    if (positions && positions.size) {
+      // 世界座標純數學命中：框選拖曳的每一格不再讀 n 次 DOM rect（大圖下那是逐格強制 reflow）
+      const { panX, panY, zoom } = this.viewport
+      const worldLeft = (Math.min(start.x, current.x) - panX) / zoom
+      const worldRight = (Math.max(start.x, current.x) - panX) / zoom
+      const worldTop = (Math.min(start.y, current.y) - panY) / zoom
+      const worldBottom = (Math.max(start.y, current.y) - panY) / zoom
+      for (const [id, position] of positions) {
+        if (position.x + position.w >= worldLeft && position.x <= worldRight && position.y + position.h >= worldTop && position.y <= worldBottom) {
+          next.add(id)
+        }
+      }
+      // 圖片節點會被 overlay 撐得比 layout 尺寸大，這些少數節點用實際 DOM rect 補判
+      const frameLeft = canvasRect.left + Math.min(start.x, current.x)
+      const frameRight = canvasRect.left + Math.max(start.x, current.x)
+      const frameTop = canvasRect.top + Math.min(start.y, current.y)
+      const frameBottom = canvasRect.top + Math.max(start.y, current.y)
+      for (const element of this.nodesLayer.querySelectorAll('.mind-node--has-image')) {
+        if (next.has(element.dataset.nodeId)) continue
+        const rect = element.getBoundingClientRect()
+        if (rect.right >= frameLeft && rect.left <= frameRight && rect.bottom >= frameTop && rect.top <= frameBottom) {
+          next.add(element.dataset.nodeId)
+        }
+      }
+    } else {
+      const frameRect = {
+        left: canvasRect.left + Math.min(start.x, current.x),
+        right: canvasRect.left + Math.max(start.x, current.x),
+        top: canvasRect.top + Math.min(start.y, current.y),
+        bottom: canvasRect.top + Math.max(start.y, current.y)
+      }
+      for (const element of this.nodesLayer.querySelectorAll('.mind-node')) {
+        const rect = element.getBoundingClientRect()
+        if (rect.right >= frameRect.left && rect.left <= frameRect.right && rect.bottom >= frameRect.top && rect.top <= frameRect.bottom) {
+          next.add(element.dataset.nodeId)
+        }
       }
     }
     this.ids = next
@@ -145,13 +177,23 @@ export class SelectionManager {
     const validIds = new Set(this.getPositions().keys())
     this.ids = new Set(Array.from(this.ids).filter(id => validIds.has(id)))
     if (!this.ids.has(this.primaryId)) this.primaryId = Array.from(this.ids).at(-1) || null
-    this.apply()
+    // 重繪後節點 DOM 是全新的，必須全量重套 class，不能走差異路徑
+    this.apply(true)
   }
 
-  apply() {
+  apply(full = false) {
+    const unchanged = !full && this.lastAppliedIds &&
+      this.lastAppliedIds.size === this.ids.size &&
+      Array.from(this.ids).every(id => this.lastAppliedIds.has(id))
+    if (unchanged) return
     for (const element of this.nodesLayer.querySelectorAll('.mind-node')) {
-      element.classList.toggle('is-selected', this.ids.has(element.dataset.nodeId))
+      const id = element.dataset.nodeId
+      const selected = this.ids.has(id)
+      // 差異模式下只碰狀態有變的節點
+      if (!full && this.lastAppliedIds && this.lastAppliedIds.has(id) === selected) continue
+      element.classList.toggle('is-selected', selected)
     }
+    this.lastAppliedIds = new Set(this.ids)
     window.dispatchEvent(new CustomEvent('mindflow:selectionchange', {
       detail: { ids: this.getSelectedIds(), primaryId: this.primaryId }
     }))

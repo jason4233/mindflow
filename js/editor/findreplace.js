@@ -128,9 +128,25 @@ export function initializeFindReplace(ctx) {
     })
   })
 
-  queryInput.addEventListener('input', () => recompute({ reset: true }))
+  // 輸入 debounce：大圖下每個字元同步全掃＋整圖重繪會逐字卡頓
+  let queryDebounceTimer = null
+  // 任何「使用結果清單」的動作（跳轉、取代）前一律 flush，不得作用在過期的清單上
+  const flushQuery = () => {
+    if (!queryDebounceTimer) return
+    window.clearTimeout(queryDebounceTimer)
+    queryDebounceTimer = null
+    recompute({ reset: true })
+  }
+  queryInput.addEventListener('input', () => {
+    window.clearTimeout(queryDebounceTimer)
+    queryDebounceTimer = window.setTimeout(() => { queryDebounceTimer = null; recompute({ reset: true }) }, 120)
+  })
   queryInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter') { event.preventDefault(); jump(event.shiftKey ? -1 : 1) }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      flushQuery()
+      jump(event.shiftKey ? -1 : 1)
+    }
     if (event.key === 'Escape') { event.preventDefault(); close() }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); queryInput.select() }
   })
@@ -138,10 +154,11 @@ export function initializeFindReplace(ctx) {
     if (event.key === 'Enter') { event.preventDefault(); panel.querySelector('[data-replace-current]').click() }
     if (event.key === 'Escape') { event.preventDefault(); close() }
   })
-  panel.querySelector('[data-find-previous]').addEventListener('click', () => jump(-1))
-  panel.querySelector('[data-find-next]').addEventListener('click', () => jump(1))
+  panel.querySelector('[data-find-previous]').addEventListener('click', () => { flushQuery(); jump(-1) })
+  panel.querySelector('[data-find-next]').addEventListener('click', () => { flushQuery(); jump(1) })
   panel.querySelector('[data-find-close]').addEventListener('click', close)
   panel.querySelector('[data-replace-current]').addEventListener('click', () => {
+    flushQuery()
     const match = state.matches[state.activeIndex]
     const node = findNode(ctx.doc.root, match?.id)
     if (!node) return
@@ -154,6 +171,7 @@ export function initializeFindReplace(ctx) {
     }
   })
   panel.querySelector('[data-replace-all]').addEventListener('click', () => {
+    flushQuery()
     const command = createReplaceAllCommand(ctx.doc, state.query, replaceInput.value)
     if (!ctx.manager.execute(command)) return
     const total = command.records.length

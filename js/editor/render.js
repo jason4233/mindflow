@@ -106,7 +106,6 @@ export function render(doc, positions, {
     }
   }
 
-  return new Map(Array.from(nodesLayer.querySelectorAll('.mind-node'), element => [element.dataset.nodeId, element]))
 }
 
 function createNodeElement(node, depth, position, activeTheme, branchColor, onToggleCollapse) {
@@ -297,6 +296,9 @@ function readRenderedPositions(nodesLayer) {
   return result
 }
 
+// 佈局過渡的收尾計時器：連續重繪時要先清掉舊的，否則過期計時器會提早拔掉新一輪過渡的 class
+let layoutTransitionTimer = null
+
 function animateLayoutChange(nodesLayer, svgLayer, movingNodes) {
   if (movingNodes.length === 0 || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
   // 先把新節點放回舊座標，再由 CSS left/top transition 移到演算法新座標。
@@ -308,7 +310,9 @@ function animateLayoutChange(nodesLayer, svgLayer, movingNodes) {
       element.style.top = `${position.y}px`
     }
   })
-  window.setTimeout(() => {
+  window.clearTimeout(layoutTransitionTimer)
+  layoutTransitionTimer = window.setTimeout(() => {
+    layoutTransitionTimer = null
     movingNodes.forEach(({ element }) => element.classList.remove('is-layout-moving'))
     svgLayer.classList.remove('is-layout-transitioning')
   }, 320)

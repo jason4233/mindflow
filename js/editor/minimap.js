@@ -79,7 +79,8 @@ class MinimapController {
   }
 
   draw(context) {
-    this.latestContext = context
+    // 只留重繪所需的最小資料，不長期抓著整包 nodeLookup/branchLookup 不放
+    this.latestContext = { doc: context.doc, positions: context.positions }
     if (this.panel.hidden || !context.positions?.size) return
     const bounds = getLayoutBounds(context.positions)
     const padding = 12
@@ -133,6 +134,8 @@ class MinimapController {
 
   startDrag(event) {
     if (!this.transform) return
+    // 重入守衛：拖曳進行中不接受第二個 pointer（避免 window listener 孤兒化）
+    if (this.drag) return
     event.preventDefault()
     event.stopPropagation()
     const visible = this.viewport.getVisibleWorldRect()
