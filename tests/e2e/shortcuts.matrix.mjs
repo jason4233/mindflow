@@ -16,6 +16,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, statSync, writ
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { ACTION_BINDINGS } from '../../js/editor/keyboard.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const REPORT_PATH = join(ROOT, 'docs', 'SHORTCUT_MATRIX.md')
@@ -35,7 +36,16 @@ class MatrixFailure extends Error {
 }
 
 function matrix(shortcut, state, expected, run, options = {}) {
-  return { shortcut, state, expected, run, electron: Boolean(options.electron) }
+  return {
+    shortcut,
+    state,
+    expected,
+    run,
+    electron: Boolean(options.electron),
+    targetedSynthetic: Boolean(options.targetedSynthetic),
+    imeBinding: options.imeBinding || null,
+    imeCode: options.imeCode || ''
+  }
 }
 
 const MATRIX_CASES = [
@@ -543,6 +553,72 @@ const MATRIX_CASES = [
   }, { electron: true })
 ]
 
+const IME_CANONICAL_CASES = Object.freeze({
+  undo: ['Ctrl+Z', '單選'],
+  redo: ['Ctrl+Y', '單選'],
+  copy: ['Ctrl+C / Ctrl+V', '單選'],
+  cut: ['Ctrl+X / Ctrl+V', '單選'],
+  paste: ['Ctrl+C / Ctrl+V', '單選'],
+  selectAll: ['Ctrl+A', '畫布'],
+  save: ['Ctrl+S', '編輯後'],
+  copyStyle: ['Ctrl+Alt+C / Ctrl+Alt+V', '單選'],
+  pasteStyle: ['Ctrl+Alt+C / Ctrl+Alt+V', '單選'],
+  duplicate: ['Ctrl+D', '單選'],
+  openThemePanel: ['Ctrl+P', '單選'],
+  openStylePanel: ['Alt+Y', '單選'],
+  formatPainter: ['Ctrl+G', '單選'],
+  ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`priority${index + 1}`, [`Ctrl+${index + 1}`, '單選']])),
+  insertLink: ['Ctrl+Alt+K', '單選'],
+  insertNote: ['Ctrl+Alt+M', '單選'],
+  insertSummary: ['Ctrl+Alt+T', '多選'],
+  insertImage: ['Alt+P', '單選'],
+  openIcons: ['Alt+I', '單選'],
+  insertComment: ['Ctrl+Alt+R', '單選'],
+  zoomReset: ['Ctrl+0', '畫布'],
+  tidyLayout: ['Ctrl+Shift+L', '畫布'],
+  toggleOutline: ['Ctrl+O', '畫布'],
+  fit: ['Ctrl+Alt+F', '畫布'],
+  centerRoot: ['Ctrl+Shift+R', '畫布'],
+  findReplace: ['Ctrl+F', '畫布'],
+  history: ['Shift+Alt+H', '畫布'],
+  floatingNode: ['Shift+Alt+F', '畫布']
+})
+
+const ALPHANUMERIC_BINDINGS = ACTION_BINDINGS.filter(binding => /^[a-z0-9]$/iu.test(binding.key))
+const IME_MATRIX_CASES = ALPHANUMERIC_BINDINGS.flatMap(binding => {
+  const locator = IME_CANONICAL_CASES[binding.action]
+  if (!locator) throw new Error(`IME 模式掃描缺少 ${binding.action} canonical case`)
+  const baseline = MATRIX_CASES.find(testCase => testCase.shortcut === locator[0] && testCase.state === locator[1])
+  if (!baseline) throw new Error(`IME 模式掃描找不到 ${binding.action} canonical case：${locator.join(' / ')}`)
+  return imeCodesForBinding(binding).map(code => matrix(
+    `${baseline.shortcut} [${code}]`,
+    `IME 模式／${baseline.state}`,
+    baseline.expected,
+    baseline.run,
+    {
+      electron: baseline.electron,
+      targetedSynthetic: true,
+      imeBinding: binding,
+      imeCode: code
+    }
+  ))
+})
+
+IME_MATRIX_CASES.push(matrix(
+  '直接輸入 [KeyM]',
+  'IME 模式／單選',
+  '以空 seed 進入 contenteditable，保留後續 composition 流',
+  async h => {
+    await h.select('a')
+    await h.dispatchImeKey({ code: 'KeyM' })
+    const text = await h.node('a').locator('.mind-node__text').innerText()
+    return h.expect(await h.isEditing('a') && text === '', `editing=${await h.isEditing('a')}；文字=${JSON.stringify(text)}`)
+  },
+  { targetedSynthetic: true }
+))
+
+const ALL_MATRIX_CASES = [...MATRIX_CASES, ...IME_MATRIX_CASES]
+
 await main()
 
 async function main() {
@@ -563,7 +639,7 @@ async function main() {
           project: 'Chromium',
           page,
           baseURL: server.baseURL,
-          cases: filterCases(MATRIX_CASES),
+          cases: filterCases(ALL_MATRIX_CASES),
           connectCDP: async () => context.newCDPSession(page)
         }))
       } finally {
@@ -580,7 +656,7 @@ async function main() {
           project: 'Electron',
           page,
           baseURL: 'mindflow://app',
-          cases: filterCases(MATRIX_CASES.filter(testCase => testCase.electron)),
+          cases: filterCases(ALL_MATRIX_CASES.filter(testCase => testCase.electron)),
           connectCDP: async () => context.newCDPSession(page)
         }))
       } finally {
@@ -593,7 +669,9 @@ async function main() {
 
   writeReport(allResults)
   const failed = allResults.filter(result => !result.pass)
+  const imeResults = allResults.filter(result => result.targetedSynthetic)
   console.log(`快捷鍵矩陣：${allResults.length - failed.length}/${allResults.length} PASS`)
+  console.log(`IME 模式掃描（targeted synthetic）：${imeResults.filter(result => result.pass).length}/${imeResults.length} PASS`)
   console.log(`報告：${REPORT_PATH}`)
   for (const result of failed) {
     console.error(`FAIL [${result.project}] ${result.shortcut} / ${result.state}: ${result.actual}`)
@@ -623,12 +701,16 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
     let actual = ''
     let pass = false
     try {
+      h.setSyntheticImeTarget(null)
       await h.reset()
+      h.setSyntheticImeTarget(testCase.imeBinding ? { binding: testCase.imeBinding, code: testCase.imeCode } : null)
       actual = await testCase.run(h)
       if (runtimeErrors.length > 0) throw new MatrixFailure(runtimeErrors.join('；'))
       pass = true
     } catch (error) {
       actual = error instanceof MatrixFailure ? error.actual : `${error.name || 'Error'}: ${error.message || error}`
+    } finally {
+      h.setSyntheticImeTarget(null)
     }
     results.push({
       project,
@@ -636,7 +718,8 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
       state: testCase.state,
       expected: testCase.expected,
       actual: String(actual || (pass ? '行為符合預期' : '未取得結果')),
-      pass
+      pass,
+      targetedSynthetic: testCase.targetedSynthetic
     })
     console.log(`${pass ? 'PASS' : 'FAIL'} [${project}] ${testCase.shortcut} / ${testCase.state}`)
     if (!pass) console.log(`  ${actual}`)
@@ -646,8 +729,12 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
 
 function createHarness({ page, baseURL, connectCDP }) {
   const editorURL = `${baseURL}/editor.html?id=${FIXTURE_ID}`
+  let syntheticImeTarget = null
   return {
     page,
+    setSyntheticImeTarget(target) {
+      syntheticImeTarget = target
+    },
     async reset() {
       await page.goto(`${baseURL}/index.html`, { waitUntil: 'domcontentloaded' })
       await page.evaluate(({ fixture, id }) => {
@@ -671,7 +758,16 @@ function createHarness({ page, baseURL, connectCDP }) {
       await page.locator('#sidepanel').evaluate(element => element.classList.add('is-collapsed'))
       await page.locator('#canvas').focus()
     },
-    press: shortcut => page.keyboard.press(shortcut),
+    press(shortcut) {
+      if (syntheticImeTarget && shortcutMatchesBinding(shortcut, syntheticImeTarget.binding)) {
+        return dispatchSyntheticImeKey(page, {
+          code: syntheticImeTarget.code,
+          binding: syntheticImeTarget.binding
+        })
+      }
+      return page.keyboard.press(shortcut)
+    },
+    dispatchImeKey: ({ code, binding = null }) => dispatchSyntheticImeKey(page, { code, binding }),
     node: id => page.locator(`#nodes-layer [data-node-id="${id}"]`),
     hasNode: id => page.locator(`#nodes-layer [data-node-id="${id}"]`).count().then(count => count > 0),
     countNodes: () => page.locator('#nodes-layer .mind-node').count(),
@@ -790,6 +886,83 @@ function createHarness({ page, baseURL, connectCDP }) {
         await cdp.detach?.().catch(() => {})
       }
     }
+  }
+}
+
+function imeCodesForBinding(binding) {
+  if (/^[a-z]$/iu.test(binding.key)) return [`Key${binding.key.toUpperCase()}`]
+  if (/^\d$/u.test(binding.key)) return [`Digit${binding.key}`, `Numpad${binding.key}`]
+  throw new Error(`IME 模式掃描只接受英數 binding：${binding.action} / ${binding.key}`)
+}
+
+function shortcutMatchesBinding(shortcut, binding) {
+  const tokens = shortcut.split('+')
+  const keyToken = tokens.at(-1)
+  const code = /^[a-z]$/iu.test(keyToken)
+    ? `Key${keyToken.toUpperCase()}`
+    : /^\d$/u.test(keyToken)
+      ? `Digit${keyToken}`
+      : keyToken
+  return imeCodesForBinding(binding).includes(code)
+    && (tokens.includes('Control') || tokens.includes('Meta')) === Boolean(binding.ctrl)
+    && tokens.includes('Shift') === Boolean(binding.shift)
+    && tokens.includes('Alt') === Boolean(binding.alt)
+}
+
+async function dispatchSyntheticImeKey(page, { code, binding }) {
+  const modifiers = {
+    ctrlKey: Boolean(binding?.ctrl),
+    metaKey: false,
+    shiftKey: Boolean(binding?.shift),
+    altKey: Boolean(binding?.alt)
+  }
+  const observed = await page.evaluate(({ eventCode, eventModifiers }) => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'Process',
+      code: eventCode,
+      keyCode: 229,
+      which: 229,
+      bubbles: true,
+      cancelable: true,
+      ...eventModifiers
+    })
+    // Chromium 的 constructor 可能忽略 deprecated keyCode/which；測試事件仍需精確重現 Windows IME 229。
+    if (event.keyCode !== 229) Object.defineProperty(event, 'keyCode', { configurable: true, value: 229 })
+    if (event.which !== 229) Object.defineProperty(event, 'which', { configurable: true, value: 229 })
+    const target = document.activeElement || window
+    target.dispatchEvent(event)
+    return {
+      key: event.key,
+      code: event.code,
+      keyCode: event.keyCode,
+      which: event.which,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey
+    }
+  }, { eventCode: code, eventModifiers: modifiers })
+
+  const exact = observed.key === 'Process'
+    && observed.code === code
+    && observed.keyCode === 229
+    && observed.which === 229
+    && observed.ctrlKey === modifiers.ctrlKey
+    && observed.metaKey === modifiers.metaKey
+    && observed.shiftKey === modifiers.shiftKey
+    && observed.altKey === modifiers.altKey
+  if (!exact) throw new MatrixFailure(`synthetic IME event 欄位錯誤：${JSON.stringify(observed)}`)
+
+  // untrusted keydown 不會觸發瀏覽器 default paste；補送 paste event，保留 production 的原生 paste 資料流。
+  if (binding?.action === 'paste') {
+    await page.evaluate(() => {
+      const target = document.activeElement || window
+      target.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: new DataTransfer()
+      }))
+    })
   }
 }
 
@@ -1050,7 +1223,9 @@ function writeReport(results) {
     timeZone: 'Asia/Taipei'
   }).format(new Date())
   const passed = results.filter(result => result.pass).length
-  const rows = results.map(result => [
+  const regularResults = results.filter(result => !result.targetedSynthetic)
+  const imeResults = results.filter(result => result.targetedSynthetic)
+  const renderRows = sectionResults => sectionResults.map(result => [
     result.project,
     result.shortcut,
     result.state,
@@ -1058,15 +1233,31 @@ function writeReport(results) {
     result.actual,
     result.pass ? 'PASS' : 'FAIL'
   ].map(escapeCell).join(' | '))
-  const markdown = `# MindFlow 快捷鍵與文字工具列 E2E 矩陣
-
-> 產生時間：${generatedAt}  
-> 驅動：Playwright 真實 keyboard/mouse；color input 使用 CDP \`Input.dispatchMouseEvent\` 真實 pointer 路徑。  
-> 結果：**${passed}/${results.length} PASS**
+  const renderSection = sectionResults => {
+    if (sectionResults.length === 0) return '_本次 filter 未執行此節案例。_'
+    const rows = renderRows(sectionResults)
+    return `> 結果：**${sectionResults.filter(result => result.pass).length}/${sectionResults.length} PASS**
 
 | 執行環境 | 快捷鍵／控制 | 狀態 | 預期 | 實測 | PASS/FAIL |
 |---|---|---|---|---|---|
-| ${rows.join('\n| ')} |
+| ${rows.join('\n| ')} |`
+  }
+  const markdown = `# MindFlow 快捷鍵與文字工具列 E2E 矩陣
+
+> 產生時間：${generatedAt}  
+> 總結果：**${passed}/${results.length} PASS**
+
+## 原有矩陣
+
+> 驅動：Playwright 真實 keyboard/mouse；color input 使用 CDP \`Input.dispatchMouseEvent\` 真實 pointer 路徑。
+
+${renderSection(regularResults)}
+
+## IME 模式掃描（targeted synthetic）
+
+> 自首：Playwright 無法真實切換 Windows 注音／微軟 IME。本節用 \`dispatchEvent(new KeyboardEvent(...))\` 合成 \`key='Process'\`、正確 \`code\`、\`keyCode/which=229\` 與修飾鍵；untrusted keydown 不會產生瀏覽器 default paste，因此 paste 案例另補 synthetic \`paste\` event。這批案例只驗證應用層事件路由，不冒充真實 OS IME E2E。
+
+${renderSection(imeResults)}
 `
   writeFileSync(REPORT_PATH, markdown, 'utf8')
 }

@@ -31,6 +31,27 @@ import { sanitizeFloatingClone } from './floating.js'
 import { deleteNodesWithOverlaysCommand, withOverlayCleanupCommand } from './relations.js'
 import { strings } from '../strings.js'
 
+const KEY_CODE_MAP = Object.freeze({
+  ...Object.fromEntries(Array.from('abcdefghijklmnopqrstuvwxyz', key => [key, Object.freeze([`Key${key.toUpperCase()}`])])),
+  ...Object.fromEntries(Array.from('0123456789', key => [key, Object.freeze([`Digit${key}`, `Numpad${key}`])])),
+  ' ': Object.freeze(['Space']),
+  '/': Object.freeze(['Slash']),
+  '>': Object.freeze(['Period']),
+  '<': Object.freeze(['Comma']),
+  Tab: Object.freeze(['Tab']),
+  Enter: Object.freeze(['Enter']),
+  Delete: Object.freeze(['Delete']),
+  ArrowUp: Object.freeze(['ArrowUp']),
+  ArrowDown: Object.freeze(['ArrowDown']),
+  ArrowLeft: Object.freeze(['ArrowLeft']),
+  ArrowRight: Object.freeze(['ArrowRight']),
+  F4: Object.freeze(['F4']),
+  F6: Object.freeze(['F6']),
+  F11: Object.freeze(['F11']),
+  Escape: Object.freeze(['Escape'])
+})
+const KNOWN_BINDING_CODES = new Set(Object.values(KEY_CODE_MAP).flat())
+
 export const ACTION_BINDINGS = Object.freeze([
   { action: 'undo', key: 'z', ctrl: true },
   { action: 'redo', key: 'y', ctrl: true },
@@ -89,7 +110,7 @@ export const ACTION_BINDINGS = Object.freeze([
   { action: 'escape', key: 'Escape' },
   { action: 'history', key: 'h', shift: true, alt: true },
   { action: 'floatingNode', key: 'f', shift: true, alt: true }
-])
+].map(binding => Object.freeze({ ...binding, codes: KEY_CODE_MAP[binding.key] || Object.freeze([]) })))
 
 const FORM_GLOBAL_ACTIONS = new Set([
   'save', 'openThemePanel', 'toggleOutline', 'duplicate', 'findReplace', 'nextTheme',
@@ -131,13 +152,25 @@ export class KeyboardController {
     if (dispatchGlobalShortcut(event, { formMode })) return
     if (formMode) return
 
-    // 官方行為：選中節點後直接輸入可列印字元，清空原文並從該字元開始編輯。
-    if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    const hasCommandModifier = event.ctrlKey || event.metaKey || event.altKey
+    const isImeCompositionKey = event.key === 'Process'
+      && !hasCommandModifier
+      && !event.shiftKey
+      && /^(Key[A-Z]|Digit\d)$/u.test(event.code || '')
+    // Windows IME 的首個實體字母／數字 keydown 仍落在畫布，先把焦點交給空白
+    // contenteditable；不可 preventDefault，否則後續 composition 可能被瀏覽器取消。
+    if (isImeCompositionKey) {
       const id = this.selection.primaryId
-      if (id) {
-        event.preventDefault()
-        this.edit.start(id, event.key)
-      }
+      if (id) this.edit.start(id, '')
+      return
+    }
+
+    // 官方行為：選中節點後直接輸入可列印字元，清空原文並從該字元開始編輯。
+    if (event.key.length === 1 && event.key !== ' ' && !hasCommandModifier) {
+      const id = this.selection.primaryId
+      if (!id) return
+      event.preventDefault()
+      this.edit.start(id, event.key)
     }
   }
 
@@ -703,7 +736,11 @@ function createActionFacade() {
 
 export function matchesBinding(event, binding) {
   const ctrl = event.ctrlKey || event.metaKey
-  return event.key.toLowerCase() === binding.key.toLowerCase()
+  // 已知實體碼具有決定權；Intl* 等未納入對照的非標準碼才交給 event.key fallback。
+  const hasKnownCode = KNOWN_BINDING_CODES.has(event.code)
+  const codeMatches = binding.codes?.includes(event.code) || false
+  const keyMatches = typeof event.key === 'string' && event.key.toLowerCase() === binding.key.toLowerCase()
+  return (hasKnownCode ? codeMatches : keyMatches)
     && ctrl === Boolean(binding.ctrl)
     && event.shiftKey === Boolean(binding.shift)
     && event.altKey === Boolean(binding.alt)

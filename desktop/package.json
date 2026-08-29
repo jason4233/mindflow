@@ -33,6 +33,7 @@
       "backup-store.mjs",
       "legacy-storage.mjs",
       "protocol.mjs",
+      "window-focus.mjs",
       "assets/icon.ico"
     ],
     "extraResources": [

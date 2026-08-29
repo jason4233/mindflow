@@ -1,0 +1,15 @@
+完成，未使用 git，未碰 `assets/cursors` 或 CSS。
+
+- [keyboard.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/editor/keyboard.js:34>)：每個 binding 建立 code 對照、code 優先、非標準鍵盤 fallback、支援 Digit/Numpad。
+- [keyboard.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/editor/keyboard.js:156>)：`Process + KeyX/DigitX` 以空 seed 啟動編輯，不阻斷 composition。
+- [shortcuts.matrix.mjs](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/tests/e2e/shortcuts.matrix.mjs:556>)：新增完整 IME targeted synthetic 掃描。
+- [SHORTCUT_MATRIX.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/SHORTCUT_MATRIX.md:121>)：IME 掃描獨立報告節。
+- [CODEX_IME_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_IME_NOTES.md:23>)：包含自首與 synthetic 限制。
+- `edit.js` 無需修改，現有 `start(id, '')` 已支援空 seed。
+
+驗證：
+
+- Core：26/26 PASS
+- 全矩陣：160/160 PASS
+- IME targeted synthetic：54/54 PASS
+- JS 語法檢查：PASS

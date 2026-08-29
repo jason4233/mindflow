@@ -21,6 +21,7 @@ import {
   APP_START_URL,
   createProtocolHandler
 } from './protocol.mjs'
+import { bringWindowToFront } from './window-focus.mjs'
 
 const DESKTOP_DIR = dirname(fileURLToPath(import.meta.url))
 const CLOSE_FLUSH_TIMEOUT_MS = 8000
@@ -282,9 +283,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+    bringWindowToFront(mainWindow)
   })
 
   app.whenReady()

@@ -1,0 +1,13 @@
+CURSOR2 已完成。
+
+- 兩個 glyph 縮至約 22px 高、1.5px 描邊、置中偏上。
+- 握拳重畫為四指圓弧、橫扣拇指、短腕造型。
+- 5 處 CSS data URI 已重新編碼，hotspot 統一為 `16 14`。
+- cursor 測試：`5/5` 通過。
+- core 測試：`24/24` 通過。
+- 僅修改允許範圍，沒有執行 git。
+- 臨時 HTML、server、logs、Playwright 暫存均已清除。
+
+驗收證據：[cursor-preview-v2.png](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\cursor-preview-v2.png)
+
+完整紀錄與自首：[CODEX_CURSOR2_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_CURSOR2_NOTES.md)

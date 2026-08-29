@@ -1,0 +1,10 @@
+已完成 FOCUS。
+
+- `second-instance` 現在會執行 `restore → show → focus → alwaysOnTop true/false`：[main.mjs](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\main.mjs:281>)、[window-focus.mjs](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\window-focus.mjs:1>)
+- `requestSingleInstanceLock()` 既有成敗邏輯未改。
+- 新增回歸測試：[window-focus.test.mjs](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\test\window-focus.test.mjs:6>)
+- Desktop 測試：目前實際基線為 22 項，新增後 **23/23 PASS**。
+- 真實 Electron 隔離 profile E2E：連續 **2/2 PASS**。兩輪均確認 minimized → normal、native foreground、CDP focused/visible，secondary exit 0、primary 持續存活。
+- Syntax 3/3 PASS；PowerShell BOM 正確；無 Electron 或 temp profile 殘留。
+- 自首與失敗紀錄已寫入 [CODEX_FOCUS_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_FOCUS_NOTES.md:1>)。
+- 未執行任何 git 指令，也未碰其他三個工作流的檔案。

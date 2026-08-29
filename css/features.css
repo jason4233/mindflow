@@ -175,6 +175,60 @@
 .node-link:hover::after,
 .node-link:focus-visible::after { opacity: 1; transform: translateY(0); }
 
+.note-hover-popover {
+  position: fixed;
+  z-index: 1400;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 16px));
+  max-height: min(200px, calc(100vh - 16px));
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid rgb(203 213 225 / 90%);
+  border-radius: 10px;
+  color: #253044;
+  background: #fff;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 22%);
+  font: 12.5px/1.5 "Segoe UI", "Noto Sans TC", sans-serif;
+  pointer-events: auto;
+}
+
+.note-hover-popover[hidden] { display: none; }
+
+/* 視覺間距仍是 8px，但透明 hit-test bridge 讓圖標→卡片不必靠延遲關閉來穿越。 */
+.note-hover-popover::before {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  width: 8px;
+  height: 100%;
+  content: "";
+}
+
+.note-hover-popover.is-flipped::before {
+  right: auto;
+  left: 100%;
+}
+
+.note-hover-popover__content {
+  display: -webkit-box;
+  max-height: min(176px, calc(100vh - 40px));
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 9;
+  line-clamp: 9;
+}
+
+.note-hover-popover.is-dark {
+  border-color: rgb(148 163 184 / 24%);
+  color: #e8edf5;
+  background: #202938;
+  box-shadow: 0 14px 34px rgb(0 0 0 / 42%);
+}
+
 .node-icon-strip {
   position: absolute;
   z-index: 7;

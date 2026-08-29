@@ -13,6 +13,7 @@ import { initializeShortcutHelp } from './shortcuthelp.js'
 
 const ATTACHMENT_FIELDS = new Set(['notes', 'link', 'image', 'text', 'icons'])
 const URL_PATTERN = /^(https?:\/\/|www\.)[^\s]+$/iu
+const NOTE_HOVER_DELAY = 180
 
 export function updateNodeFieldsCommand(doc, nodeId, patch, description = '更新節點附加物') {
   const safePatch = Object.fromEntries(Object.entries(patch || {}).filter(([key]) => ATTACHMENT_FIELDS.has(key)))
@@ -120,11 +121,16 @@ export function initializeDelta(ctx) {
 
 export function initializeAttachments(ctx) {
   const noteDrawer = createNoteDrawer(ctx)
+  const noteHover = createNoteHoverPreview({
+    canvas: ctx.elements.canvas,
+    viewport: ctx.viewport,
+    getBackground: () => ctx.doc.canvas?.background
+  })
   const linkDialog = createLinkDialog(ctx)
   const insertMenu = createInsertMenu(ctx)
   const fileInput = createImageInput(ctx)
 
-  registerOverlay(overlayCtx => decorateNodeAttachments(overlayCtx, ctx, noteDrawer, linkDialog))
+  registerOverlay(overlayCtx => decorateNodeAttachments(overlayCtx, ctx, noteDrawer, noteHover, linkDialog))
 
   registerAction('insertNote', () => {
     const id = ctx.selection.primaryId
@@ -205,6 +211,7 @@ export function initializeAttachments(ctx) {
   ctx.featureHandlers.escape.push(() => {
     insertMenu.close()
     noteDrawer.close()
+    noteHover.hide()
     linkDialog.close()
   })
 }
@@ -234,7 +241,9 @@ export function setAllCollapsedCommand(doc, collapsed) {
   }
 }
 
-function decorateNodeAttachments({ doc, positions, nodesLayer, nodeLookup }, ctx, noteDrawer, linkDialog) {
+function decorateNodeAttachments({ doc, positions, nodesLayer, nodeLookup }, ctx, noteDrawer, noteHover, linkDialog) {
+  // Overlay render 會替換圖標節點；先關閉共用預覽，避免浮卡錨定已離開 DOM 的舊按鈕。
+  noteHover.hide()
   const selected = new Set(ctx.selection.getSelectedIds())
   for (const [id, position] of positions) {
     const node = nodeLookup?.get(id)?.node || findNode(doc.root, id)
@@ -276,8 +285,10 @@ function decorateNodeAttachments({ doc, positions, nodesLayer, nodeLookup }, ctx
       note.textContent = '📄'
       note.title = '編輯備註'
       note.setAttribute('aria-label', '編輯備註')
-      note.addEventListener('pointerdown', event => event.stopPropagation())
-      note.addEventListener('click', event => { event.stopPropagation(); ctx.selection.set([id]); noteDrawer.open(id) })
+      noteHover.bind(note, {
+        text: node.notes,
+        open: () => { ctx.selection.set([id]); noteDrawer.open(id) }
+      })
       badges.append(note)
     }
     if (node.link) {
@@ -295,6 +306,155 @@ function decorateNodeAttachments({ doc, positions, nodesLayer, nodeLookup }, ctx
     }
     element.append(badges)
   }
+}
+
+/**
+ * 管理所有備註圖標共用的 hover 預覽，避免每次 overlay render 都在 body 留下一張浮卡。
+ */
+export function createNoteHoverPreview({
+  canvas,
+  viewport = null,
+  documentRef = globalThis.document,
+  windowRef = documentRef?.defaultView || globalThis.window,
+  hoverDelay = NOTE_HOVER_DELAY,
+  getBackground = null
+} = {}) {
+  if (!documentRef?.body || !windowRef) throw new TypeError('備註預覽需要 document 與 window')
+
+  const popover = documentRef.createElement('div')
+  popover.id = 'note-hover-preview'
+  popover.className = 'note-hover-popover'
+  popover.hidden = true
+  popover.setAttribute('role', 'tooltip')
+  const content = documentRef.createElement('div')
+  content.className = 'note-hover-popover__content'
+  popover.append(content)
+  documentRef.body.append(popover)
+
+  let showTimer = null
+  let currentButton = null
+
+  const clearShowTimer = () => {
+    if (showTimer === null) return
+    windowRef.clearTimeout(showTimer)
+    showTimer = null
+  }
+  const hide = () => {
+    clearShowTimer()
+    currentButton?.removeAttribute('aria-describedby')
+    currentButton = null
+    popover.hidden = true
+  }
+  const show = (button, text) => {
+    if (currentButton !== button) return
+    showTimer = null
+    content.textContent = String(text || '')
+    popover.classList.toggle('is-dark', isDarkBackground([
+      typeof getBackground === 'function' ? getBackground() : '',
+      canvas?.style?.backgroundColor,
+      canvas?.style?.background,
+      readComputedBackground(windowRef, canvas),
+      readComputedBackground(windowRef, documentRef.body)
+    ]))
+    popover.hidden = false
+    button.setAttribute('aria-describedby', popover.id)
+    positionNotePopover(popover, button, windowRef)
+  }
+  const scheduleShow = (button, text) => {
+    hide()
+    currentButton = button
+    showTimer = windowRef.setTimeout(() => show(button, text), Math.max(0, Number(hoverDelay) || 0))
+  }
+
+  popover.addEventListener('pointerleave', event => {
+    if (containsEventTarget(currentButton, event.relatedTarget)) return
+    hide()
+  })
+  windowRef.addEventListener('keydown', event => {
+    if (event.key === 'Escape') hide()
+  })
+  // capture 在 viewport / DND 開始處理前關閉，確保縮放、平移、節點拖曳一開始就沒有殘留浮卡。
+  canvas?.addEventListener('wheel', hide, { capture: true, passive: true })
+  canvas?.addEventListener('pointerdown', hide, { capture: true })
+  viewport?.subscribe?.(hide)
+
+  return {
+    bind(button, { text, open }) {
+      button.addEventListener('pointerenter', () => scheduleShow(button, text))
+      button.addEventListener('pointerleave', event => {
+        if (containsEventTarget(popover, event.relatedTarget)) return
+        hide()
+      })
+      button.addEventListener('pointerdown', event => {
+        hide()
+        event.stopPropagation()
+      })
+      button.addEventListener('click', event => {
+        hide()
+        event.stopPropagation()
+        open?.()
+      })
+    },
+    hide,
+    element: popover
+  }
+}
+
+function positionNotePopover(popover, button, windowRef) {
+  const margin = 8
+  const gap = 8
+  const anchor = button.getBoundingClientRect()
+  const card = popover.getBoundingClientRect()
+  const viewportWidth = Math.max(1, Number(windowRef.innerWidth) || 1)
+  const viewportHeight = Math.max(1, Number(windowRef.innerHeight) || 1)
+  let left = anchor.right + gap
+  if (left + card.width > viewportWidth - margin) left = anchor.left - gap - card.width
+  left = Math.max(margin, Math.min(left, viewportWidth - card.width - margin))
+  let top = anchor.top + (anchor.height - card.height) / 2
+  top = Math.max(margin, Math.min(top, viewportHeight - card.height - margin))
+  popover.style.left = `${Math.round(left)}px`
+  popover.style.top = `${Math.round(top)}px`
+  popover.classList.toggle('is-flipped', left < anchor.left)
+}
+
+function containsEventTarget(container, target) {
+  if (!container || !target) return false
+  try { return container.contains(target) } catch { return false }
+}
+
+function readComputedBackground(windowRef, element) {
+  if (!element || typeof windowRef.getComputedStyle !== 'function') return ''
+  const style = windowRef.getComputedStyle(element)
+  return style.backgroundColor || style.background || ''
+}
+
+function isDarkBackground(candidates) {
+  for (const candidate of candidates) {
+    const rgb = parseCssColor(candidate)
+    if (!rgb) continue
+    const [red, green, blue, alpha = 1] = rgb
+    if (alpha < 0.08) continue
+    const luminance = [red, green, blue]
+      .map(channel => channel / 255)
+      .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0)
+    return luminance < 0.32
+  }
+  return false
+}
+
+function parseCssColor(value) {
+  const text = String(value || '').trim()
+  const hex = text.match(/#([0-9a-f]{3,8})\b/iu)?.[1]
+  if (hex) {
+    const expanded = hex.length <= 4 ? Array.from(hex, digit => digit + digit).join('') : hex
+    if (expanded.length === 6 || expanded.length === 8) {
+      return [0, 2, 4, 6].slice(0, expanded.length / 2).map(index => Number.parseInt(expanded.slice(index, index + 2), 16) / (index === 6 ? 255 : 1))
+    }
+  }
+  const rgb = text.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)%?)?/iu)
+  if (!rgb) return null
+  return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), rgb[4] === undefined ? 1 : Number(rgb[4])]
 }
 
 function createNoteDrawer(ctx) {

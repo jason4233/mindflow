@@ -1,0 +1,15 @@
+NOTEHOVER 已完成，僅修改指定 4 個檔案：
+
+- [attachments.js](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/editor/attachments.js:314)：180ms hover、立即隱藏、popover 保持、Esc／縮放／平移／拖曳關閉、深色判斷、邊緣翻轉。
+- [features.css](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/css/features.css:178)：280×200px 卡片、截斷省略、深色樣式及透明 hover bridge。
+- [delta.test.mjs](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/tests/delta.test.mjs:332)：依 TDD 驗證 hover、hide、click 與關閉事件，另捕捉並修正 150ms 移開閃現競態。
+- [CODEX_NOTEHOVER_NOTES.md](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_NOTEHOVER_NOTES.md:1)：含實作紀錄與自首。
+
+驗證結果：
+
+- Root tests：96/96
+- Desktop tests：23/23
+- 合計：119/119
+- JS syntax check：通過
+- 獨立 Playwright shortcuts matrix 未執行，因它會寫入規格外的 `docs\SHORTCUT_MATRIX.md` 與 e2e log。
+- 未執行任何 git 操作。

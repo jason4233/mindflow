@@ -15,6 +15,10 @@ const EXPECTED_COUNTS = new Map([
   ['grab', 3],
   ['grabbing', 2],
 ])
+const EXPECTED_HOTSPOTS = new Map([
+  ['grab', [16, 14]],
+  ['grabbing', [16, 14]],
+])
 const DATA_URI_PREFIX = 'data:image/svg+xml,'
 const CURSOR_DECLARATION = /cursor:\s*url\((['"]?)(data:image\/svg\+xml,[^'"\s)]+)\1\)\s+(\d+)\s+(\d+)\s*,\s*(grab|grabbing)(\s*!important)?\s*;/g
 
@@ -74,7 +78,7 @@ function validateSvg(svg, label) {
   assert.match(source, /viewBox="0 0 32 32"/, `${label} viewBox 必須是 0 0 32 32`)
   assert.match(source, /fill="#fff"/, `${label} 必須使用白色填充`)
   assert.match(source, /stroke="#000"/, `${label} 必須使用黑色描邊`)
-  assert.match(source, /stroke-width="2"/, `${label} 描邊必須是 2px`)
+  assert.match(source, /stroke-width="1\.5"/, `${label} 描邊必須是 1.5px`)
   assert.match(source, /stroke-linecap="round"/, `${label} 線端必須圓潤`)
   assert.match(source, /stroke-linejoin="round"/, `${label} 轉角必須圓潤`)
 }
@@ -102,8 +106,11 @@ for (const [fallback, expectedCount] of EXPECTED_COUNTS) {
   assert.equal(new Set(group.map(declaration => declaration.dataUri)).size, 1, `${fallback} 必須共用同一組 data URI`)
   assert.equal(new Set(group.map(declaration => declaration.hotspot.join(','))).size, 1, `${fallback} 必須共用同一個 hotspot`)
 
-  const [x, y] = group[0].hotspot
-  assert.ok(x >= 10 && x <= 22 && y >= 10 && y <= 24, `${fallback} hotspot 必須位於手掌中心附近`)
+  assert.deepEqual(
+    group[0].hotspot,
+    EXPECTED_HOTSPOTS.get(fallback),
+    `${fallback} hotspot 必須對齊縮小後 glyph 的視覺中心`,
+  )
 
   const encoded = group[0].dataUri.slice(DATA_URI_PREFIX.length)
   const decoded = decodeURIComponent(encoded)

@@ -28,6 +28,7 @@ import {
   setAllCollapsedCommand,
   updateNodeFieldsCommand
 } from '../js/editor/attachments.js'
+import * as attachmentModule from '../js/editor/attachments.js'
 import {
   attachFloatingNodeCommand,
   createFloatingNodeCommand,
@@ -40,6 +41,90 @@ import { createReplaceAllCommand, findTextMatches, replaceText } from '../js/edi
 
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })
+
+class FakeClassList {
+  constructor() { this.tokens = new Set() }
+  add(...tokens) { tokens.forEach(token => this.tokens.add(token)) }
+  remove(...tokens) { tokens.forEach(token => this.tokens.delete(token)) }
+  contains(token) { return this.tokens.has(token) }
+  toggle(token, force) {
+    const enabled = force === undefined ? !this.tokens.has(token) : Boolean(force)
+    if (enabled) this.tokens.add(token)
+    else this.tokens.delete(token)
+    return enabled
+  }
+}
+
+class FakeElement extends EventTarget {
+  constructor(tagName = 'div') {
+    super()
+    this.tagName = tagName.toUpperCase()
+    this.children = []
+    this.parentElement = null
+    this.ownerDocument = null
+    this.hidden = false
+    this.style = {}
+    this.dataset = {}
+    this.classList = new FakeClassList()
+    this.attributes = new Map()
+    this.textContent = ''
+    this.rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
+  }
+
+  append(...children) {
+    for (const child of children) {
+      child.parentElement = this
+      child.ownerDocument = this.ownerDocument
+      this.children.push(child)
+    }
+  }
+
+  contains(target) {
+    return target === this || this.children.some(child => child.contains(target))
+  }
+
+  setAttribute(name, value) { this.attributes.set(name, String(value)) }
+  removeAttribute(name) { this.attributes.delete(name) }
+  getBoundingClientRect() { return this.rect }
+}
+
+function createNoteHoverDom() {
+  const windowRef = new EventTarget()
+  Object.assign(windowRef, {
+    innerWidth: 320,
+    innerHeight: 240,
+    setTimeout,
+    clearTimeout,
+    getComputedStyle: () => ({ backgroundColor: 'rgb(18, 24, 36)' })
+  })
+  const documentRef = new EventTarget()
+  documentRef.defaultView = windowRef
+  documentRef.createElement = tagName => {
+    const element = new FakeElement(tagName)
+    element.ownerDocument = documentRef
+    if (tagName === 'div') element.rect = { left: 0, top: 0, right: 260, bottom: 180, width: 260, height: 180 }
+    return element
+  }
+  documentRef.body = documentRef.createElement('body')
+  const canvas = documentRef.createElement('section')
+  const button = documentRef.createElement('button')
+  button.rect = { left: 289, top: 96, right: 312, bottom: 119, width: 23, height: 23 }
+  return { windowRef, documentRef, canvas, button }
+}
+
+function pointerEvent(type, relatedTarget = null) {
+  const event = new Event(type)
+  Object.defineProperty(event, 'relatedTarget', { value: relatedTarget })
+  return event
+}
+
+function keyboardEvent(key) {
+  const event = new Event('keydown')
+  Object.defineProperty(event, 'key', { value: key })
+  return event
+}
+
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
 test('關聯線新增、調控制點/樣式、刪除皆可 undo/redo', () => {
   const doc = createDefaultDoc()
@@ -242,6 +327,80 @@ test('備註/連結/圖片欄位以同一 command 原子更新與復原', () => 
   assert.equal(normalizeUrl('www.example.com'), 'https://www.example.com/')
   assert.equal(isLikelyUrl('https://example.com/a?q=1'), true)
   assert.equal(normalizeUrl('javascript:alert(1)'), '')
+})
+
+test('備註圖標 hover 約 180ms 後顯示純文字預覽，移入卡片保持、移開隱藏', async () => {
+  assert.equal(typeof attachmentModule.createNoteHoverPreview, 'function')
+  const { windowRef, documentRef, canvas, button } = createNoteHoverDom()
+  const preview = attachmentModule.createNoteHoverPreview({ canvas, documentRef, windowRef })
+  preview.bind(button, { text: '<b>第一行</b>\n第二行', open: () => {} })
+  const popover = documentRef.body.children.at(-1)
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(150)
+  assert.equal(popover.hidden, true)
+  button.dispatchEvent(pointerEvent('pointerleave', canvas))
+  await wait(40)
+  assert.equal(popover.hidden, true, '延遲尚未結束就移開時不得閃現預覽')
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(150)
+  assert.equal(popover.hidden, true)
+  await wait(50)
+  assert.equal(popover.hidden, false)
+  assert.equal(popover.children[0].textContent, '<b>第一行</b>\n第二行')
+  assert.equal(popover.classList.contains('is-dark'), true)
+  assert.ok(Number.parseFloat(popover.style.left) < button.rect.left, '靠近右緣時應翻到圖標左側')
+
+  button.dispatchEvent(pointerEvent('pointerleave', popover))
+  popover.dispatchEvent(pointerEvent('pointerenter', button))
+  await wait(80)
+  assert.equal(popover.hidden, false)
+  popover.dispatchEvent(pointerEvent('pointerleave', canvas))
+  assert.equal(popover.hidden, true)
+})
+
+test('備註預覽不攔截 click 編輯，Esc、viewport 變更與拖曳起點立即關閉', async () => {
+  assert.equal(typeof attachmentModule.createNoteHoverPreview, 'function')
+  const { windowRef, documentRef, canvas, button } = createNoteHoverDom()
+  let viewportListener = null
+  let opened = 0
+  const preview = attachmentModule.createNoteHoverPreview({
+    canvas,
+    documentRef,
+    windowRef,
+    hoverDelay: 1,
+    viewport: { subscribe(listener) { viewportListener = listener; listener(); return () => {} } }
+  })
+  preview.bind(button, { text: '可編輯備註', open: () => { opened += 1 } })
+  const popover = documentRef.body.children.at(-1)
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(5)
+  assert.equal(popover.hidden, false)
+  button.dispatchEvent(pointerEvent('pointerleave', canvas))
+  assert.equal(popover.hidden, true, '已顯示的預覽在圖標移往別處時必須立即隱藏')
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(5)
+  button.dispatchEvent(new Event('click'))
+  assert.equal(opened, 1)
+  assert.equal(popover.hidden, true)
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(5)
+  windowRef.dispatchEvent(keyboardEvent('Escape'))
+  assert.equal(popover.hidden, true)
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(5)
+  viewportListener()
+  assert.equal(popover.hidden, true)
+
+  button.dispatchEvent(pointerEvent('pointerenter'))
+  await wait(5)
+  canvas.dispatchEvent(new Event('pointerdown'))
+  assert.equal(popover.hidden, true)
 })
 
 test('圖示同類互斥、再點移除，SVG 為自包含原創向量', () => {

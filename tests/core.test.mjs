@@ -27,7 +27,7 @@ import {
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
 import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
-import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget } from '../js/editor/keyboard.js'
+import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget, matchesBinding } from '../js/editor/keyboard.js'
 import {
   createThemePreviewSvg,
   encodeLineToken,
@@ -318,6 +318,89 @@ test('快捷鍵表對齊最新 SPEC，含四向空間導覽且保留 Shift 同�
   assert.equal(hasBinding('selectPreviousSibling', 'ArrowUp', { shift: true }), true)
   assert.equal(hasBinding('selectNextSibling', 'ArrowDown', { shift: true }), true)
   assert.equal(ACTION_BINDINGS.some(binding => binding.key === 'f' && binding.ctrl && binding.shift), false)
+})
+
+test('每條快捷鍵優先以實體 code 比對，IME Process 與數字鍵盤皆可命中', () => {
+  const namedCodes = {
+    ' ': ['Space'],
+    '/': ['Slash'],
+    '>': ['Period'],
+    '<': ['Comma'],
+    Tab: ['Tab'],
+    Enter: ['Enter'],
+    Delete: ['Delete'],
+    ArrowUp: ['ArrowUp'],
+    ArrowDown: ['ArrowDown'],
+    ArrowLeft: ['ArrowLeft'],
+    ArrowRight: ['ArrowRight'],
+    F4: ['F4'],
+    F6: ['F6'],
+    F11: ['F11'],
+    Escape: ['Escape']
+  }
+  const expectedCodes = key => {
+    if (/^[a-z]$/iu.test(key)) return [`Key${key.toUpperCase()}`]
+    if (/^\d$/u.test(key)) return [`Digit${key}`, `Numpad${key}`]
+    return namedCodes[key] || []
+  }
+  const imeEvent = (binding, code) => ({
+    key: 'Process',
+    code,
+    keyCode: 229,
+    ctrlKey: Boolean(binding.ctrl),
+    metaKey: false,
+    shiftKey: Boolean(binding.shift),
+    altKey: Boolean(binding.alt)
+  })
+
+  for (const binding of ACTION_BINDINGS) {
+    const codes = expectedCodes(binding.key)
+    assert.ok(codes.length > 0, `${binding.action} 缺少測試端 key→code 對照`)
+    for (const code of codes) {
+      assert.equal(matchesBinding(imeEvent(binding, code), binding), true, `${binding.action} 未接受 ${code}`)
+    }
+  }
+
+  const save = ACTION_BINDINGS.find(binding => binding.action === 'save')
+  assert.equal(matchesBinding({ ...imeEvent(save, 'KeyM'), key: 's' }, save), false, '標準 code 不符時不可被 event.key 推翻')
+  assert.equal(matchesBinding({ ...imeEvent(save, 'IntlRo'), key: 'S' }, save), true, '未知／非標準 code 應退回 event.key')
+  assert.equal(matchesBinding({ ...imeEvent(save, 'Unidentified'), key: 'S' }, save), true, '非標準 code 應退回 event.key')
+  assert.equal(matchesBinding({ ...imeEvent(save, ''), key: 's' }, save), true, '缺少 code 應退回 event.key')
+})
+
+test('IME Process 直接輸入字母或數字時以空 seed 啟動所選節點編輯', () => {
+  const starts = []
+  const controller = Object.create(KeyboardController.prototype)
+  controller.edit = {
+    isEditing: false,
+    start(id, seed) {
+      starts.push([id, seed])
+      return true
+    }
+  }
+  controller.selection = { canvas: { hidden: false }, primaryId: 'node-a' }
+  const imeEvent = code => ({
+    key: 'Process',
+    code,
+    keyCode: 229,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    defaultPrevented: false,
+    target: { tagName: 'DIV', isContentEditable: false, closest: () => null },
+    preventDefault() { this.defaultPrevented = true }
+  })
+
+  const letter = imeEvent('KeyM')
+  controller.handleKeydown(letter)
+  const digit = imeEvent('Digit7')
+  controller.handleKeydown(digit)
+  controller.handleKeydown(imeEvent('Numpad7'))
+
+  assert.deepEqual(starts, [['node-a', ''], ['node-a', '']])
+  assert.equal(letter.defaultPrevented, false, '不可取消 IME keydown，後續 composition 必須進入 contenteditable')
+  assert.equal(digit.defaultPrevented, false, '不可取消 IME keydown，後續 composition 必須進入 contenteditable')
 })
 
 test('焦點守衛放行一般輸入與原生剪貼簿，但攔截全域瀏覽器衝突鍵', () => {
