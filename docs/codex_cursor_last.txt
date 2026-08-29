@@ -1,0 +1,11 @@
+已完成。
+
+- 5 處游標全部改為原創 SVG data URI：[`editor.css`](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/css/editor.css:140>)、[`node.css`](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/css/node.css:11>)
+- hotspot 統一 `16 17`，保留 `grab/grabbing` fallback。
+- SVG 原檔：[`hand-open.svg`](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/assets/cursors/hand-open.svg>)、[`hand-closed.svg`](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/assets/cursors/hand-closed.svg>)
+- 亮底、`#202020` 暗底均已實際渲染檢查。
+- [`cursor-data-uri.test.mjs`](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/tests/cursor-data-uri.test.mjs>)：5/5 可解碼、SVG 合法且與原檔一致。
+- 快捷鍵矩陣 fresh run：exit 0、106/106 PASS、0 FAIL。
+- 裸 `cursor: grab/grabbing` 剩餘數：0。
+- 紀錄與自首：[`CODEX_CURSOR_NOTES.md`](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_CURSOR_NOTES.md>)
+- 所有變動均在允許路徑內，未執行任何 Git 指令。
