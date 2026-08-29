@@ -1,20 +1,20 @@
 # MindFlow 快捷鍵與文字工具列 E2E 矩陣
 
-> 產生時間：2026年8月30日 凌晨1:49:37  
-> 總結果：**158/160 PASS**
+> 產生時間：2026年8月30日 凌晨2:01:51  
+> 總結果：**160/160 PASS**
 
 ## 原有矩陣
 
 > 驅動：Playwright 真實 keyboard/mouse；color input 使用 CDP `Input.dispatchMouseEvent` 真實 pointer 路徑。
 
-> 結果：**104/106 PASS**
+> 結果：**106/106 PASS**
 
 | 執行環境 | 快捷鍵／控制 | 狀態 | 預期 | 實測 | PASS/FAIL |
 |---|---|---|---|---|---|
-| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_1e6o6z3u3f066434 | PASS
+| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_0t303w3k461u4t1l | PASS
 | Chromium | Tab | 面板焦點 | 只移動面板焦點，不新增節點 | 節點 6→6 | PASS
 | Chromium | Enter | 單選 | 新增 1 個同級節點並選中新節點 | 節點=7 | PASS
-| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_0x6s6s3d3k5a5b4x"] | PASS
+| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_360x23383n3o0350"] | PASS
 | Chromium | Ctrl+/ | 單選 | 收合有子節點的分支，再按一次展開 | 收合 class=collapse-control is-collapsed；節點 5→6 | PASS
 | Chromium | Delete | 單選 | 刪除節點及整個子樹 | 節點=4；a1=false | PASS
 | Chromium | Delete | 多選 | 刪除所有選取節點及其子樹 | 節點=3 | PASS
@@ -41,7 +41,7 @@
 | Chromium | Space | 單選 | 進入 contenteditable 文字編輯 | contenteditable=true | PASS
 | Chromium | Shift+Enter | 編輯中 | 在節點文字內插入換行而不離開編輯 | 文字="\n\n"；editing=true | PASS
 | Chromium | Ctrl+B | 編輯中 | 套用 B 文字格式 | richText=<b>Alpha</b> | PASS
-| Chromium | Ctrl+I | 編輯中 | 套用 I 文字格式 | reset 節點數=6（預期 6） | FAIL
+| Chromium | Ctrl+I | 編輯中 | 套用 I 文字格式 | richText=<i>Alpha</i> | PASS
 | Chromium | Ctrl+U | 編輯中 | 套用 U 文字格式 | richText=<u>Alpha</u> | PASS
 | Chromium | Ctrl+G | 單選 | 啟動格式刷並把來源樣式套到下一個點擊節點 | armed=true；B shape=diamond | PASS
 | Chromium | Ctrl+1 | 單選 | 設定優先順序圖示 1 | icons=priority:1 | PASS
@@ -87,7 +87,7 @@
 | Chromium | ← | 未選取 | 選取根節點 | 選取=root | PASS
 | Chromium | → | 未選取 | 選取根節點 | 選取=root | PASS
 | Chromium | 方向鍵 | 編輯中 | 只移動文字游標，不改節點選取 | editing=true；選取=a | PASS
-| Chromium | 方向鍵 | 面板焦點 | 保留面板控制原生行為，不移動節點選取 | TimeoutError: locator.focus: Timeout 5000ms exceeded.<br>Call log:<br>[2m  - waiting for locator('#canvas')[22m<br> | FAIL
+| Chromium | 方向鍵 | 面板焦點 | 保留面板控制原生行為，不移動節點選取 | 選取=a | PASS
 | Chromium | F2 | 單選 | 明確不進入文字編輯 | editing=false | PASS
 | Chromium | 文字工具列：字型 | 編輯中 | 套用所選字型到選取文字 | fontFamily="Courier New", monospace | PASS
 | Chromium | 文字工具列：字級 | 編輯中 | 套用 24px 字級到選取文字 | fontSize=24 | PASS

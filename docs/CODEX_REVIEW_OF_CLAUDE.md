@@ -1,216 +1,189 @@
 # Codex 對 Claude 鍵盤診斷修改的對抗性審查
 
 > 審查日期：2026-08-30（Asia/Taipei）  
-> 審查對象：使用者指定的最新 commit `Add live keyboard diagnostic panel...` 目前工作樹內容  
-> 限制：依指示未執行任何 git 指令，因此 commit 身分與差異範圍採使用者敘述；逐行審查的是磁碟上現有兩個檔案。
+> 審查對象：使用者指定的最新 commit `Add live keyboard diagnostic panel...` 所對應之最終穩定工作樹  
+> 限制：依指示未執行任何 git 指令；commit 身分與差異範圍採使用者敘述，逐行審查的是磁碟最終內容。
 
 ## 結論先行
 
-- `js/editor/shortcuthelp.js` 的診斷面板沒有發現 XSS 或無界 listener／DOM 記憶體成長。capture listener 不呼叫 `preventDefault()`、`stopPropagation()` 或修改 event，正常快捷鍵控制流不會被它直接攔截。
-- 面板仍有一個生命週期缺口：Escape 路徑沒有呼叫 `diagnostic.hide()`。使用者若以為 Esc 已退出診斷，capture listener 仍持續記錄，直到點面板的 × 或頁面卸載。
-- `desktop/scripts/diagnose-installed.mjs` 不適合當可信的自動化 PASS gate。即使三個測項 FAIL 或抓到 console errors，它仍固定 `process.exit(0)`；錯誤路徑也沒有 `finally` 清 process／temp profile。
-- Claude 的「應用層快捷鍵路由正常」結論有證據支持；若擴張成「實體鍵盤到 app 的整條路徑正常」，證據不足。Playwright `page.keyboard` 是 CDP 注入，不是 OS 實體鍵，也不經真實 IME、低階鍵盤 hook、AltGr／鍵盤配置或 foreground-window 路徑。
-- Fresh 驗證：desktop tests 23/23 PASS、鍵盤核心 27/27 PASS、Chromium + Electron 矩陣 160/160 PASS（其中 synthetic IME 54/54）。但 root 全套目前不是全綠：另一個同時施工中的 STICKER2 工作流先寫入測試，造成 3 項 sticker tests FAIL。因此只能下「鍵盤範圍未見回歸」，不能宣稱整個工作樹零破壞。
+- `js/editor/shortcuthelp.js` 最終 source 版沒有 XSS、沒有無界 listener／DOM 成長，也不會直接攔截既有快捷鍵。keydown capture 與 keyup listener 都能在 ×／Escape 時精確移除。
+- 已安裝版仍比 source 少一行 `diagnostic.hide()`。因此使用者現在從安裝版按 Escape，面板的兩個 listener 不會停止；必須點 × 或重裝包含最終 source 的 build。這是目前唯一可重現的面板生命週期落差。
+- `desktop/scripts/diagnose-installed.mjs` 已在審查途中修正：FAIL 會 non-zero、`try/finally` 嘗試清 process/temp profile、synthetic IME 強制 229、派發到 activeElement、加入 pageerror、URL encode。先前的「假成功 exit 0／happy-path-only cleanup」問題已修，但 temp cleanup 實跑仍會因檔案鎖靜默失敗。
+- Claude 的窄結論成立：目前 source 與已安裝版的 `keyboard.js` 完全相同，且應用層 shortcut routing 對 Playwright/CDP 與 targeted synthetic IME 測試全過。
+- 擴張成「實體使用者輸入鏈完全正常」仍不成立。CDP 不經 Windows 實體鍵盤、真實 IME、keyboard hook、AltGr／鍵盤配置或 native foreground dispatch。
+- 最終 fresh 功能驗證全綠：root Node tests exit 0、desktop 23/23、穩定版本 Chromium + Electron 矩陣 160/160（synthetic IME 54/54）、乾淨 profile 已安裝版診斷 3/3 且 exit 0。資源清理另有一個實證缺口，見 MEDIUM-4。
 
 ## 發現事項（依嚴重度）
 
-### HIGH-1：診斷腳本 FAIL 仍回傳成功 exit code
+### MEDIUM-1：CDP 證據只能證明 renderer 應用層，不能證明 OS 實體輸入鏈
 
-位置：`desktop/scripts/diagnose-installed.mjs:61-89`
+位置：`desktop/scripts/diagnose-installed.mjs:1-6, 67-94`
 
-- Tab、IME、英數 Ctrl+Alt+M 都只把 PASS/FAIL 印到 stdout。
-- `CONSOLE-ERRORS` 也只列印，不參與結果。
-- 最後無條件 `process.exit(0)`。
+- `page.keyboard.press()` 是 Playwright 經 CDP 注入 renderer，不是使用者實體按鍵。
+- synthetic IME 雖已精確補上 `keyCode/which=229`，仍只有 untrusted keydown；沒有真實 compositionstart/update/end、beforeinput、keyup timing 與 Windows IME 狀態。
+- CDP 可對不是 native foreground 的 renderer 送 event，也繞過 AutoHotkey、PowerToys、鍵盤驅動、overlay、遠端控制與 accessibility hook。
 
-影響：CI、Claude 或人工 wrapper 只看 exit code 時，三項全失敗仍會被判為成功；這會直接污染「三種情境全過」的證據鏈。現有歷史 stdout 若確實逐項都是 PASS，內容仍有參考價值，但腳本本身不能保證執行者有檢查每一行。
+裁決：可以說「app event routing 正常」，不能用它排除 OS／IME／focus／第三方軟體問題。腳本最終註解已誠實承認此限制。
 
-### HIGH-2：錯誤路徑不清理安裝版 process，temp profile 也永不刪除
+### MEDIUM-2：診斷 runner 仍可能誤接 stale CDP，且 readiness／錯誤範圍不足
 
-位置：`desktop/scripts/diagnose-installed.mjs:17-31, 88-89`
+位置：`desktop/scripts/diagnose-installed.mjs:20-45`
 
-- `mkdtempSync()` 每次都建目錄，包含 `MF_REAL_PROFILE=1` 時其實不用的 temp dir；沒有 `rm`。
-- `connectOverCDP`、導航、evaluate、locator 任一步丟錯，都跳過 line 88 的 `taskkill`。
-- `!page` 路徑直接 `process.exit(1)`，同樣跳過清理。
-- 沒有監聽 spawn 的 early-exit／error，也沒有 `try/finally`。
+- remote-debugging port 固定 9345；未先取得隨機可用 port，也未把 endpoint 與本輪 spawn PID／資產 hash 綁定。
+- 若 9345 已有殘留的 MindFlow debug instance，`connectOverCDP` 可能接到舊 process。
+- 啟動依賴固定 4 秒與後續固定 sleep，不依 DOM/readiness condition；慢機、大文件或 concurrent build 時會 flaky。
+- console/pageerror listener 是 app 啟動至少 4 秒後才掛，會漏掉首次 load 的早期 renderer error。
+- spawn 使用 `stdio: 'ignore'`，Electron main-process stderr 不在 `errors`；spawn early `error` event也未顯式監聽。
 
-影響：留下 MindFlow process tree、profile lock 與 temp 資料。這不是面板的 browser listener leak，而是診斷 runner 的 OS 資源 leak。
+本輪執行前後 9345 都是 free，所以本次 PASS 沒有 port collision；一般性風險仍存在。
 
-### MEDIUM-1：「真實鍵盤」標示不成立；IME synthetic 也沒有精確造出 229
+### MEDIUM-3：`MF_REAL_PROFILE=1` 仍會修改真實文件，Ctrl+Z 後沒有驗證完整還原
 
-位置：`desktop/scripts/diagnose-installed.mjs:61-85`
+位置：`desktop/scripts/diagnose-installed.mjs:47-74`
 
-- `page.keyboard.press()` 是 Playwright 經 CDP 對 renderer 注入鍵盤事件；它沒有經過實體鍵盤、Windows keyboard stack、IME、第三方 hook 或 OS foreground dispatch。
-- line 74 把 `keyCode:229`、`which:229` 放進 `KeyboardEvent` constructor，但 Chromium 可能忽略 deprecated 欄位。repo 的正式矩陣 helper 在 `tests/e2e/shortcuts.matrix.mjs:912-954` 明確偵測後用 `Object.defineProperty()` 補成 229，診斷腳本沒有做。
-- synthetic event dispatch 到 `document`；正式矩陣 dispatch 到 `document.activeElement || window`。實際 target／form focus 行為不等價。
-- 沒有 compositionstart/update/end、beforeinput、keyup 與 timing 序列，不能代表真實 Windows 注音事件流。
+- runner 會打開最近文件，Tab 真正新增節點。
+- 成功後雖送 Ctrl+Z，但沒有核對最終 node count、serialized document、updatedAt、undo history、autosave 或 backup 是否完全回到前態。
+- 600 ms 中間狀態可能被 autosave／backup 觀察。
 
-影響：可驗證 `findShortcutBinding`／應用層路由對指定 event shape 的反應，不能驗證使用者實際按鍵鏈。
+裁決：乾淨 temp profile 可安全自動跑；real profile 模式仍不是 read-only diagnostic，不能拿來無風險反覆重跑。
 
-### MEDIUM-2：console 證據會漏 startup error，且完全看不到 main-process error
+### MEDIUM-4：temp profile cleanup 實跑失敗且被空 catch 吞掉
 
-位置：`desktop/scripts/diagnose-installed.mjs:22-35, 87`
+位置：`desktop/scripts/diagnose-installed.mjs:97-105`
 
-- app 啟動後固定等 4 秒、CDP connect 完才掛 `page.on('console')`；首次載入期間的 renderer error 已經可能發生。
-- spawn 使用 `stdio: 'ignore'`，Electron main-process stderr／console 永遠不會進 `errors`。
-- 只收 `console` type error，不收 `pageerror`；最多顯示 5 筆、每筆截 160 字。
+- finally 先 `taskkill`，隨即 `rmSync(userData, { recursive: true, force: true })`；沒有關閉／斷開 Playwright CDP connection，也沒有 retry／retryDelay。
+- `rmSync` 的任何失敗被空 catch 吞掉，exit code 仍只看功能 results/errors。
+- 本輪 clean-profile diagnostic 3/3 PASS、exit 0 後，實際留下 `C:\Users\ASUS\AppData\Local\Temp\mf-diag-tfKP37`：45 個 entry、約 3,342,745 bytes；MindFlow process 與 9345 listener 都已消失，目錄仍存在。
 
-影響：`CONSOLE-ERRORS: none` 只能代表 listener 掛上後的部分 renderer console，不等於 app 無 runtime error。
+影響：每次診斷可能累積數 MB Chromium profile。這是已重現的磁碟資源 leak，不是推測。
 
-### MEDIUM-3：固定 port 與弱 process 身分驗證可能誤接 stale CDP
+### LOW-1：診斷 PASS oracle 仍偏寬
 
-位置：`desktop/scripts/diagnose-installed.mjs:18-30`
+位置：`desktop/scripts/diagnose-installed.mjs:67-94`
 
-- port 固定 9345，未先取得 OS 隨機可用 port，也未確認 endpoint 屬於本輪 spawn PID／版本。
-- 若 9345 已有殘留的 MindFlow debug instance，腳本可連到舊 instance；它只用 URL prefix 找 page。
-- readiness 依賴固定 4 秒、1.5 秒、2.5 秒與 300/400/600 ms，慢機或資料量大時容易假失敗／時序偏差。
+- Tab 只驗 node count 增加，不驗新增 node 的 parent、selection、action 與 undo 後狀態。
+- 備註 action 用 `.feature-drawer textarea, textarea` 的第一個 textarea 是否可見判 PASS，沒有精確鎖 `[data-note-editor]` 與 drawer／node。
+- query selector group 依 document order 回傳，未來若更早插入另一個可見 textarea，可能假陽性。
+- `errors` 最多輸出 5 筆、每筆截 160 字，長 stack 會失真。
 
-本輪執行矩陣前已確認 9345 是 free，但這不修正腳本的一般性缺口。
+### LOW-2：source 與已安裝版面板相差一行，實際 lifecycle 尚未同步
 
-### MEDIUM-4：真實文件測試有寫入副作用，且未證明已完整復原
+最終 hash：
 
-位置：`desktop/scripts/diagnose-installed.mjs:38-68`
+- source `shortcuthelp.js`：`E4040D3CE10347E33BC9A6090F9E641944BF64E8941DBDDF4BC9B073670A1E6F`
+- installed `shortcuthelp.js`：`970711D96D8CB8773240F330224949C77801C3FBE847F7BB03239160D870C9AC`
+- `Compare-Object` 唯一差異：source 多 `diagnostic.hide()`。
+- source／installed `keyboard.js` 均為 `409974A9A039D2A414085624DADD3ED9ADE8D83FD636A90F47A589DB4DB371A5`。
 
-- `MF_REAL_PROFILE=1` 會打開最近文件，Tab 真正新增節點。
-- 通過時雖送出 Ctrl+Z，卻不再核對 node count、serialized document、updatedAt、undo history 或 backup 是否回到原狀。
-- 600 ms 等待期間 autosave／備份／metadata 可能觀察到中間狀態。
-- 後續兩個測試會打開備註 drawer；未儲存文字，內容風險較低，但仍改變 UI／focus 狀態。
+影響：已安裝版快捷鍵 routing 測試仍代表同一份 keyboard code；但「Escape 會結束診斷 listener」只在 source 成立，需再 build/install 才落地。
 
-影響：腳本不應被視為 read-only diagnostic；在真實 profile 執行前應有 snapshot／精確 restore 或使用文件副本。
+### LOW-3：「已派發」是 `defaultPrevented` proxy，不是 action success audit
 
-### MEDIUM-5：PASS oracle 過度寬鬆
+位置：`js/editor/shortcuthelp.js:148-164`
 
-位置：`desktop/scripts/diagnose-installed.mjs:62-85`
+- keydown 在 window capture 階段先寫 row；KeyboardController 之後於 bubble 執行 action，既有 row 不會回填。因此一般成功快捷鍵的 keydown row通常沒有「已派發」。
+- IME keyup fallback 由 KeyboardController 先註冊，成功時會 `preventDefault()`；診斷 keyup listener 後註冊，能看到「已派發」。這條順序目前正確。
+- 但 `defaultPrevented` 也可能由其他 handler 設定；action 在 prevent 後丟錯也仍顯示「已派發」。
 
-- Tab 只驗 node count 增加，不驗新增節點的 parent、selection、action 或最後復原。
-- Ctrl+Alt+M 用 `document.querySelector('textarea')` 的第一個 textarea 是否可見判 PASS，沒有鎖定 `[data-note-editor]`／drawer 與目標 node。
-- 現有 DOM 中備註 textarea 的確先於 formula textarea 建立，因此目前大多能工作；但 selector 對 DOM 順序敏感，未來很容易假陽性。
-- `location.href` 拼接 document id 未 `encodeURIComponent()`；異常 id 會導向錯誤文件或錯誤 query。
-
-### LOW-1：診斷面板 Escape 不會 hide，capture 可能比使用者預期活得久
-
-位置：`js/editor/shortcuthelp.js:33-41, 162-165`
-
-- close button 正確呼叫 `hide()` 並移除 listener。
-- 全域 feature Escape handler 只關 more menu 與 shortcut dialog，沒有 `diagnostic.hide()`。
-- Escape 本身會先被 panel 記錄，之後面板仍顯示並繼續記錄。
-
-影響：不是無界 leak，但會延長 key logging 的存活時間。面板若留著，使用者在備註、搜尋等欄位輸入的最近 10 個 key 會顯示在畫面上，還有 screenshot／肩窺的隱私風險。
-
-### LOW-2：診斷腳本可維護性問題
-
-位置：`desktop/scripts/diagnose-installed.mjs:2-18`
-
-- `createRequire` import 未使用。
-- executable 與使用者目錄硬編碼，只能在這台帳號與安裝位置執行。
-- `MF_PW_PATH` 是必要環境變數但檔內沒有用法說明或有效性檢查；未設定時靠 catch 輸出 NEED_PLAYWRIGHT。
+裁決：面板可分辨事件是否送達、靜態 binding 是否命中，並能輔助看 IME keyup fallback；不能單獨證明 action 最後成功或資料已改變。
 
 ## `js/editor/shortcuthelp.js` 逐段逐行審查
 
-| 行 | 結果 |
+| 行 | 審查結果 |
 |---|---|
-| 1-17 | import 與靜態 label。`findShortcutBinding`／`isFormTarget` 都是純讀；label 不是使用者輸入。 |
-| 18-32 | editor 初始化時各建一次 menu/dialog。現有 boot 路徑只呼叫一次，未見重複初始化造成累積的證據。 |
-| 33-41 | 建立 diagnostic 並綁開啟按鈕；Escape 遺漏 `diagnostic.hide()`，見 LOW-1。 |
-| 44-101 | 舊 more-menu 邏輯。與本次診斷 listener 無共享 listener 參照；無新增風險。 |
-| 103-119 | shortcut dialog HTML 全由固定 `ACTION_BINDINGS`／固定 label 產生，沒有事件字串注入面。 |
-| 121-138 | inline `<style>` 只建立一次並常駐到頁面卸載。這是有界的一個 DOM node，不是持續成長；selector 也都有 class scope。 |
-| 140-145 | panel 與 list 建立一次；hidden 初始值正確。面板常駐是 editor-lifetime allocation。 |
-| 147-160 | capture handler 不 prevent/stop event。每次建立一個 row，最多保留 10 個；`findShortcutBinding` 是線性掃固定 binding 表。沒有 layout read，效能成本有界，但在按鍵 repeat 時仍會同步做 DOM mutation。 |
-| 151-157 | `event.key`、`event.code`、`binding.action` 全用 `textContent` 寫入；XSS 安全。`innerHTML` 只含數值型 `keyCode`、由固定字串組成的 modifiers 與固定標記。 |
-| 162-165 | `show()`／`hide()` 使用同一 callback 與同一 capture 值，remove 可精確命中；重複 `addEventListener` 同一組合也不會疊加。缺少 destroy API，但目前 one-shot editor lifetime 下不構成無界 leak。 |
-| 168-176 | shortcut 顯示文字只處理靜態 binding；無使用者輸入。 |
+| 1-17 | import 與 label 是靜態資料；`findShortcutBinding`／`isFormTarget` 均為純讀。 |
+| 18-42 | diagnostic 在 editor init 建一次；source Escape handler 已呼叫 `diagnostic.hide()`。現有 boot 只初始化一次。 |
+| 45-102 | more-menu 舊邏輯；與診斷 listener 沒有共享可變 listener reference。 |
+| 104-120 | dialog HTML 只來自固定 binding／label，沒有使用者輸入注入面。 |
+| 122-139 | inline style 建一次並活到 page unload；是有界的一個 style node，不是 leak。 |
+| 141-146 | hidden panel／list 建一次；是 editor-lifetime allocation。 |
+| 148-160 | 每個 keydown/keyup 做一次固定 binding 表線性掃描、建立一個 row，最多保留 12 row；無 layout read，成本有界。 |
+| 152-158 | `event.key`、`event.code`、`binding.action` 全以 `textContent` 寫入。`innerHTML` 只含固定 marker、數值 keyCode、固定 modifier 字串與固定 markup；未發現 XSS。 |
+| 162-169 | `show()` 綁 keydown capture + keyup bubble；`hide()` 使用同 callback 與相同 capture 值精確移除。重複 add 同一 listener 組合不會疊加。 |
+| 172-180 | shortcut 顯示文字只處理靜態 binding。 |
 
-### 對正常操作的干擾判定
+### 記憶體／干擾／效能裁決
 
-- 面板未開啟：window 上沒有 diagnostic keydown listener，只有常駐的 hidden panel/style；正常快捷鍵零控制流干擾。
-- 面板開啟：listener 位於 window capture，比 KeyboardController 的 window bubble handler先執行，但不修改 event。直接行為不變；額外成本是一次 binding 掃描與最多 10-row DOM 更新。
-- 面板本身 z-index 9999、位於左下 360 px 寬，開啟時會遮住並攔截該區域 pointer。這是診斷模式可預期的 UI 干擾，不應稱為正常模式零干擾。
-- 顯示「命中 action」不等於 action 最後成功執行：capture 階段之後，event 仍可能被 target listener prevent、formMode 守衛略過，或 action 因 selection／mode 狀態失敗。面板能分辨「事件沒到」與「靜態 binding 沒命中」，不能單獨證明完整 action data flow。
+- **記憶體洩漏**：source 未發現。面板開啟時兩個 listener；×／Escape 成對移除；list 上限 12。panel/style 常駐各一個，屬頁面生命週期固定配置。
+- **正常操作干擾**：面板未開時沒有 diagnostic key listener。面板開啟時不呼叫 `preventDefault()`／`stopPropagation()`，不直接改既有快捷鍵控制流。
+- **診斷模式 UI 干擾**：z-index 9999 的 360 px 左下浮層會遮住並攔截該區 pointer；這是開啟診斷時的實際代價。
+- **效能**：同時記 keydown + keyup，按鍵 repeat 時有同步 DOM mutation；但固定 binding scan、12-row cap、無 layout read，桌面診斷用途可接受。
+- **隱私**：面板會顯示使用者在備註／搜尋等欄位的最近 12 個事件。若截圖回報，可能連同輸入內容的 key pattern 被分享。
 
 ## `desktop/scripts/diagnose-installed.mjs` 逐段逐行審查
 
-| 行 | 結果 |
+| 行 | 審查結果 |
 |---|---|
-| 1-14 | Playwright 動態載入可工作；`createRequire` 未使用。`join(undefined, ...)` 的錯誤由 catch 轉成 NEED_PLAYWRIGHT exit 2。 |
-| 16-22 | hard-coded exe、固定 port、每次建立 temp dir、detached spawn；沒有 PID/endpoint 身分核對。 |
-| 24-35 | 固定 sleep 取代 readiness；console listener 掛太晚、缺 `pageerror`，main stderr 被丟棄。 |
-| 38-59 | 會讀 real profile 最近文件並直接導航；fallback 依中文字串；id 未 encode；沒有嚴格驗證 editor 與文件已正確載入。 |
-| 61-68 | Tab 是 CDP keyboard event，不是 OS 實體鍵。真實修改後只嘗試 undo，沒有驗證 restore。 |
-| 70-78 | Process/KeyM 是 synthetic untrusted event；沒有精確補 229，也沒有 composition sequence。 |
-| 80-85 | 所謂 REAL 仍是 CDP 注入；generic textarea oracle 太寬。 |
-| 87-89 | errors 不影響成敗；cleanup 僅 happy path；無條件 exit 0。 |
+| 1-6 | 頂部註解現在誠實記載 CDP、console、固定 port、real-profile 副作用限制。 |
+| 7-18 | Playwright 動態 import；未設定 `MF_PW_PATH` 時 exit 2。無未使用 import。 |
+| 20-30 | clean mode 才建 temp profile；仍 hard-code exe 與 port。 |
+| 32-45 | 主流程包進 try；仍以固定 sleep 啟動；console/pageerror 掛載偏晚。 |
+| 47-65 | 最近文件導航已 encode id；fallback 建空白文件。仍未用嚴格 editor/document readiness。 |
+| 67-74 | Tab 經 CDP 注入；結果進 `results`，成功後嘗試 undo，但不驗 restore。 |
+| 76-88 | synthetic IME 已以 defineProperty 精確強制 229，派發到 activeElement。仍不是實體 IME sequence。 |
+| 91-94 | 文案已改成 CDP 注入，不再冒充實體鍵。textarea oracle 仍偏寬。 |
+| 95-106 | runner/page errors 會令結果 non-zero；finally taskkill 並嘗試刪 temp；不再固定 exit 0。但本輪實跑 temp 刪除失敗且被空 catch 吞掉，見 MEDIUM-4。 |
 
 ## 對 Claude 診斷結論鏈的反證與補充假說
 
-### 可接受的窄結論
+### 可以簽字的窄結論
 
-「目前安裝資產中的快捷鍵應用層邏輯，對 Playwright/CDP 所送出的 Tab、英數 Ctrl+Alt+M，以及指定形狀的 synthetic IME event，能在被測狀態完成預期 action。」
+「目前已安裝版與 source 的 `keyboard.js` 相同；在 clean profile、指定文件狀態與 CDP／synthetic event shape 下，Tab、Ctrl+Alt+M 與 IME 路由正常。」
 
-本輪額外核對到：
+本輪額外觀察：
 
-- source、`desktop/dist/win-unpacked`、實際安裝目錄的 `shortcuthelp.js` SHA-256 相同；`keyboard.js` 在核對當下也相同。
-- 桌面與開始功能表的 MindFlow 捷徑都指向 `C:\Users\ASUS\AppData\Local\Programs\MindFlow\MindFlow.exe`。
-- 未找到 MindFlow taskbar pinned link，也未觀察到 MindFlow 相關 Edge app-mode process。
-- 目前 MindFlow main process 於 01:30:19 啟動，晚於 01:27 左右的本次安裝時間；「目前這一個 process 是安裝前 stale renderer」不成立。
+- 桌面與開始功能表的 MindFlow link 都指向 `C:\Users\ASUS\AppData\Local\Programs\MindFlow\MindFlow.exe`。
+- 未找到 MindFlow taskbar pinned link；檢查時未見 MindFlow 相關 Edge app-mode process。
+- clean temp profile 的安裝版診斷實跑 3/3 PASS、errors none、exit 0，結束後 MindFlow process 與 9345 都已釋放；temp profile 未刪除。
 
-### 不可接受的擴張結論
+### 仍未排除的假說
 
-「app 端完全正常，所以只剩舊捷徑或真實 IME」仍過度收斂。至少還有以下未被三組 CDP 測試排除的假說：
+1. **OS／第三方 keyboard hook**：AutoHotkey、PowerToys Keyboard Manager、IME hotkey、Logitech/Razer/ASUS utility、overlay、遠端控制或 accessibility software 先吃掉／改寫實體事件。
+2. **native foreground/focus**：CDP 可注入背景 renderer；真實鍵可能進到另一個視窗、DevTools、overlay 或剛失焦的 app。
+3. **single-instance stale renderer**：重新安裝後，若舊 primary process 未退出，點新捷徑只會由 `second-instance` 喚回舊記憶體內容。磁碟 hash 正確不等於現存 renderer 已 reload。
+4. **另一入口／另一份安裝**：portable、舊 per-machine 安裝、瀏覽器 bookmark、Edge/Chrome app-mode、改名捷徑或舊 AppUserModelID。現在 canonical links 正確，只證明現在。
+5. **origin/profile 分離**：安裝版 origin 是 `mindflow://app`；網頁版是 `http://127.0.0.1:<port>`。Electron temp/real profile、Chrome、Edge 的 localStorage 彼此分離；同名文件可能是不同副本。
+6. **實際 form/mode/selection 狀態**：contenteditable、備註 textarea、dialog、outline、presentation、focus mode、失效 selection。runner 強制選第一個 node，沒有重現問題前狀態。
+7. **文件特定狀態**：損壞／重複 node id、超大文件 render lag、摺疊／overlay、DOM 與 selection 不一致。「真實文件第一個 node」仍不等於出問題的 node。
+8. **鍵盤配置／AltGr／Sticky/Filter Keys**：實體 Ctrl+Alt 在部分 layout 會走 AltGr；左右修飾鍵、Fn firmware 也可能改變 event shape。
+9. **真實 IME ordering**：Process keydown 的 `code` 是否空、`isComposing`、keyup 補碼、composition/beforeinput 順序會隨 IME 與 Chromium 版本變動。
+10. **diagnostic runner 假陽性／假陰性**：固定 port、late console、fixed sleep、generic textarea 與 real-doc 中間寫入仍會影響證據品質。
 
-1. **OS／第三方 keyboard hook**：AutoHotkey、PowerToys Keyboard Manager、輸入法 hotkey、Logitech／Razer／ASUS utility、overlay、螢幕錄製、遠端控制或 accessibility software 先吃掉／改寫按鍵。CDP 完全繞過這一層。
-2. **native foreground/focus**：CDP 可對非前景 renderer 送鍵；真實 OS 鍵可能進到別的視窗、DevTools、隱形 overlay 或剛失焦的 app。
-3. **single-instance stale process**：重新安裝或改捷徑後，已存在的舊 MindFlow primary process 仍可被 `second-instance` 喚回；磁碟 hash 正確不代表記憶體內 renderer 已 reload。本輪現況已排除，但歷史發生當下仍是合理假說。
-4. **另一入口／另一份安裝**：portable exe、舊 per-machine 安裝、改名捷徑、瀏覽器 bookmark、Edge/Chrome app-mode 或 taskbar 已固定的舊 AppUserModelID。現在兩個 canonical link 正確，只能證明現在，不證明問題發生時。
-5. **origin/profile 分離造成「看起來是同一文件」**：安裝版 origin 是 `mindflow://app`，網頁版是 `http://127.0.0.1:<port>`；clean temp profile、真實 Electron profile、Chrome/Edge profile 的 localStorage 彼此分離。同名文件可能是不同副本，最近文件也可能不同。
-6. **真實 focus/form/mode 狀態**：實際使用者可能停在 contenteditable、備註 textarea、dialog、outline、presentation、focus mode 或選取已失效。診斷腳本強制選第一個 node，沒有重現問題發生前的 target 與 UI state。
-7. **文件特定狀態**：重複／損壞 node id、超大文件造成 render lag、目標 node 被摺疊／overlay 遮住、selection 與 DOM 不一致。測「真實文件第一個 node」仍不足以涵蓋使用者出問題的那個 node 與操作序列。
-8. **鍵盤配置／AltGr／Sticky Keys**：實體 Ctrl+Alt 在部分 layout 可能被當成 AltGr；左右 Ctrl/Alt、Sticky/Filter Keys、Fn firmware 都可能改變 event shape。CDP 的乾淨 modifiers 不會重現。
-9. **真實 IME event ordering**：`keydown Process` 的 `isComposing`、code 是否空、keyup 補碼、composition/beforeinput 順序會隨 IME 與 Chromium 版本變化。單一 synthetic keydown 不能窮舉。
-10. **診斷器自身假陽性**：固定 port 誤接 stale instance、generic textarea、漏 startup console、FAIL exit 0，都可能讓「三情境全過」被高估。
+因此，「app 端正常」應限定在已驗的應用層；下一步用診斷面板取實體事件是合理的，但要一起看 foreground、activeElement/target、↓/↑、defaultPrevented proxy 與 action 最終 UI／資料結果。
 
-因此，鍵盤診斷面板下一筆最有價值的證據不是只截「命中 action」，而是同時保存：實際 `key/code/keyCode/which/modifiers/isComposing/repeat`、target/focus、是否 defaultPrevented，以及 action 最後是否真的執行。現版只完成前半段。
+## 實際驗證紀錄
 
-## 實際測試結果
+| 指令／檢查 | 最終結果 |
+|---|---|
+| `node --check js\editor\shortcuthelp.js` | PASS（最終交付前另做 final audit） |
+| `node --check desktop\scripts\diagnose-installed.mjs` | PASS（最終交付前另做 final audit） |
+| `node --test tests/*.test.mjs` | exit 0；13/13 Node runner entries PASS，內含 core 27/27、delta 21/21、IO 19/19、layout 7/7、spatial 13/13、stickers 6/6、store/search 9/9 等 |
+| `npm test`（`desktop\`） | 23/23 PASS，exit 0 |
+| `node tests\e2e\shortcuts.matrix.mjs` | 最終穩定 run 160/160 PASS；targeted synthetic IME 54/54；exit 0 |
+| installed clean-profile `diagnose-installed.mjs` | Tab PASS、IME-SYNTH PASS、CDP Ctrl+Alt+M PASS、errors none、exit 0；但留下 3.34 MB temp profile |
+| port cleanup | 本輪 matrix 結束時 4187/9337 free，diagnostic 結束時 9345 free；final audit 時另一外部 workflow 已重開 4187 |
 
-| 指令 | 結果 | 判定 |
-|---|---|---|
-| `node --check js\editor\shortcuthelp.js` | exit 0 | PASS |
-| `node --check desktop\scripts\diagnose-installed.mjs` | exit 0 | PASS |
-| `node --test tests\core.test.mjs` | 27/27 PASS，exit 0 | PASS；直接覆蓋 keyboard binding／IME Process／focus guard |
-| `npm test`（`desktop\`） | 23/23 PASS，exit 0 | PASS |
-| `node tests\e2e\shortcuts.matrix.mjs` | 160/160 PASS，IME targeted synthetic 54/54，exit 0 | PASS；Chromium + Electron |
-| `node --test tests/*.test.mjs` | exit 1；`tests\stickers.test.mjs` 3 FAIL，其餘已執行 suites PASS | **全套不是全綠** |
+### 共享工作樹干擾紀錄
 
-Root failure 明細：manifest 尚為 6 分類而新測試預期 10 分類、`filterStickerCategories` 尚未 export、`buildStickerImageUpdate` 尚未 export。審查時可直接觀察到另一個 STICKER2 Codex process 正在運作，且該工作流先更新 `tests/stickers.test.mjs`、尚未更新對應 production。這些 failure 與 `shortcuthelp.js`／`diagnose-installed.mjs` 沒有 import 或行為路徑關聯，但在非隔離工作樹中不能宣稱整體零破壞。
+審查期間有其他 session 同時修改 source、tests、build 與安裝版：
 
-另外，審查期間 `tests/core.test.mjs` 從首輪 26 項變為末輪 27 項，證明共享工作樹確實有並行寫入。上述 final core 與矩陣數字是各自 command 當下的 fresh 結果，不冒充 commit-isolated CI。
+- 第一輪矩陣在較早 hash 上 160/160 PASS。
+- 第二輪執行中，`shortcuthelp.js` 與 `diagnose-installed.mjs` 被改寫，該 moving-target run 為 158/160；兩個 failure 都發生於 reset/readiness（catch 時已是 6/6 nodes、另一格瞬間找不到 `#canvas`），不是快捷鍵 assertion。
+- 兩個失敗案例在穩定版本最小重跑 2/2 PASS。
+- 目標 hash 穩定 30 秒後再跑完整矩陣，最終 160/160 PASS。
+- 完整 run 後，另一外部 workflow 執行 1-case `Shift+↑` filter，將共用的 `docs/SHORTCUT_MATRIX.md` 覆寫成 1/1，並留下 `node tools/serve.mjs 4187`。本報告的 160/160 依據是完整 command stdout 與 exit 0；目前該 generated artifact 不是完整 run 報告。
+
+這份報告採最後穩定 hash 與最後完整 run，不把 moving-target failure 冒充 production regression，也不把早期 PASS 冒充最終版本證據。
 
 ## 最終裁決
 
-- **鍵盤診斷面板：有條件通過。** 無 XSS、無無界 listener leak、未直接改變快捷鍵 event；應補 Escape hide／teardown，並把「binding 命中」與「action 成功」的限制寫清楚。
-- **安裝版診斷腳本：不通過作為自動化證據 gate。** 至少要先讓任何 FAIL／console/page error 產生 non-zero exit、使用 `try/finally`、隨機 port、精確 selector、可靠 readiness、版本/PID 身分核對，以及 real-doc snapshot/restore。
-- **Claude 根因結論：部分同意。** 應用層 routing 正常的信心高；實體使用者路徑仍未閉環。現階段最合理的下一步確實是讓使用者用面板按出問題鍵，但取證時必須連同 foreground/focus/target/action outcome 一起判讀，不能看到 binding 名稱就宣布 app 無責。
-- **零破壞：鍵盤 scope 可接受，整個工作樹不可簽全綠。** 原因是 root 全套仍有 3 個並行 STICKER2 failure。
+- **鍵盤診斷面板 source：通過，附低風險限制。** 無 XSS、無無界 listener leak、不直接干擾 event；「已派發」不是 action success，診斷面板也會遮畫布／顯示按鍵。
+- **已安裝版面板：條件通過。** 快捷鍵 routing 同版，但少 Escape hide；需重新 build/install 才與 source 完全一致。
+- **安裝版診斷腳本：可作人工 diagnostic，不建議當嚴格 CI gate。** exit code／IME fidelity 已修；固定 port、late console、real-doc side effect、fixed waits、弱 oracle，以及已重現的 temp cleanup failure 仍在。
+- **Claude 根因結論：部分同意。** 應用層正常的信心高；實體 Windows 輸入鏈尚未閉環，不能排除上述環境、focus、入口、profile 與文件狀態假說。
+- **零破壞：最終穩定工作樹可簽。** root、desktop、完整 Chromium/Electron matrix 與 clean installed diagnostic 都是 fresh PASS。
 
 ---
 
 簽字：**Codex（對抗性審查者）**  
 日期：**2026-08-30**
-
----
-
-## 主 session 裁決與回應（2026-08-30）
-
-全部發現採認，處置如下：
-- **HIGH-1（exit code 永遠 0）**：已修——results 物件 + finally 中依全 PASS 與零錯誤決定 exitCode。承認原腳本不配當證據 gate；當時的證據效力來自我逐行讀 stdout，但工具本身必須誠實。
-- **HIGH-2（清理缺失）**：已修——try/finally 包全程，taskkill + 暫存 profile rmSync。
-- **MEDIUM-1（「真實鍵盤」措辭與 keyCode 229）**：採認並修正——229 改 defineProperty 強制、派發至 activeElement；對外措辭改為「CDP 注入級」。認知修正：我的結論範圍是「應用層路由正常」，整條 OS→app 路徑的證據來自使用者的診斷面板取證，兩者合併才完整。
-- **MEDIUM-2/3/4/5**：selector 鎖定 .feature-drawer、encodeURIComponent 已修；其餘（啟動期 console 盲區、固定 port、真實 profile 副作用）文件化於腳本頭註，明示「正式回歸以 shortcuts.matrix.mjs 為準」。
-- **LOW-1（Esc 不關診斷面板）**：已修——併入 featureHandlers.escape。
-- 強化版重跑：TAB/IME-SYNTH/CDP-CTRL-ALT-M 全 PASS、exit 0。
-- 「工作樹 3 項 sticker tests FAIL」：確認屬 STICKER2 施工中的 TDD 紅燈，非本次修改破壞。
-
-- ✍️ 主 session（Claude）：發現全採認、修復完成
-- ✍️ Codex（REVIEW）：審查結論成立
-
-角色互換的雙向確認閉環完成。
