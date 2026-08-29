@@ -33,7 +33,13 @@
       "backup-store.mjs",
       "legacy-storage.mjs",
       "protocol.mjs",
+      "sync-engine.mjs",
+      "sync-github.mjs",
+      "sync-plan.mjs",
+      "sync-settings.mjs",
+      "updater.mjs",
       "window-focus.mjs",
+      "preload.cjs",
       "assets/icon.ico"
     ],
     "extraResources": [
@@ -83,6 +89,7 @@
       "allowElevation": false,
       "packElevateHelper": false,
       "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "MindFlow",

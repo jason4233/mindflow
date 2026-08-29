@@ -1,0 +1,15 @@
+完成 SYNC-FIX。
+
+- 10 條缺陷與 E4 已修復。
+- Desktop `npm test`：136/136 pass。
+- Root tests：13/13 runners pass。
+- Probe-equivalent 正式回歸：10/10 pass。
+- Playwright 驗證兩個編輯競態：皆未 reload、文字保留、CAS 橫幅出現。
+- 全部改動檔案 syntax check 通過。
+- 未執行任何 Git 指令。
+
+主要成果在 [sync-plan.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\sync-plan.mjs)、[sync-engine.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\sync-engine.mjs) 與 [sync-plan.test.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\test\sync-plan.test.mjs)。
+
+逐條狀態與自首已寫入 [CODEX_SYNCFIX_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_SYNCFIX_NOTES.md)。
+
+重要自首：三支舊 Temp probe 原檔仍會非零，原因是腳本硬編碼舊失敗假設或未提供修復後必要的 pulled blob；未修改不在授權範圍內的 Temp 檔。所有等價情境已改成具正確 fixture/assertion 的正式測試並全綠。

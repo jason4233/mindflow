@@ -1,0 +1,8 @@
+SYNC-C 已完成，未越界、未使用 git。
+
+- `safeStorage` 加密往返、無明文 fallback、原子寫檔完成。
+- preload CJS 橋接完成，`getConfig()` 強制過濾 token。
+- SYNC-C：5/5 pass。
+- 全套：108 pass、0 fail、4 個預期 skip。
+- 完成紀錄與主動自首：[CODEX_SYNC_C_NOTES.md](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_SYNC_C_NOTES.md)
+- 實作：[sync-settings.mjs](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/sync-settings.mjs)、[preload.cjs](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/preload.cjs)、[sync-settings.test.mjs](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/test/sync-settings.test.mjs)

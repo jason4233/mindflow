@@ -4,6 +4,7 @@
 import { hasAction, registerAction, runAction } from './actions.js'
 import { ACTION_BINDINGS, findShortcutBinding, isFormTarget } from './keyboard.js'
 import { walkNodes } from './model.js'
+import { openSyncSettings } from '../settings.js'
 
 const ACTION_LABELS = {
   undo: '復原', redo: '重做', copy: '複製', cut: '剪下', paste: '貼上', selectAll: '全選', save: '儲存',
@@ -22,6 +23,7 @@ export function initializeShortcutHelp(ctx) {
 
   registerAction('moreMenu', () => { menu.toggle(); return true })
   registerAction('shortcutHelp', () => { menu.close(); if (!dialog.open) dialog.showModal(); return true })
+  registerAction('syncSettings', () => { menu.close(); void openSyncSettings(); return true })
   // focusMode 由 focus.js 的 FocusController 全權實作（含 Esc 退出與 is-c1-focus-mode class）；
   // 這裡不再註冊舊版 toggle，避免依賴初始化順序的雙註冊互相覆蓋。
   if (!hasAction('history')) registerAction('history', () => { ctx.notify('歷史版本尚未接入'); return false })
@@ -54,7 +56,7 @@ function createMoreMenu(ctx) {
     <button type="button" data-more-action="tidyLayout"><span>一鍵整理</span><kbd>Ctrl+Shift+L</kbd></button>
     <label class="more-toggle"><span>顯示評論</span><input type="checkbox" data-comment-toggle checked><i></i></label>
     <button type="button" data-more-action="shortcutHelp"><span>快速鍵</span><kbd>?</kbd></button>
-    <button type="button" data-more-placeholder="設定"><span>設定</span><small>即將推出</small></button>
+    <button type="button" data-more-action="syncSettings"><span>同步設定</span><small>GitHub</small></button>
     <footer><span data-comment-count>評論 0</span><span data-node-count>節點 0</span></footer>`
   document.body.append(menu)
 

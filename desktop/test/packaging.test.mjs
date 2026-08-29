@@ -58,6 +58,19 @@ test('every module reachable from main.mjs is listed in build.files', async () =
   }
 })
 
+test('packages the complete sync runtime including the sandbox preload bridge', () => {
+  const packaged = new Set(packageJson.build.files)
+  for (const file of [
+    'sync-engine.mjs',
+    'sync-github.mjs',
+    'sync-plan.mjs',
+    'sync-settings.mjs',
+    'preload.cjs'
+  ]) {
+    assert.ok(packaged.has(file), `${file} is required by desktop sync but missing from build.files`)
+  }
+})
+
 test('uses the repository root as the static root during development', () => {
   const desktopDir = join('C:', 'work', 'mindflow', 'desktop')
 

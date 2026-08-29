@@ -3,6 +3,7 @@
  */
 import { DOC_KEY_PREFIX, createDocument, loadDocument, recoverDocument, saveDocument } from '../store.js'
 import { strings } from '../strings.js'
+import { protectSyncAppliedReload } from '../settings.js'
 import { createMeasureFn, render } from './render.js'
 import { layout } from './layout.js'
 import { CommandManager, moveNode, toggleCollapse, updateDocumentTitle, updateText } from './commands.js'
@@ -80,6 +81,7 @@ let dirty = false
 let saveBlocked = false
 // 預覽保護窗：此時間之前 saveNow 不寫入，避免滑桿/色票拖曳中的暫態被 Ctrl+S 或殘留計時器落盤
 let previewUntil = 0
+let syncReloadTimer = null
 
 const baseMeasureFn = createMeasureFn(elements.measureLayer, doc)
 // === PHASE-FINAL C1 node width hook ===
@@ -316,9 +318,56 @@ function bindZoomControls() {
 }
 
 window.addEventListener('beforeunload', () => saveNow(true))
+window.addEventListener('mindflow:sync-applied', event => {
+  if (!syncEventAffectsDocument(event, doc.id)) return
+  window.clearTimeout(syncReloadTimer)
+  if (blockSyncReloadForLocalEdits()) return
+  showSyncAppliedToast()
+  syncReloadTimer = window.setTimeout(() => {
+    syncReloadTimer = null
+    // 排定 reload 後仍可能開始打字；真正導頁前必須再次檢查 session/dirty。
+    if (blockSyncReloadForLocalEdits()) return
+    window.location.reload()
+  }, 850)
+})
 // 另一個分頁寫入同一份文件時警告（storage 事件只在其他分頁觸發）
 window.addEventListener('storage', event => {
   if (event.key === `mindflow.doc.${doc.id}` && event.newValue !== null) {
     showSaveBanner('tab-conflict', '這份文件正被另一個視窗編輯，兩邊同時改會互相覆蓋，建議關閉其中一個。', '#b45309')
   }
 })
+
+function syncEventAffectsDocument(event, documentId) {
+  const detail = event?.detail
+  if (!detail || typeof detail !== 'object') return true
+  const ids = detail.changedDocIds || detail.documentIds || detail.docIds || detail.ids
+  return Array.isArray(ids) ? ids.includes(documentId) : true
+}
+
+function blockSyncReloadForLocalEdits() {
+  return protectSyncAppliedReload({
+    edit,
+    isDirty: () => dirty,
+    onConflict: () => {
+      // 同步已權威更新 localStorage；本分頁內容留在記憶體，交給既有 CAS 決策橫幅，禁止自動覆蓋。
+      window.clearTimeout(saveTimer)
+      saveTimer = null
+      saveBlocked = true
+      showConflictBanner()
+    }
+  })
+}
+
+function showSyncAppliedToast() {
+  let toast = document.querySelector('[data-sync-applied-toast]')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.className = 'feature-toast sync-applied-toast'
+    toast.dataset.syncAppliedToast = 'true'
+    toast.setAttribute('role', 'status')
+    toast.setAttribute('aria-live', 'polite')
+    document.body.append(toast)
+  }
+  toast.textContent = '已套用雲端更新，正在重新載入文件…'
+  toast.hidden = false
+}

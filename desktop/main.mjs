@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, shell } from 'electron'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,10 +21,20 @@ import {
   APP_START_URL,
   createProtocolHandler
 } from './protocol.mjs'
+import {
+  createRendererStorageAdapter,
+  createStorageQueue,
+  createSyncEngine,
+  registerSyncIpc
+} from './sync-engine.mjs'
+import {
+  getDecryptedToken,
+  loadSyncSettings
+} from './sync-settings.mjs'
+import { initUpdater } from './updater.mjs'
 import { bringWindowToFront } from './window-focus.mjs'
 
 const DESKTOP_DIR = dirname(fileURLToPath(import.meta.url))
-const CLOSE_FLUSH_TIMEOUT_MS = 8000
 const APP_URL_PREFIX = `${APP_SCHEME}://${APP_HOST}/`
 
 // 煙霧測試用完即丟的 userData，避免測試把使用者真正的十份備份輪替掉。必須在 ready 前設定。
@@ -45,7 +55,9 @@ protocol.registerSchemesAsPrivileged([{
 
 let mainWindow = null
 let backupTimer = null
-let backupQueue = Promise.resolve()
+const storageQueue = createStorageQueue()
+let syncEngine = null
+let syncIpcRegistration = null
 let allowWindowClose = false
 let closeInProgress = false
 
@@ -142,27 +154,10 @@ async function migrateLegacyStorageIfEmpty(window, userDataPaths) {
 }
 
 function enqueueBackup(window, userDataPath, { flush = false, reason = 'interval' } = {}) {
-  backupQueue = backupQueue
-    .catch(() => {})
-    .then(async () => {
+  return storageQueue.run(async () => {
       const entries = await captureMindflowStorage(window, { flush })
       return writeMindflowBackup({ userDataPath, entries, reason })
-    })
-  return backupQueue
-}
-
-async function withTimeout(promise, timeoutMs) {
-  let timeout
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs} ms`)), timeoutMs)
-      })
-    ])
-  } finally {
-    clearTimeout(timeout)
-  }
+  })
 }
 
 function urlProtocol(url) {
@@ -194,7 +189,7 @@ function bindNavigationGuards(window) {
   })
 }
 
-function bindCloseFlush(window, userDataPath) {
+function bindCloseFlush(window, userDataPath, engine) {
   window.on('close', event => {
     if (allowWindowClose) return
     event.preventDefault()
@@ -203,11 +198,10 @@ function bindCloseFlush(window, userDataPath) {
     clearInterval(backupTimer)
     backupTimer = null
 
-    void withTimeout(
-      enqueueBackup(window, userDataPath, { flush: true, reason: 'window-close' }),
-      CLOSE_FLUSH_TIMEOUT_MS
-    )
-      .catch(error => console.error('MindFlow close backup failed:', error))
+    void engine.flush({
+      beforeSync: () => enqueueBackup(window, userDataPath, { flush: true, reason: 'window-close' })
+    })
+      .catch(error => console.error('MindFlow close flush failed:', error))
       .finally(() => {
         allowWindowClose = true
         if (!window.isDestroyed()) window.close()
@@ -230,6 +224,7 @@ async function launch() {
     icon: join(DESKTOP_DIR, 'assets', 'icon.ico'),
     autoHideMenuBar: true,
     webPreferences: {
+      preload: join(DESKTOP_DIR, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -246,10 +241,42 @@ async function launch() {
     join(app.getPath('appData'), 'mindflow-desktop'),
     join(app.getPath('appData'), 'MindFlow')
   ]
-  bindCloseFlush(mainWindow, userDataPath)
+  const rendererStorage = createRendererStorageAdapter(mainWindow)
+  const savedSyncSettings = loadSyncSettings(userDataPath)
+  let token = ''
+  try {
+    token = getDecryptedToken(savedSyncSettings) || ''
+  } catch (error) {
+    // 加密金鑰不可用時不做任何 fallback；也不把密文或 token 寫入 log。
+    console.error('MindFlow secure sync token is unavailable:', error?.message || 'secure storage unavailable')
+  }
+  syncEngine = createSyncEngine({
+    userDataPath,
+    storageQueue,
+    cfg: {
+      enabled: savedSyncSettings.enabled,
+      repo: savedSyncSettings.repo,
+      branch: savedSyncSettings.branch,
+      token
+    },
+    readEntries: options => rendererStorage.readEntries(options),
+    applyWrites: writes => rendererStorage.applyWrites(writes)
+  })
+  syncIpcRegistration = registerSyncIpc({
+    ipcMain,
+    engine: syncEngine,
+    webContents: mainWindow.webContents,
+    userDataPath
+  })
+  bindCloseFlush(mainWindow, userDataPath, syncEngine)
+  mainWindow.on('focus', () => syncEngine?.handleFocus())
   mainWindow.once('closed', () => {
     clearInterval(backupTimer)
     backupTimer = null
+    syncIpcRegistration?.dispose()
+    syncIpcRegistration = null
+    void syncEngine?.dispose()
+    syncEngine = null
     mainWindow = null
     app.quit()
   })
@@ -275,6 +302,10 @@ async function launch() {
     void enqueueBackup(mainWindow, userDataPath, { reason: 'interval' })
       .catch(error => console.error('MindFlow interval backup failed:', error))
   }, BACKUP_INTERVAL_MS)
+
+  // startup sync 必須在 legacy migration 與 backup restore 都完成後才可讀 renderer。
+  syncEngine.start({ startup: true })
+  void initUpdater(mainWindow).catch(() => {})
 }
 
 // 第二個實例會用同一份 localStorage 與同一組備份檔，兩邊各寫各的必然互相覆蓋；只准一個。

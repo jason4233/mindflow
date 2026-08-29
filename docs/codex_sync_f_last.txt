@@ -1,0 +1,22 @@
+SYNC-F 已完成，且只寫入所有權內三個檔案：
+
+- [fake-github-server.mjs](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/test/fake-github-server.mjs)
+- [sync-e2e.test.mjs](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/test/sync-e2e.test.mjs)
+- [CODEX_SYNC_F_NOTES.md](/C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_SYNC_F_NOTES.md)
+
+完成項目：
+
+- Fake GitHub 8 個 Git Data 端點
+- 304／ETag、422 注入、斷網切換
+- >1MB blob、永久刪檔、token 紅線
+- frozen `sync-github` 真 HTTP 整合
+- 雙實例四場景完整 harness
+- pull-before-push、422 重拉重推、安全紅線斷言
+- Notes 含「主動自首」
+
+最終驗證：
+
+- Root：13 test files，全部通過
+- Desktop：113 tests，109 pass、0 fail、4 skip
+- 4 skip 原因：`sync-engine.mjs` 尚未落地，符合 brief 允許條件；E 出現後會自動轉為實跑
+- 未執行 git。

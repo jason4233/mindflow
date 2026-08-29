@@ -1,0 +1,19 @@
+SYNC-E 已完成。
+
+- [sync-engine.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\sync-engine.mjs)：狀態機、共用 storageQueue、五種觸發、ETag pull、422 三次重合重推、指數退避、原子 renderer 套用、sync-state、IPC/status push。
+- [main.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\main.mjs)：preload、engine lifecycle、focus／startup／close flush 接線。
+- [package.json](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\package.json)：同步 runtime 全數加入 build.files。
+- SYNC-F skip gate 已永久移除，雙實例四場景全綠。
+- [CODEX_SYNC_E_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_SYNC_E_NOTES.md)：含完整驗證紀錄與主動自首。
+- `PHASE_SYNC_BRIEF.md` 未修改。
+- 未執行 Git 指令。
+
+Fresh 驗收：
+
+- Desktop `npm test`：122/122 pass，0 fail，0 skip。
+- 雙實例 E2E：4/4 pass。
+- Root tests：13/13 runners pass，0 skip。
+- `sync-engine.mjs`、`main.mjs`、`preload.cjs` 語法檢查全過。
+- 安全掃描無 `backupQueue`、`expectedUpdatedAt` 或 token↔localStorage 路徑。
+
+已記錄的限制：沒有使用真 PAT／真 GitHub repo 對測；完全空白且沒有初始 ref 的自動建立 repo，受 frozen Git adapter 介面限制，首次同步仍需 repo 已有初始 commit。

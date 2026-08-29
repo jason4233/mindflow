@@ -1,0 +1,12 @@
+SYNC-D 已完成，未執行任何 git 指令。
+
+- 完成同步設定 dialog、PAT/repo/開關、狀態列、立即同步與首次設定指引：[settings.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/settings.js>)
+- Dashboard 側欄狀態與同步後重繪、Editor 更多選單與 dirty/CAS 分流均已掛接。
+- Web fallback 正確顯示「同步僅桌面版」。
+- PAT 不進 localStorage、console 或 config 回傳。
+- Playwright 已驗證 Web、desktop mock、editor、responsive、reduced-motion；0 console error。
+- 根目錄測試：13/13 runner entries，0 fail。
+- Desktop 測試：110 pass、4 個等待 SYNC-E 的既定 skip、0 fail。
+- 完整紀錄與主動自首：[CODEX_SYNC_D_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_SYNC_D_NOTES.md>)
+
+真 Electron IPC/E2E 仍需等待 SYNC-E 整合，已在 notes 明確標註。

@@ -1,0 +1,14 @@
+SYNC-B 已完成，未越界修改、未執行 git。
+
+- [desktop\sync-github.mjs](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/sync-github.mjs)：完整 GitHub REST adapter、ETag/304、422 retryable、大型 blob、錯誤分類、PAT 遮蔽。
+- [desktop\test\sync-github.test.mjs](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/desktop/test/sync-github.test.mjs)：24/24 通過。
+- [docs\CODEX_SYNC_B_NOTES.md](C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_SYNC_B_NOTES.md)：包含測試證據與主動自首。
+
+最終驗證：
+
+- SYNC-B：24/24，exit 0
+- Desktop 全套：109 pass、0 fail、4 個等待 SYNC-E 的預期 skip
+- Root 全套：exit 0
+- SYNC-F fake HTTP server 的 8 端點 adapter round-trip：通過
+
+保留事項：未使用真實 PAT／真實 GitHub private repo 對測，已在 notes 揭露。

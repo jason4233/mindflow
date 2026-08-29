@@ -24,6 +24,7 @@ import {
   importDocumentMarkdown,
   importDocumentTxt
 } from './io/import.js'
+import { initializeSyncSettings } from './settings.js'
 
 const elements = {
   heading: document.querySelector('#view-heading'),
@@ -66,6 +67,10 @@ const state = {
 }
 
 const previewCache = new Map()
+const syncSettings = initializeSyncSettings({
+  trigger: document.querySelector('#settings-button'),
+  statusHost: document.querySelector('.dashboard-sidebar')
+})
 
 ensurePhaseCStyles()
 initializeImportEntry()
@@ -75,7 +80,12 @@ render()
 function bindEvents() {
   document.querySelector('#create-document').addEventListener('click', createBlankDocument)
   elements.emptyAction.addEventListener('click', createBlankDocument)
-  document.querySelector('#settings-button').addEventListener('click', () => showToast('設定功能正在準備中。'))
+  window.addEventListener('mindflow:sync-applied', () => {
+    // 同步引擎已原子套用 localStorage；首頁只需重讀 store 並刷新顯示，不保留舊快取。
+    previewCache.clear()
+    render()
+    void syncSettings.refresh()
+  })
 
   document.querySelectorAll('[data-view-target]').forEach(button => {
     button.addEventListener('click', () => {

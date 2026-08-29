@@ -1,0 +1,16 @@
+已完成自動更新工作流，只修改指定範圍：
+
+- [updater.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\updater.mjs:9)：版本檢查、稍後抑制、下載進度、50 MiB 驗證、silent NSIS 安裝與重啟。
+- [main.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\main.mjs:280)：最小接線。
+- [package.json](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\package.json:36)：納入 updater、啟用 `runAfterFinish`。
+- [release.yml](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\.github\workflows\release.yml:53)：每次 CI 注入 `1.0.<run_number>`，latest body/title 帶版本。
+- [updater.test.mjs](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\desktop\test\updater.test.mjs:37)：7 項 updater 測試。
+- [CODEX_UPDATER_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_UPDATER_NOTES.md:25)：含完整自首。
+
+驗證結果：
+
+- 完整 `npm test`：108 pass、0 fail、4 skip。
+- `main.mjs`、`updater.mjs` 語法通過。
+- package JSON、release YAML 及 3 段 PowerShell workflow script 解析通過。
+- 未實際覆蓋安裝開發機，也未真正發布 GitHub Release。
+- 全程未執行任何 git 指令。
