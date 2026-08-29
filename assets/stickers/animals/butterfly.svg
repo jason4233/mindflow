@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Butterfly sticker">
+  <path d="M57 56C43 22 11 15 13 45c1 18 17 27 38 26-25 9-29 36-9 39 14 2 21-16 22-34" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M71 56c14-34 46-41 44-11-1 18-17 27-38 26 25 9 29 36 9 39-14 2-21-16-22-34" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <ellipse cx="64" cy="70" rx="8" ry="31" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M61 39C54 27 47 24 41 27M67 39c7-12 14-15 20-12" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="35" cy="47" r="7" fill="#FFF6D7"/><circle cx="93" cy="47" r="7" fill="#FFF6D7"/>
+</svg>

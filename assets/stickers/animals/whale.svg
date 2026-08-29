@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Whale sticker">
+  <path d="M15 75c0-27 22-45 51-45 20 0 34 8 42 19 5-9 11-14 17-15-1 13-5 23-13 30 8 6 12 15 12 25-8-1-16-5-22-12-8 15-23 25-43 25-25 0-44-9-44-27Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="42" cy="59" r="4" fill="#554F5B"/>
+  <path d="M33 78c8 7 17 8 26 3" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M63 30c0-9 4-15 10-19M67 31c7-6 14-7 21-5M61 31c-7-5-9-11-8-18" fill="none" stroke="#78BFA6" stroke-width="3" stroke-linecap="round"/>
+</svg>

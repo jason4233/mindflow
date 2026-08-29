@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Warning sign sticker">
+  <path d="m56 15-47 84c-5 9 1 17 11 17h88c10 0 16-8 11-17L72 15c-4-8-12-8-16 0Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M64 42v35" fill="none" stroke="#554F5B" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="64" cy="95" r="6" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Chemistry flask sticker">
+  <path d="M49 17h30M55 17v32L27 94c-6 10 1 20 13 20h48c12 0 19-10 13-20L73 49V17" fill="#FFFDF5" stroke="#554F5B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M38 80h52l11 18c5 8-1 16-10 16H37c-9 0-15-8-10-16l11-18Z" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="52" cy="94" r="5" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="70" cy="103" r="4" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="76" cy="69" r="5" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+</svg>

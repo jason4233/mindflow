@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sad face sticker">
+  <circle cx="64" cy="64" r="50" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M35 49c5-5 12-5 17 0M76 49c5-5 12-5 17 0" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="44" cy="59" r="4" fill="#554F5B"/><circle cx="84" cy="59" r="4" fill="#554F5B"/>
+  <path d="M45 92c10-16 28-16 38 0" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <path d="M96 63c7 10 6 19-1 22-7-3-8-12 1-22Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+</svg>

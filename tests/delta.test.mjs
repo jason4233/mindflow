@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises'
 import { createDefaultDoc, createNode, findNode } from '../js/editor/model.js'
 import { CommandManager } from '../js/editor/commands.js'
 import { KeyboardController } from '../js/editor/keyboard.js'
+import { ViewportController } from '../js/editor/viewport.js'
 import {
   createRelationCommand,
   deleteNodesWithOverlaysCommand,
@@ -33,6 +34,7 @@ import {
   attachFloatingNodeCommand,
   createFloatingNodeCommand,
   getFloatingMeta,
+  initializeFloatingFeatures,
   sanitizeFloatingClone,
   updateFloatingPositionCommand
 } from '../js/editor/floating.js'
@@ -125,6 +127,66 @@ function keyboardEvent(key) {
 }
 
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+
+function createFloatingDoubleClickHarness({ viewMode = 'map', presentation = false, handTool = false } = {}) {
+  const listeners = new Map()
+  const shell = { dataset: { viewMode } }
+  const body = { classList: new FakeClassList() }
+  if (presentation) body.classList.add('is-presentation-mode')
+  const canvas = {
+    hidden: false,
+    ownerDocument: { body },
+    addEventListener: (type, listener) => listeners.set(type, listener),
+    getBoundingClientRect: () => ({ left: 100, top: 50, width: 800, height: 600 }),
+    closest: selector => selector === '.editor-shell' ? shell : null,
+    classList: new FakeClassList()
+  }
+  const nodesLayer = {
+    addEventListener: () => {},
+    classList: new FakeClassList()
+  }
+  const world = {}
+  const svgLayer = {}
+  const doc = createDefaultDoc()
+  const manager = new CommandManager()
+  const selected = []
+  const edits = []
+  const ctx = {
+    doc,
+    manager,
+    selection: { set: ids => selected.push(ids) },
+    viewport: {
+      canvas,
+      panX: 40,
+      panY: -20,
+      zoom: 2,
+      spacePressed: handTool,
+      handToolActive: handTool,
+      screenToWorld: ViewportController.prototype.screenToWorld
+    },
+    edit: { start: (...args) => { edits.push(args); return true } },
+    elements: { canvas, world, nodesLayer, svgLayer },
+    featureState: { selectedOverlay: null, formatPainter: null },
+    featureHandlers: { escape: [] },
+    notify: () => {}
+  }
+  initializeFloatingFeatures(ctx)
+  return { ctx, listeners, selected, edits, canvas, world, nodesLayer, svgLayer }
+}
+
+function doubleClickEvent(target, { clientX = 500, clientY = 250, button = 0 } = {}) {
+  return {
+    type: 'dblclick',
+    button,
+    clientX,
+    clientY,
+    target,
+    defaultPrevented: false,
+    propagationStopped: false,
+    preventDefault() { this.defaultPrevented = true },
+    stopPropagation() { this.propagationStopped = true }
+  }
+}
 
 test('關聯線新增、調控制點/樣式、刪除皆可 undo/redo', () => {
   const doc = createDefaultDoc()
@@ -418,10 +480,10 @@ test('圖示同類互斥、再點移除，SVG 為自包含原創向量', () => {
   assert.doesNotMatch(createProgressSvg(100), /<image|http/iu)
 })
 
-test('貼紙 manifest 正好展平 36 張且每張檔案存在', async () => {
+test('貼紙 manifest 正好展平 120 張且每張檔案存在', async () => {
   const manifest = JSON.parse(await readFile(new URL('../assets/stickers/manifest.json', import.meta.url), 'utf8'))
   const stickers = flattenStickerManifest(manifest)
-  assert.equal(stickers.length, 36)
+  assert.equal(stickers.length, 120)
   for (const sticker of stickers) {
     assert.match(sticker.file, /^assets\/stickers\/.+\.svg$/u)
     const local = new URL(`../${sticker.file}`, import.meta.url)
@@ -456,6 +518,72 @@ test('懸浮節點 clone 掛入樹時清 token，root 複製時位移且清除�
   const duplicated = sanitizeFloatingClone(structuredClone(source), { asRootChild: true })
   assert.deepEqual(getFloatingMeta(duplicated), { x: 332, y: 224 })
   assert.equal(getFloatingMeta(duplicated.children[0]), null)
+})
+
+test('手形工具中雙擊空白畫布依 pan/zoom 換算座標，建立空白懸浮節點後編輯且可 undo', () => {
+  const harness = createFloatingDoubleClickHarness({ handTool: true })
+  const listener = harness.listeners.get('dblclick')
+  assert.equal(typeof listener, 'function')
+  const event = doubleClickEvent(harness.nodesLayer)
+
+  assert.equal(listener(event), true)
+  const [created] = harness.ctx.doc.root.children.slice(-1)
+  assert.deepEqual(getFloatingMeta(created), { x: 180, y: 110 })
+  assert.equal(created.text, '')
+  assert.deepEqual(harness.selected, [[created.id]])
+  assert.deepEqual(harness.edits, [[created.id, '']])
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(event.propagationStopped, true)
+
+  harness.ctx.manager.undo()
+  assert.equal(findNode(harness.ctx.doc.root, created.id), null)
+})
+
+test('雙擊只接受空白畫布基礎層，relation、summary 與 UI 不建立懸浮節點', () => {
+  const blank = createFloatingDoubleClickHarness()
+  const blankListener = blank.listeners.get('dblclick')
+  assert.equal(typeof blankListener, 'function')
+  assert.equal(blankListener(doubleClickEvent(blank.world)), true)
+
+  const ui = createFloatingDoubleClickHarness()
+  const uiListener = ui.listeners.get('dblclick')
+  assert.equal(typeof uiListener, 'function')
+  const before = ui.ctx.doc.root.children.length
+  const blockedTargets = [
+    { className: 'relation-overlay' },
+    { className: 'summary-node' },
+    { tagName: 'BUTTON' }
+  ]
+  for (const target of blockedTargets) assert.equal(uiListener(doubleClickEvent(target)), false)
+  assert.equal(uiListener(doubleClickEvent(ui.canvas, { button: 2 })), false)
+  assert.equal(ui.ctx.doc.root.children.length, before)
+  assert.deepEqual(ui.edits, [])
+})
+
+test('雙擊節點仍交由既有文字編輯，不誤建懸浮節點', () => {
+  const harness = createFloatingDoubleClickHarness()
+  const listener = harness.listeners.get('dblclick')
+  assert.equal(typeof listener, 'function')
+  const before = harness.ctx.doc.root.children.length
+  const nodeTarget = { closest: selector => selector.includes('.mind-node') ? nodeTarget : null }
+  const event = doubleClickEvent(nodeTarget)
+
+  assert.equal(listener(event), false)
+  assert.equal(harness.ctx.doc.root.children.length, before)
+  assert.deepEqual(harness.edits, [])
+  assert.equal(event.defaultPrevented, false)
+})
+
+test('大綱模式與演示模式雙擊空白畫布皆不建立懸浮節點', () => {
+  for (const options of [{ viewMode: 'outline' }, { presentation: true }]) {
+    const harness = createFloatingDoubleClickHarness(options)
+    const listener = harness.listeners.get('dblclick')
+    assert.equal(typeof listener, 'function')
+    const before = harness.ctx.doc.root.children.length
+    assert.equal(listener(doubleClickEvent(harness.canvas)), false)
+    assert.equal(harness.ctx.doc.root.children.length, before)
+    assert.deepEqual(harness.edits, [])
+  }
 })
 
 test('尋找與取代支援逐筆/全部並保留 undo', () => {

@@ -5,7 +5,13 @@
     { "id": "business-handshake", "name": "握手", "file": "assets/stickers/business/handshake.svg" },
     { "id": "business-presentation", "name": "簡報", "file": "assets/stickers/business/presentation.svg" },
     { "id": "business-calendar", "name": "行事曆", "file": "assets/stickers/business/calendar.svg" },
-    { "id": "business-target", "name": "目標", "file": "assets/stickers/business/target.svg" }
+    { "id": "business-target", "name": "目標", "file": "assets/stickers/business/target.svg" },
+    { "id": "business-idea", "name": "創意燈泡", "file": "assets/stickers/business/idea.svg" },
+    { "id": "business-coins", "name": "金幣", "file": "assets/stickers/business/coins.svg" },
+    { "id": "business-megaphone", "name": "擴音器", "file": "assets/stickers/business/megaphone.svg" },
+    { "id": "business-chart-growth", "name": "成長圖表", "file": "assets/stickers/business/chart-growth.svg" },
+    { "id": "business-office-building", "name": "辦公大樓", "file": "assets/stickers/business/office-building.svg" },
+    { "id": "business-clock", "name": "時鐘", "file": "assets/stickers/business/clock.svg" }
   ],
   "education": [
     { "id": "education-book", "name": "書本", "file": "assets/stickers/education/book.svg" },
@@ -13,7 +19,13 @@
     { "id": "education-microscope", "name": "顯微鏡", "file": "assets/stickers/education/microscope.svg" },
     { "id": "education-pencil", "name": "鉛筆", "file": "assets/stickers/education/pencil.svg" },
     { "id": "education-globe", "name": "地球儀", "file": "assets/stickers/education/globe.svg" },
-    { "id": "education-abacus", "name": "算盤", "file": "assets/stickers/education/abacus.svg" }
+    { "id": "education-abacus", "name": "算盤", "file": "assets/stickers/education/abacus.svg" },
+    { "id": "education-backpack", "name": "書包", "file": "assets/stickers/education/backpack.svg" },
+    { "id": "education-ruler", "name": "尺", "file": "assets/stickers/education/ruler.svg" },
+    { "id": "education-chemistry-flask", "name": "化學燒瓶", "file": "assets/stickers/education/chemistry-flask.svg" },
+    { "id": "education-diploma", "name": "畢業證書", "file": "assets/stickers/education/diploma.svg" },
+    { "id": "education-calculator", "name": "計算機", "file": "assets/stickers/education/calculator.svg" },
+    { "id": "education-school-bus", "name": "校車", "file": "assets/stickers/education/school-bus.svg" }
   ],
   "technology": [
     { "id": "technology-rocket", "name": "火箭", "file": "assets/stickers/technology/rocket.svg" },
@@ -21,7 +33,13 @@
     { "id": "technology-laptop", "name": "筆記型電腦", "file": "assets/stickers/technology/laptop.svg" },
     { "id": "technology-gear", "name": "齒輪", "file": "assets/stickers/technology/gear.svg" },
     { "id": "technology-satellite", "name": "衛星", "file": "assets/stickers/technology/satellite.svg" },
-    { "id": "technology-circuit-board", "name": "電路板", "file": "assets/stickers/technology/circuit-board.svg" }
+    { "id": "technology-circuit-board", "name": "電路板", "file": "assets/stickers/technology/circuit-board.svg" },
+    { "id": "technology-smartphone", "name": "智慧手機", "file": "assets/stickers/technology/smartphone.svg" },
+    { "id": "technology-cloud", "name": "雲端", "file": "assets/stickers/technology/cloud.svg" },
+    { "id": "technology-database", "name": "資料庫", "file": "assets/stickers/technology/database.svg" },
+    { "id": "technology-headphones", "name": "耳機", "file": "assets/stickers/technology/headphones.svg" },
+    { "id": "technology-game-controller", "name": "遊戲手把", "file": "assets/stickers/technology/game-controller.svg" },
+    { "id": "technology-smartwatch", "name": "智慧手錶", "file": "assets/stickers/technology/smartwatch.svg" }
   ],
   "expressions": [
     { "id": "expressions-happy-face", "name": "開心", "file": "assets/stickers/expressions/happy-face.svg" },
@@ -29,7 +47,13 @@
     { "id": "expressions-surprised-face", "name": "驚訝", "file": "assets/stickers/expressions/surprised-face.svg" },
     { "id": "expressions-sleepy-face", "name": "睏倦", "file": "assets/stickers/expressions/sleepy-face.svg" },
     { "id": "expressions-cool-face", "name": "酷", "file": "assets/stickers/expressions/cool-face.svg" },
-    { "id": "expressions-wink-face", "name": "眨眼", "file": "assets/stickers/expressions/wink-face.svg" }
+    { "id": "expressions-wink-face", "name": "眨眼", "file": "assets/stickers/expressions/wink-face.svg" },
+    { "id": "expressions-laughing-face", "name": "大笑", "file": "assets/stickers/expressions/laughing-face.svg" },
+    { "id": "expressions-sad-face", "name": "難過", "file": "assets/stickers/expressions/sad-face.svg" },
+    { "id": "expressions-angry-face", "name": "生氣", "file": "assets/stickers/expressions/angry-face.svg" },
+    { "id": "expressions-shy-face", "name": "害羞", "file": "assets/stickers/expressions/shy-face.svg" },
+    { "id": "expressions-confused-face", "name": "困惑", "file": "assets/stickers/expressions/confused-face.svg" },
+    { "id": "expressions-party-face", "name": "派對", "file": "assets/stickers/expressions/party-face.svg" }
   ],
   "travel": [
     { "id": "travel-airplane", "name": "飛機", "file": "assets/stickers/travel/airplane.svg" },
@@ -37,7 +61,13 @@
     { "id": "travel-compass", "name": "指南針", "file": "assets/stickers/travel/compass.svg" },
     { "id": "travel-camera", "name": "相機", "file": "assets/stickers/travel/camera.svg" },
     { "id": "travel-hot-air-balloon", "name": "熱氣球", "file": "assets/stickers/travel/hot-air-balloon.svg" },
-    { "id": "travel-map-pin", "name": "地圖定位", "file": "assets/stickers/travel/map-pin.svg" }
+    { "id": "travel-map-pin", "name": "地圖定位", "file": "assets/stickers/travel/map-pin.svg" },
+    { "id": "travel-passport", "name": "護照", "file": "assets/stickers/travel/passport.svg" },
+    { "id": "travel-sailboat", "name": "帆船", "file": "assets/stickers/travel/sailboat.svg" },
+    { "id": "travel-train", "name": "火車", "file": "assets/stickers/travel/train.svg" },
+    { "id": "travel-mountain", "name": "高山", "file": "assets/stickers/travel/mountain.svg" },
+    { "id": "travel-tent", "name": "帳篷", "file": "assets/stickers/travel/tent.svg" },
+    { "id": "travel-lighthouse", "name": "燈塔", "file": "assets/stickers/travel/lighthouse.svg" }
   ],
   "weather": [
     { "id": "weather-sun", "name": "太陽", "file": "assets/stickers/weather/sun.svg" },
@@ -45,6 +75,68 @@
     { "id": "weather-rainbow", "name": "彩虹", "file": "assets/stickers/weather/rainbow.svg" },
     { "id": "weather-snowflake", "name": "雪花", "file": "assets/stickers/weather/snowflake.svg" },
     { "id": "weather-thunderstorm", "name": "雷雨", "file": "assets/stickers/weather/thunderstorm.svg" },
-    { "id": "weather-moon-stars", "name": "月亮與星星", "file": "assets/stickers/weather/moon-stars.svg" }
+    { "id": "weather-moon-stars", "name": "月亮與星星", "file": "assets/stickers/weather/moon-stars.svg" },
+    { "id": "weather-wind", "name": "強風", "file": "assets/stickers/weather/wind.svg" },
+    { "id": "weather-tornado", "name": "龍捲風", "file": "assets/stickers/weather/tornado.svg" },
+    { "id": "weather-umbrella", "name": "雨傘", "file": "assets/stickers/weather/umbrella.svg" },
+    { "id": "weather-thermometer", "name": "溫度計", "file": "assets/stickers/weather/thermometer.svg" },
+    { "id": "weather-fog", "name": "霧", "file": "assets/stickers/weather/fog.svg" },
+    { "id": "weather-meteor", "name": "流星", "file": "assets/stickers/weather/meteor.svg" }
+  ],
+  "animals": [
+    { "id": "animals-cat", "name": "貓咪", "file": "assets/stickers/animals/cat.svg" },
+    { "id": "animals-dog", "name": "狗狗", "file": "assets/stickers/animals/dog.svg" },
+    { "id": "animals-fox", "name": "狐狸", "file": "assets/stickers/animals/fox.svg" },
+    { "id": "animals-bear", "name": "熊", "file": "assets/stickers/animals/bear.svg" },
+    { "id": "animals-rabbit", "name": "兔子", "file": "assets/stickers/animals/rabbit.svg" },
+    { "id": "animals-panda", "name": "貓熊", "file": "assets/stickers/animals/panda.svg" },
+    { "id": "animals-lion", "name": "獅子", "file": "assets/stickers/animals/lion.svg" },
+    { "id": "animals-elephant", "name": "大象", "file": "assets/stickers/animals/elephant.svg" },
+    { "id": "animals-whale", "name": "鯨魚", "file": "assets/stickers/animals/whale.svg" },
+    { "id": "animals-owl", "name": "貓頭鷹", "file": "assets/stickers/animals/owl.svg" },
+    { "id": "animals-butterfly", "name": "蝴蝶", "file": "assets/stickers/animals/butterfly.svg" },
+    { "id": "animals-turtle", "name": "烏龜", "file": "assets/stickers/animals/turtle.svg" }
+  ],
+  "food": [
+    { "id": "food-pizza", "name": "披薩", "file": "assets/stickers/food/pizza.svg" },
+    { "id": "food-burger", "name": "漢堡", "file": "assets/stickers/food/burger.svg" },
+    { "id": "food-sushi", "name": "壽司", "file": "assets/stickers/food/sushi.svg" },
+    { "id": "food-ramen", "name": "拉麵", "file": "assets/stickers/food/ramen.svg" },
+    { "id": "food-cupcake", "name": "杯子蛋糕", "file": "assets/stickers/food/cupcake.svg" },
+    { "id": "food-ice-cream", "name": "冰淇淋", "file": "assets/stickers/food/ice-cream.svg" },
+    { "id": "food-apple", "name": "蘋果", "file": "assets/stickers/food/apple.svg" },
+    { "id": "food-watermelon", "name": "西瓜", "file": "assets/stickers/food/watermelon.svg" },
+    { "id": "food-bread", "name": "吐司", "file": "assets/stickers/food/bread.svg" },
+    { "id": "food-coffee", "name": "咖啡", "file": "assets/stickers/food/coffee.svg" },
+    { "id": "food-taco", "name": "塔可", "file": "assets/stickers/food/taco.svg" },
+    { "id": "food-strawberry", "name": "草莓", "file": "assets/stickers/food/strawberry.svg" }
+  ],
+  "festivals": [
+    { "id": "festivals-birthday-cake", "name": "生日蛋糕", "file": "assets/stickers/festivals/birthday-cake.svg" },
+    { "id": "festivals-party-hat", "name": "派對帽", "file": "assets/stickers/festivals/party-hat.svg" },
+    { "id": "festivals-gift", "name": "禮物", "file": "assets/stickers/festivals/gift.svg" },
+    { "id": "festivals-balloons", "name": "氣球", "file": "assets/stickers/festivals/balloons.svg" },
+    { "id": "festivals-fireworks", "name": "煙火", "file": "assets/stickers/festivals/fireworks.svg" },
+    { "id": "festivals-lantern", "name": "燈籠", "file": "assets/stickers/festivals/lantern.svg" },
+    { "id": "festivals-snowman", "name": "雪人", "file": "assets/stickers/festivals/snowman.svg" },
+    { "id": "festivals-christmas-tree", "name": "聖誕樹", "file": "assets/stickers/festivals/christmas-tree.svg" },
+    { "id": "festivals-pumpkin", "name": "南瓜燈", "file": "assets/stickers/festivals/pumpkin.svg" },
+    { "id": "festivals-lucky-envelope", "name": "紅包", "file": "assets/stickers/festivals/lucky-envelope.svg" },
+    { "id": "festivals-flower-wreath", "name": "花環", "file": "assets/stickers/festivals/flower-wreath.svg" },
+    { "id": "festivals-confetti-pop", "name": "拉炮", "file": "assets/stickers/festivals/confetti-pop.svg" }
+  ],
+  "symbols-arrows": [
+    { "id": "symbols-arrows-arrow-right", "name": "向右箭頭", "file": "assets/stickers/symbols-arrows/arrow-right.svg" },
+    { "id": "symbols-arrows-arrow-left", "name": "向左箭頭", "file": "assets/stickers/symbols-arrows/arrow-left.svg" },
+    { "id": "symbols-arrows-arrow-up", "name": "向上箭頭", "file": "assets/stickers/symbols-arrows/arrow-up.svg" },
+    { "id": "symbols-arrows-arrow-down", "name": "向下箭頭", "file": "assets/stickers/symbols-arrows/arrow-down.svg" },
+    { "id": "symbols-arrows-turn-right", "name": "右轉", "file": "assets/stickers/symbols-arrows/turn-right.svg" },
+    { "id": "symbols-arrows-turn-left", "name": "左轉", "file": "assets/stickers/symbols-arrows/turn-left.svg" },
+    { "id": "symbols-arrows-refresh", "name": "重新整理", "file": "assets/stickers/symbols-arrows/refresh.svg" },
+    { "id": "symbols-arrows-cycle", "name": "循環", "file": "assets/stickers/symbols-arrows/cycle.svg" },
+    { "id": "symbols-arrows-expand", "name": "展開", "file": "assets/stickers/symbols-arrows/expand.svg" },
+    { "id": "symbols-arrows-contract", "name": "收合", "file": "assets/stickers/symbols-arrows/contract.svg" },
+    { "id": "symbols-arrows-check-badge", "name": "完成徽章", "file": "assets/stickers/symbols-arrows/check-badge.svg" },
+    { "id": "symbols-arrows-warning-sign", "name": "警告符號", "file": "assets/stickers/symbols-arrows/warning-sign.svg" }
   ]
 }

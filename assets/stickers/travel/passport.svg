@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Passport sticker">
+  <rect x="30" y="13" width="68" height="102" rx="9" fill="#C9B8E8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M42 13v102" fill="none" stroke="#9F8ACF" stroke-width="2"/>
+  <circle cx="67" cy="60" r="20" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M47 60h40M67 40c-7 6-11 12-11 20s4 14 11 20M67 40c7 6 11 12 11 20s-4 14-11 20" fill="none" stroke="#FFFDF5" stroke-width="2"/>
+  <path d="M54 94h27" fill="none" stroke="#FFE28A" stroke-width="4" stroke-linecap="round"/>
+</svg>

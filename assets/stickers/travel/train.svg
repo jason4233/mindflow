@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Train sticker">
+  <path d="M34 14h60c8 0 14 6 14 14v58c0 11-9 20-20 20H40c-11 0-20-9-20-20V28c0-8 6-14 14-14Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <rect x="31" y="28" width="66" height="35" rx="7" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M64 28v35" fill="none" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="43" cy="82" r="7" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/><circle cx="85" cy="82" r="7" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="m42 106-12 12M86 106l12 12M40 115h48" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ruler sticker">
+  <path d="m18 83 65-65c4-4 10-4 14 0l13 13c4 4 4 10 0 14l-65 65c-4 4-10 4-14 0L18 97c-4-4-4-10 0-14Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="m35 80 13 13M45 70l8 8M55 60l13 13M65 50l8 8M75 40l13 13M85 30l8 8" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="m26 91 13 13" fill="none" stroke="#FFFDF5" stroke-width="4" stroke-linecap="round"/>
+</svg>

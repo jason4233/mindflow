@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Rabbit sticker">
+  <path d="M40 52C23 25 26 8 38 8c13 0 20 20 20 43M88 52c17-27 14-44 2-44-13 0-20 20-20 43" fill="#FFFDF5" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="M42 44c-7-15-7-26-3-27M86 44c7-15 7-26 3-27" fill="none" stroke="#F4A7A0" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="64" cy="77" r="41" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="49" cy="70" r="4" fill="#554F5B"/><circle cx="79" cy="70" r="4" fill="#554F5B"/>
+  <path d="m58 80 6 5 6-5c0-5-12-5-12 0ZM64 85v10M52 94h24" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

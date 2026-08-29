@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pizza sticker">
+  <path d="M22 23c29-17 55-17 84 0L64 116 22 23Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M22 23c29-17 55-17 84 0l-8 18c-24-13-44-13-68 0l-8-18Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="49" cy="55" r="8" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/><circle cx="77" cy="48" r="7" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/><circle cx="65" cy="79" r="8" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M40 68c7 0 11 4 13 10M76 70c8-2 14 0 18 6" fill="none" stroke="#78BFA6" stroke-width="3" stroke-linecap="round"/>
+</svg>

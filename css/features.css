@@ -100,6 +100,8 @@
   background: rgb(255 255 255 / 50%);
 }
 
+.node-image--sticker { background: transparent; }
+
 .node-image img {
   width: 100%;
   height: 100%;
@@ -112,17 +114,40 @@
 .node-image__resize {
   position: absolute;
   z-index: 8;
-  right: -5px;
-  bottom: -5px;
   width: 11px;
   height: 11px;
   border: 2px solid #fff;
   border-radius: 3px;
   background: #f17e2e;
   box-shadow: 0 0 0 1px #c35b17;
-  cursor: nwse-resize;
   touch-action: none;
 }
+
+.node-image__resize--nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.node-image__resize--ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.node-image__resize--sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.node-image__resize--se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+
+.node-image__delete {
+  position: absolute;
+  z-index: 9;
+  top: -14px;
+  right: -14px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0 0 2px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: #ef6b67;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 24%);
+  font: 700 16px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.node-image__delete:hover { background: #d94f4b; }
 
 .node-attachment-badges {
   position: absolute;
@@ -507,8 +532,26 @@
 .feature-icon-button:hover { border-color: #f1b185; background: #fff7f1; }
 .feature-icon-button.is-active { border-color: #f17e2e; box-shadow: 0 0 0 2px rgb(241 126 46 / 16%); background: #fff2e8; }
 .feature-icon-grid--emoji { grid-template-columns: repeat(6, 1fr); }
-.sticker-status { padding: 8px 2px; color: #7b8798; font-size: 11px; }
-.sticker-section { margin-top: 8px; }
+.sticker-search {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid #dfe5ec;
+  border-radius: 9px;
+  color: #94a3b8;
+  background: #fff;
+}
+.sticker-search:focus-within { border-color: #f17e2e; box-shadow: 0 0 0 3px rgb(241 126 46 / 11%); }
+.sticker-search input { min-width: 0; width: 100%; border: 0; outline: 0; color: #334155; background: transparent; font: 12px/1.2 "Segoe UI", "Noto Sans TC", sans-serif; }
+.sticker-search input::placeholder { color: #a3adbb; }
+.sticker-category-tabs { display: flex; gap: 6px; margin: 10px 0 2px; padding-bottom: 6px; overflow-x: auto; scrollbar-width: thin; }
+.sticker-category-tab { flex: 0 0 auto; padding: 5px 9px; border: 1px solid #e2e7ed; border-radius: 999px; color: #64748b; background: #fff; font-size: 10px; cursor: pointer; }
+.sticker-category-tab:hover { border-color: #f1b185; color: #b55110; }
+.sticker-category-tab.is-active { border-color: #f17e2e; color: #a7470a; background: #fff1e7; }
+.sticker-status { padding: 5px 2px 8px; color: #7b8798; font-size: 11px; }
+.sticker-browser { max-height: min(560px, calc(100vh - 245px)); min-height: 160px; padding-right: 3px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .sticker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .sticker-button {
   min-width: 0;
@@ -526,6 +569,8 @@
 .sticker-button img { width: 56px; height: 56px; object-fit: contain; }
 .sticker-button:hover,
 .sticker-button.is-active { border-color: #f17e2e; background: #fff7f1; }
+.sticker-button.is-active { box-shadow: 0 0 0 2px rgb(241 126 46 / 15%); }
+.sticker-empty { padding: 36px 8px; color: #94a3b8; font-size: 12px; text-align: center; }
 
 /* 快捷鍵面板與專注 */
 .shortcut-dialog { width: min(660px, calc(100vw - 28px)); }

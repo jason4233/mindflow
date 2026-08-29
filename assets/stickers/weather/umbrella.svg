@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Umbrella sticker">
+  <path d="M13 61c5-26 25-44 51-44s46 18 51 44c-10-8-20-8-30 0-14-8-28-8-42 0-10-8-20-8-30 0Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M64 17v76c0 14 18 14 18 0" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <path d="M43 61c2-23 9-38 21-44M85 61c-2-23-9-38-21-44" fill="none" stroke="#FFFDF5" stroke-width="2"/>
+  <path d="M24 77v8M38 84v8M101 77v8" fill="none" stroke="#AFCDF3" stroke-width="4" stroke-linecap="round"/>
+</svg>

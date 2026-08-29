@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Shy face sticker">
+  <circle cx="64" cy="64" r="50" fill="#FFD4BA" stroke="#554F5B" stroke-width="2"/>
+  <path d="m35 50 8 5 8-5M77 50l8 5 8-5" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <ellipse cx="31" cy="72" rx="12" ry="7" fill="#F4A7A0" opacity=".8"/><ellipse cx="97" cy="72" rx="12" ry="7" fill="#F4A7A0" opacity=".8"/>
+  <path d="M54 80c6 5 14 5 20 0" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M23 93c9-4 17 0 20 9M105 93c-9-4-17 0-20 9" fill="#FFF6D7" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

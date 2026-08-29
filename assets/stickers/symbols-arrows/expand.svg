@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Expand arrows sticker">
+  <rect x="15" y="15" width="98" height="98" rx="22" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="M55 55 28 28M28 28v22M28 28h22M73 55l27-27M100 28v22M100 28H78M55 73l-27 27M28 100V78M28 100h22M73 73l27 27M100 100V78M100 100H78" fill="none" stroke="#AFCDF3" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="8" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+</svg>

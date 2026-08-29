@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sailboat sticker">
+  <path d="M64 15v74" fill="none" stroke="#554F5B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M59 23 24 75h35V23Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m69 31 31 44H69V31Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M17 82h94l-12 21c-4 7-11 11-19 11H48c-8 0-15-4-19-11L17 82Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M12 119c9-6 18-6 27 0s18 6 27 0 18-6 27 0 18 6 27 0" fill="none" stroke="#78BFA6" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Panda sticker">
+  <circle cx="32" cy="34" r="17" fill="#554F5B" stroke="#554F5B" stroke-width="2"/><circle cx="96" cy="34" r="17" fill="#554F5B" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="69" r="47" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <ellipse cx="45" cy="64" rx="13" ry="17" fill="#554F5B" transform="rotate(25 45 64)"/><ellipse cx="83" cy="64" rx="13" ry="17" fill="#554F5B" transform="rotate(-25 83 64)"/>
+  <circle cx="47" cy="63" r="4" fill="#FFFDF5"/><circle cx="81" cy="63" r="4" fill="#FFFDF5"/>
+  <ellipse cx="64" cy="87" rx="18" ry="14" fill="#FFD4BA" stroke="#554F5B" stroke-width="2"/>
+  <path d="m58 84 6 5 6-5c0-5-12-5-12 0ZM64 89v7" fill="#554F5B" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

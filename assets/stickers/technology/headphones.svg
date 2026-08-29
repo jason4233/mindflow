@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Headphones sticker">
+  <path d="M22 66V55c0-25 17-43 42-43s42 18 42 43v11" fill="none" stroke="#554F5B" stroke-width="8" stroke-linecap="round"/>
+  <rect x="14" y="57" width="25" height="48" rx="12" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <rect x="89" y="57" width="25" height="48" rx="12" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M39 74h8c7 0 11 4 11 11v16c0 8 6 13 14 13h13" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="91" cy="114" r="6" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+</svg>

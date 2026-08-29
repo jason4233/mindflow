@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ramen sticker">
+  <path d="M17 57h94c0 32-19 55-47 55S17 89 17 57Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M25 69h78" fill="none" stroke="#FFFDF5" stroke-width="3" stroke-linecap="round"/>
+  <path d="M36 89c17 8 39 8 56 0" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="M28 37h72M31 29h72" fill="none" stroke="#F4B78F" stroke-width="4" stroke-linecap="round"/>
+  <path d="M43 39c0 9 7 9 7 18M61 39c0 9 7 9 7 18M79 39c0 9 7 9 7 18" fill="none" stroke="#FFE28A" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="93" cy="50" r="9" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+</svg>

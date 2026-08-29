@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pumpkin sticker">
+  <path d="M58 27c0-12 7-19 18-19" fill="none" stroke="#78BFA6" stroke-width="7" stroke-linecap="round"/>
+  <path d="M64 24c32 0 50 18 50 46s-18 45-50 45S14 98 14 70s18-46 50-46Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M64 24c17 10 21 77 0 91M64 24c-17 10-21 77 0 91M35 33c-14 19-13 56 2 73M93 33c14 19 13 56-2 73" fill="none" stroke="#E79265" stroke-width="2"/>
+  <path d="m36 61 12-9 9 15-21-6ZM92 61l-12-9-9 15 21-6ZM43 85c13 10 29 10 42 0l-8 17H51l-8-17Z" fill="#554F5B" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+</svg>

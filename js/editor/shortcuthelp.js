@@ -38,6 +38,7 @@ export function initializeShortcutHelp(ctx) {
   ctx.featureHandlers.escape.push(() => {
     menu.close()
     closeDialog()
+    diagnostic.hide()
   })
 }
 

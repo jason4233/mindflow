@@ -13,6 +13,18 @@ const FLAGS = [
 ]
 const EMOJIS = ['😀', '😍', '🤔', '😮', '😴', '😎', '🥳', '😢', '😡', '👍', '👏', '🙏', '💡', '🔥', '⭐', '❤️', '✅', '❌']
 const SYMBOLS = ['★', '◆', '●', '▲', '■', '✓', '!', '?', '→', '∞', '§', '※']
+const STICKER_CATEGORY_LABELS = Object.freeze({
+  business: '商務',
+  education: '教育',
+  technology: '科技',
+  expressions: '表情',
+  travel: '旅行',
+  weather: '天氣',
+  animals: '動物',
+  food: '食物',
+  festivals: '節慶',
+  'symbols-arrows': '符號箭頭'
+})
 
 export function toggleNodeIconCommand(doc, nodeId, category, value) {
   const token = `${category}:${value}`
@@ -67,6 +79,58 @@ export function flattenStickerManifest(manifest) {
   return Object.entries(manifest || {}).flatMap(([category, items]) => (Array.isArray(items) ? items : []).map(item => ({ ...item, category })))
 }
 
+export function filterStickerManifest(manifest, { category = 'all', query = '' } = {}) {
+  const needle = normalizeStickerSearch(query)
+  return flattenStickerManifest(manifest).filter(item => {
+    if (category !== 'all' && item.category !== category) return false
+    if (!needle) return true
+    const haystack = [item.name, item.id, item.category, STICKER_CATEGORY_LABELS[item.category]]
+      .map(normalizeStickerSearch)
+      .join(' ')
+    return haystack.includes(needle)
+  })
+}
+
+export function attachNodeStickerCommand(doc, nodeId, sticker) {
+  let previous = null
+  return {
+    description: '附加節點貼紙',
+    do: () => {
+      const node = findNode(doc.root, nodeId)
+      if (!node || !sticker?.id || !sticker?.file) return false
+      if (!previous) {
+        previous = {
+          hasImage: Object.prototype.hasOwnProperty.call(node, 'image'),
+          image: cloneOptional(node.image),
+          icons: cloneOptional(node.icons)
+        }
+      }
+      const keepStickerSize = isStickerImage(node.image)
+      const image = {
+        src: sticker.file,
+        w: keepStickerSize ? clampStickerSize(node.image.w, 48, 360, 96) : 96,
+        h: keepStickerSize ? clampStickerSize(node.image.h, 36, 260, 96) : 96,
+        alt: sticker.name || '',
+        kind: 'sticker',
+        stickerId: sticker.id
+      }
+      const icons = Array.isArray(node.icons) ? node.icons.filter(token => !String(token).startsWith('sticker:')) : []
+      const changed = JSON.stringify(node.image) !== JSON.stringify(image) || JSON.stringify(node.icons || []) !== JSON.stringify(icons)
+      node.image = image
+      node.icons = icons
+      return changed
+    },
+    undo: () => {
+      const node = findNode(doc.root, nodeId)
+      if (!node || !previous) return
+      if (previous.hasImage) node.image = cloneOptional(previous.image)
+      else delete node.image
+      if (previous.icons === undefined) delete node.icons
+      else node.icons = cloneOptional(previous.icons)
+    }
+  }
+}
+
 export function initializeIconPanel(ctx) {
   const view = document.querySelector('[data-panel-view="icon"]')
   if (!view) return
@@ -88,7 +152,7 @@ export function initializeIconPanel(ctx) {
     if (subtab) { showSection(subtab.dataset.iconSubtab); return }
     const button = event.target.closest('[data-icon-value]')
     if (!button) return
-    applyIcon(ctx, button.dataset.iconCategory, button.dataset.iconValue)
+    applyIcon(ctx, button.dataset.iconCategory, button.dataset.iconValue, stickerMap)
   })
   window.addEventListener('mindflow:selectionchange', () => refreshActiveIcons(view, ctx))
   refreshActiveIcons(view, ctx)
@@ -106,7 +170,15 @@ function buildIconPanel(view, ctx, stickerMap) {
       <section class="panel-section"><h3>表情</h3><div class="feature-icon-grid feature-icon-grid--emoji" data-emoji-grid></div></section>
       <section class="panel-section"><h3>符號</h3><div class="feature-icon-grid feature-icon-grid--emoji" data-symbol-grid></div></section>
     </div>
-    <div data-icon-section="stickers" hidden><div class="sticker-status">載入貼紙中…</div><div class="sticker-categories"></div></div>`
+    <div data-icon-section="stickers" hidden>
+      <label class="sticker-search"><span aria-hidden="true">⌕</span><input type="search" data-sticker-search placeholder="搜尋貼紙" autocomplete="off" aria-label="搜尋貼紙"></label>
+      <div class="sticker-category-tabs" data-sticker-tabs role="tablist" aria-label="貼紙分類"></div>
+      <div class="sticker-status" role="status">載入貼紙中…</div>
+      <div class="sticker-browser" data-sticker-browser>
+        <div class="sticker-grid" data-sticker-grid></div>
+        <div class="sticker-empty" data-sticker-empty hidden>找不到符合的貼紙</div>
+      </div>
+    </div>`
 
   const addButton = (mount, category, value, label, content, useHtml = true) => {
     const button = document.createElement('button')
@@ -129,23 +201,34 @@ function buildIconPanel(view, ctx, stickerMap) {
 
 async function loadStickers(view, stickerMap, ctx) {
   const status = view.querySelector('.sticker-status')
-  const mount = view.querySelector('.sticker-categories')
+  const tabs = view.querySelector('[data-sticker-tabs]')
+  const grid = view.querySelector('[data-sticker-grid]')
+  const empty = view.querySelector('[data-sticker-empty]')
+  const search = view.querySelector('[data-sticker-search]')
   try {
     const response = await fetch('assets/stickers/manifest.json')
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const manifest = await response.json()
-    const labels = { business: '商務', education: '教育', technology: '科技', expressions: '表情', travel: '旅行', weather: '天氣' }
     const items = flattenStickerManifest(manifest)
     items.forEach(item => stickerMap.set(item.id, item))
-    status.textContent = `36 張原創貼紙 · ${items.length} 張已載入`
-    for (const [category, entries] of Object.entries(manifest)) {
-      const section = document.createElement('section')
-      section.className = 'panel-section sticker-section'
-      const heading = document.createElement('h3')
-      heading.textContent = labels[category] || category
-      const grid = document.createElement('div')
-      grid.className = 'sticker-grid'
-      entries.forEach(item => {
+    let activeCategory = 'all'
+
+    const categoryButtons = [['all', '全部'], ...Object.keys(manifest).map(category => [category, STICKER_CATEGORY_LABELS[category] || category])]
+    tabs.replaceChildren(...categoryButtons.map(([category, label]) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'sticker-category-tab'
+      button.dataset.stickerCategory = category
+      button.textContent = label
+      button.setAttribute('role', 'tab')
+      button.setAttribute('aria-selected', String(category === activeCategory))
+      button.classList.toggle('is-active', category === activeCategory)
+      return button
+    }))
+
+    const renderStickers = () => {
+      const filtered = filterStickerManifest(manifest, { category: activeCategory, query: search.value })
+      grid.replaceChildren(...filtered.map(item => {
         const button = document.createElement('button')
         button.type = 'button'
         button.className = 'sticker-button'
@@ -158,11 +241,26 @@ async function loadStickers(view, stickerMap, ctx) {
         const label = document.createElement('span')
         label.textContent = item.name
         button.append(image, label)
-        grid.append(button)
-      })
-      section.append(heading, grid)
-      mount.append(section)
+        return button
+      }))
+      empty.hidden = filtered.length > 0
+      status.textContent = `顯示 ${filtered.length} / ${items.length} 張原創貼紙`
+      refreshActiveIcons(view, ctx)
     }
+
+    tabs.addEventListener('click', event => {
+      const button = event.target.closest('[data-sticker-category]')
+      if (!button) return
+      activeCategory = button.dataset.stickerCategory
+      tabs.querySelectorAll('[data-sticker-category]').forEach(tab => {
+        const active = tab === button
+        tab.classList.toggle('is-active', active)
+        tab.setAttribute('aria-selected', String(active))
+      })
+      renderStickers()
+    })
+    search.addEventListener('input', renderStickers)
+    renderStickers()
   } catch (error) {
     console.error('貼紙 manifest 載入失敗', error)
     status.textContent = '貼紙載入失敗'
@@ -170,9 +268,16 @@ async function loadStickers(view, stickerMap, ctx) {
   }
 }
 
-function applyIcon(ctx, category, value) {
+function applyIcon(ctx, category, value, stickerMap = new Map()) {
   const id = ctx.selection.primaryId
   if (!id) { ctx.notify('請先選取節點'); return false }
+  if (category === 'sticker') {
+    const sticker = stickerMap.get(value)
+    if (!sticker) { ctx.notify('找不到這張貼紙'); return false }
+    const changed = ctx.manager.execute(attachNodeStickerCommand(ctx.doc, id, sticker))
+    if (changed) ctx.notify(`已附加「${sticker.name}」貼紙`)
+    return changed
+  }
   return ctx.manager.execute(toggleNodeIconCommand(ctx.doc, id, category, value))
 }
 
@@ -180,7 +285,11 @@ function refreshActiveIcons(view, ctx) {
   const node = findNode(ctx.doc.root, ctx.selection.primaryId)
   const icons = new Set(node?.icons || [])
   view.querySelectorAll('[data-icon-value]').forEach(button => {
-    button.classList.toggle('is-active', icons.has(`${button.dataset.iconCategory}:${button.dataset.iconValue}`))
+    const active = button.dataset.iconCategory === 'sticker'
+      ? node?.image?.stickerId === button.dataset.iconValue || node?.image?.src === button.querySelector('img')?.getAttribute('src')
+      : icons.has(`${button.dataset.iconCategory}:${button.dataset.iconValue}`)
+    button.classList.toggle('is-active', active)
+    button.setAttribute('aria-pressed', String(active))
   })
 }
 
@@ -221,3 +330,10 @@ function decorateNodeIcons({ doc, positions, nodesLayer, nodeLookup }, stickerMa
 }
 
 function cssEscape(value) { return globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^\w-]/g, '\\$&') }
+function normalizeStickerSearch(value) { return String(value || '').normalize('NFKC').trim().toLocaleLowerCase('zh-TW') }
+function cloneOptional(value) { return value === undefined ? undefined : structuredCloneSafe(value) }
+function isStickerImage(image) { return /^assets\/stickers\/[a-z0-9-]+\/[a-z0-9-]+\.svg(?:[?#].*)?$/iu.test(String(image?.src || '')) }
+function clampStickerSize(value, min, max, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback
+}

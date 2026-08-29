@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="School bus sticker">
+  <path d="M19 38c0-8 6-14 14-14h62c8 0 14 6 14 14v56H19V38Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M30 37h23v25H30zM62 37h18v25H62zM89 37h11v25H89z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M19 72h90M19 88h90" fill="none" stroke="#F4B78F" stroke-width="4"/>
+  <circle cx="39" cy="97" r="12" fill="#554F5B" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="39" cy="97" r="5" fill="#C9B8E8"/>
+  <circle cx="91" cy="97" r="12" fill="#554F5B" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="91" cy="97" r="5" fill="#C9B8E8"/>
+  <path d="M8 55h11M109 55h11" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

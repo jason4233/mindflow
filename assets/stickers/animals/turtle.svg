@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Turtle sticker">
+  <ellipse cx="61" cy="69" rx="43" ry="34" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M36 49c7 12 16 19 25 20 9-1 18-8 25-20M36 89c7-12 16-19 25-20 9 1 18 8 25 20M61 35v68" fill="none" stroke="#78BFA6" stroke-width="2"/>
+  <path d="M101 61c14-5 24 0 24 10s-10 15-24 10" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="115" cy="69" r="3" fill="#554F5B"/>
+  <path d="M24 49 12 39M24 89l-12 10M76 100l8 14M78 38l9-13" fill="none" stroke="#554F5B" stroke-width="7" stroke-linecap="round"/>
+</svg>

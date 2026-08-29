@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Smartphone sticker">
+  <rect x="35" y="10" width="58" height="108" rx="14" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <rect x="42" y="24" width="44" height="73" rx="6" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M57 17h14" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="64" cy="107" r="5" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="m51 61 9 9 18-21" fill="none" stroke="#78BFA6" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

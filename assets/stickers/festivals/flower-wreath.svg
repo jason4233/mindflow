@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Flower wreath sticker">
+  <circle cx="64" cy="64" r="41" fill="none" stroke="#78BFA6" stroke-width="12"/>
+  <g stroke="#554F5B" stroke-width="2">
+    <path d="M64 8c5 9 5 15 0 22-5-7-5-13 0-22Z" fill="#F4A7A0"/><path d="M120 64c-9 5-15 5-22 0 7-5 13-5 22 0Z" fill="#FFE28A"/>
+    <path d="M64 120c-5-9-5-15 0-22 5 7 5 13 0 22Z" fill="#AFCDF3"/><path d="M8 64c9-5 15-5 22 0-7 5-13 5-22 0Z" fill="#C9B8E8"/>
+    <path d="M103 25c-3 10-8 15-16 16 1-8 6-13 16-16Z" fill="#F4A7A0"/><path d="M103 103c-10-3-15-8-16-16 8 1 13 6 16 16Z" fill="#FFE28A"/>
+    <path d="M25 103c3-10 8-15 16-16-1 8-6 13-16 16Z" fill="#AFCDF3"/><path d="M25 25c10 3 15 8 16 16-8-1-13-6-16-16Z" fill="#C9B8E8"/>
+  </g>
+  <path d="M47 63c7 8 11 14 17 27 6-13 10-19 17-27" fill="none" stroke="#F4B78F" stroke-width="3" stroke-linecap="round"/>
+</svg>

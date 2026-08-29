@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Cupcake sticker">
+  <path d="M30 65h68l-9 49H39l-9-49Z" fill="#AFCDF3" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M45 70v38M64 70v38M83 70v38" fill="none" stroke="#FFFDF5" stroke-width="3"/>
+  <path d="M31 67c-8-14 4-25 17-21-1-16 22-22 29-9 14-6 27 5 23 19 10 2 14 12 8 20H24c-4-4-1-8 7-9Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="67" cy="26" r="9" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M66 17c0-6 4-9 9-10" fill="none" stroke="#78BFA6" stroke-width="3" stroke-linecap="round"/>
+</svg>

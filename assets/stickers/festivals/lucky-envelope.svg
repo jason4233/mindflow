@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Lucky envelope sticker">
+  <rect x="25" y="12" width="78" height="104" rx="12" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M25 33h78L64 64 25 33Z" fill="#FFD4BA" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="64" cy="77" r="22" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M53 69h22M53 78h22M57 61c5 6 9 6 14 0M58 69v22M70 69v22M52 86h24" fill="none" stroke="#D98263" stroke-width="2" stroke-linecap="round"/>
+  <path d="M36 103h12M80 103h12" fill="none" stroke="#FFF6D7" stroke-width="4" stroke-linecap="round"/>
+</svg>

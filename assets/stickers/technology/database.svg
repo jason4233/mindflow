@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Database sticker">
+  <ellipse cx="64" cy="29" rx="40" ry="15" fill="#C9B8E8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M24 29v23c0 8 18 15 40 15s40-7 40-15V29" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <path d="M24 52v23c0 8 18 15 40 15s40-7 40-15V52" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M24 75v23c0 8 18 15 40 15s40-7 40-15V75" fill="#FFD4BA" stroke="#554F5B" stroke-width="2"/>
+  <path d="M92 49v3M92 72v3M92 95v3" fill="none" stroke="#FFFDF5" stroke-width="5" stroke-linecap="round"/>
+</svg>

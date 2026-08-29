@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Fox sticker">
+  <path d="m22 31 30 12c8-3 16-3 24 0l30-12-12 47c-5 22-16 36-30 36S39 100 34 78L22 31Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M34 59c13 5 22 15 30 32 8-17 17-27 30-32-3 27-12 49-30 55-18-6-27-28-30-55Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="47" cy="67" r="4" fill="#554F5B"/><circle cx="81" cy="67" r="4" fill="#554F5B"/>
+  <path d="m58 94 6 5 6-5c0-5-12-5-12 0Z" fill="#554F5B" stroke="#554F5B" stroke-width="2"/>
+</svg>

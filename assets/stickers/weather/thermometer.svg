@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Thermometer sticker">
+  <path d="M51 73V29c0-11 6-18 13-18s13 7 13 18v44c9 5 15 15 15 26 0 16-12 28-28 28S36 115 36 99c0-11 6-21 15-26Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M64 39v56" fill="none" stroke="#F4A7A0" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="64" cy="99" r="16" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M80 35h14M80 51h10M80 67h14" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

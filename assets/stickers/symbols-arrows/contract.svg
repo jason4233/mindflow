@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Contract arrows sticker">
+  <rect x="15" y="15" width="98" height="98" rx="22" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="m22 22 31 31M53 53V32M53 53H32M106 22 75 53M75 53V32M75 53h21M22 106l31-31M53 75v21M53 75H32M106 106 75 75M75 75v21M75 75h21" fill="none" stroke="#A9D8C8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="8" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+</svg>

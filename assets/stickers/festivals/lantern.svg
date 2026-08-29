@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Festival lantern sticker">
+  <path d="M50 13h28M47 27h34M47 101h34M53 115h22" fill="none" stroke="#554F5B" stroke-width="5" stroke-linecap="round"/>
+  <path d="M47 27c-22 15-22 59 0 74h34c22-15 22-59 0-74H47Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M55 27c-12 17-12 57 0 74M73 27c12 17 12 57 0 74" fill="none" stroke="#FFE28A" stroke-width="4"/>
+  <path d="M64 115v10M56 124h16" fill="none" stroke="#F4B78F" stroke-width="2" stroke-linecap="round"/>
+  <path d="M40 65h48" fill="none" stroke="#FFF6D7" stroke-width="3"/>
+</svg>

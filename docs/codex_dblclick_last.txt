@@ -1,0 +1,12 @@
+已完成 DBLCLICK 工作流。
+
+- [floating.js](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/js/editor/floating.js:111>)：空白畫布雙擊新增可 undo 懸浮節點，正確換算 pan/zoom，立即以空字串進入編輯。
+- [delta.test.mjs](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/tests/delta.test.mjs:523>)：覆蓋座標、手形工具、空白判定、節點不誤觸、模式阻擋與 undo。
+- [CODEX_DBLCLICK_NOTES.md](</C:/Users/ASUS/Desktop/工具/AI工具項目/gitmind-clone/docs/CODEX_DBLCLICK_NOTES.md:1>)：已含完整交接與主動自首。
+
+驗證：
+
+- `node --test`：35/35，0 fail
+- `tests/delta.test.mjs`：21/21
+- Syntax checks：全部 exit 0
+- 未碰指定禁改檔案，未執行任何 git 指令。

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="School backpack sticker">
+  <path d="M44 35v-7c0-7 5-12 12-12h16c7 0 12 5 12 12v7" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <rect x="26" y="31" width="76" height="82" rx="22" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M26 58h76" fill="none" stroke="#554F5B" stroke-width="2"/>
+  <rect x="39" y="72" width="50" height="29" rx="10" fill="#FFD4BA" stroke="#554F5B" stroke-width="2"/>
+  <path d="M48 31v22M80 31v22" fill="none" stroke="#FFF6D7" stroke-width="5" stroke-linecap="round"/>
+</svg>

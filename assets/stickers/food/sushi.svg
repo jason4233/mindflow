@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Sushi sticker">
+  <ellipse cx="64" cy="40" rx="42" ry="24" fill="#554F5B" stroke="#554F5B" stroke-width="2"/>
+  <path d="M22 40v48c0 13 19 24 42 24s42-11 42-24V40" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <ellipse cx="64" cy="40" rx="34" ry="18" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <ellipse cx="64" cy="40" rx="16" ry="10" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M22 65c25 10 59 10 84 0" fill="none" stroke="#78BFA6" stroke-width="2"/>
+</svg>

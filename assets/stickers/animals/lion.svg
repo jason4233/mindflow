@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Lion sticker">
+  <path d="M64 8 77 19l17-2 7 16 15 8-4 17 8 14-12 13-1 17-17 4-11 14-15-8-15 8-11-14-17-4-1-17L8 72l8-14-4-17 15-8 7-16 17 2L64 8Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="64" cy="65" r="37" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="50" cy="59" r="4" fill="#554F5B"/><circle cx="78" cy="59" r="4" fill="#554F5B"/>
+  <ellipse cx="64" cy="78" rx="16" ry="13" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="m58 74 6 5 6-5c0-5-12-5-12 0ZM64 79v8" fill="#554F5B" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Taco sticker">
+  <path d="M15 91c3-37 22-62 49-62s46 25 49 62H15Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M26 76c8-15 20-25 38-25s30 10 38 25" fill="none" stroke="#F4B78F" stroke-width="11" stroke-linecap="round"/>
+  <path d="M31 68c10-13 19-3 29-11 10 12 20-2 34 11" fill="none" stroke="#78BFA6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="48" cy="72" r="5" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/><circle cx="80" cy="70" r="5" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M15 91h98" fill="none" stroke="#554F5B" stroke-width="2"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Mountain sticker">
+  <path d="m9 105 40-72c3-6 10-6 13 0l17 30 9-15c3-5 9-5 12 0l21 57H9Z" fill="#A9D8C8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m37 55 12-22c3-6 10-6 13 0l12 22-13-7-9 9-7-8-8 6Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="95" cy="25" r="13" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M17 105h94" fill="none" stroke="#F4B78F" stroke-width="4" stroke-linecap="round"/>
+</svg>

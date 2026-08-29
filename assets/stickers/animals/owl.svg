@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Owl sticker">
+  <path d="M27 45 19 17l28 15c10-5 24-5 34 0l28-15-8 28c7 9 10 20 10 33 0 25-20 40-47 40S17 103 17 78c0-13 3-24 10-33Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="45" cy="64" r="19" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/><circle cx="83" cy="64" r="19" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="45" cy="64" r="7" fill="#554F5B"/><circle cx="83" cy="64" r="7" fill="#554F5B"/>
+  <path d="m56 77 8 10 8-10-8-5-8 5Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M41 101h46" fill="none" stroke="#F4A7A0" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Growth chart sticker">
+  <rect x="16" y="18" width="96" height="92" rx="14" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="M32 92V72M52 92V60M72 92V48M92 92V34" fill="none" stroke="#AFCDF3" stroke-width="12" stroke-linecap="round"/>
+  <path d="m29 68 22-15 19 5 25-27" fill="none" stroke="#78BFA6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m86 31 11-2-2 11" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

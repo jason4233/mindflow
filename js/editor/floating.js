@@ -43,7 +43,7 @@ export function sanitizeFloatingClone(node, { asRootChild = false, offset = { x:
 }
 
 export function createFloatingNodeCommand(doc, point, overrides = {}) {
-  const node = createNode(overrides.text || '懸浮主題', {
+  const node = createNode(overrides.text ?? '懸浮主題', {
     id: overrides.id || createId('node'),
     style: { ...(overrides.style || {}), shape: overrides.style?.shape || 'rounded-large' },
     icons: [...(overrides.icons || []), floatingToken(point)]
@@ -111,6 +111,8 @@ export function attachFloatingNodeCommand(doc, nodeId, parentId, index) {
 export function initializeFloatingFeatures(ctx) {
   registerOverlay(overlayCtx => drawFloatingNodes(overlayCtx, ctx))
 
+  ctx.elements.canvas.addEventListener('dblclick', event => createFloatingNodeFromCanvasDoubleClick(event, ctx))
+
   registerAction('floatingNode', sourceEvent => {
     let point
     if (sourceEvent && Number.isFinite(sourceEvent.clientX) && Number.isFinite(sourceEvent.clientY) && sourceEvent.type === 'contextmenu') {
@@ -151,6 +153,30 @@ export function initializeFloatingFeatures(ctx) {
   }, { capture: true })
 
   ctx.featureHandlers.escape.push(() => clearPainter(ctx))
+}
+
+function createFloatingNodeFromCanvasDoubleClick(event, ctx) {
+  if (!isBlankCanvasDoubleClick(event, ctx)) return false
+  const point = ctx.viewport.screenToWorld(event.clientX, event.clientY)
+  const command = createFloatingNodeCommand(ctx.doc, point, { text: '' })
+  if (!ctx.manager.execute(command)) return false
+
+  event.preventDefault()
+  event.stopPropagation()
+  ctx.selection.set([command.nodeId])
+  // execute 會先觸發重繪；此時節點 DOM 已存在，空 seed 可直接進入輸入狀態。
+  ctx.edit.start(command.nodeId, '')
+  return true
+}
+
+function isBlankCanvasDoubleClick(event, ctx) {
+  if (event.button !== 0 || event.defaultPrevented) return false
+  const { canvas, world, nodesLayer, svgLayer } = ctx.elements
+  if (canvas.hidden || canvas.closest?.('.editor-shell')?.dataset.viewMode === 'outline') return false
+  const body = canvas.ownerDocument?.body || globalThis.document?.body
+  if (body?.classList?.contains('is-presentation-mode')) return false
+  // 採 allowlist：節點、關聯線、概要與畫布 UI 都是這四層的子元素，不會誤判為空白。
+  return event.target === canvas || event.target === world || event.target === nodesLayer || event.target === svgLayer
 }
 
 function drawFloatingNodes({ doc, positions, nodesLayer, svgLayer, nodeLookup }, ctx) {

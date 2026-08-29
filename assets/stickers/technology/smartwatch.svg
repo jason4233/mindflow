@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Smartwatch sticker">
+  <path d="M49 11h30l6 28H43l6-28ZM43 89h42l-6 28H49l-6-28Z" fill="#A9D8C8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="34" y="34" width="60" height="60" rx="17" fill="#554F5B" stroke="#554F5B" stroke-width="2"/>
+  <rect x="42" y="42" width="44" height="44" rx="11" fill="#FFFDF5" stroke="#AFCDF3" stroke-width="2"/>
+  <path d="M64 51v14l10 7" fill="none" stroke="#F4A7A0" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="64" cy="65" r="4" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+</svg>

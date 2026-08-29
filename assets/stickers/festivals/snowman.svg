@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Snowman sticker">
+  <circle cx="64" cy="83" r="37" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="43" r="28" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M43 19h42M49 19l4-14h22l4 14" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="55" cy="40" r="3" fill="#554F5B"/><circle cx="73" cy="40" r="3" fill="#554F5B"/>
+  <path d="m64 46 14 5-14 5" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M42 63c13 8 31 8 44 0" fill="none" stroke="#F4A7A0" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="64" cy="82" r="4" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/><circle cx="64" cy="99" r="4" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+</svg>

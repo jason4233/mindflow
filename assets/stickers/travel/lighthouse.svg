@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Lighthouse sticker">
+  <path d="m43 111 8-72h26l8 72H43Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m48 67 31 9 3 23-37-11 3-21Z" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <rect x="45" y="25" width="38" height="19" rx="5" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M40 25h48L72 12H56L40 25Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M31 39 9 51M97 39l22 12M32 111h64" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="M18 119c8-5 16-5 24 0s16 5 24 0 16-5 24 0 16 5 24 0" fill="none" stroke="#AFCDF3" stroke-width="3" stroke-linecap="round"/>
+</svg>

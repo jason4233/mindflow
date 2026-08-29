@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Balloons sticker">
+  <ellipse cx="38" cy="39" rx="23" ry="29" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <ellipse cx="88" cy="42" rx="23" ry="29" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <ellipse cx="63" cy="61" rx="24" ry="30" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="m34 68 4 7 5-7M84 71l4 7 5-7M59 91l4 7 5-7" fill="#FFD4BA" stroke="#554F5B" stroke-width="2"/>
+  <path d="M38 75c0 24 25 20 25 43M88 78c0 17-25 18-25 40M63 98v20" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+  <path d="M28 27c3-6 7-9 13-10M78 30c3-6 7-9 13-10" fill="none" stroke="#FFFDF5" stroke-width="4" stroke-linecap="round"/>
+</svg>

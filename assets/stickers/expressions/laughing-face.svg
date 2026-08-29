@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Laughing face sticker">
+  <circle cx="64" cy="64" r="50" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="m34 51 9-7 9 7M76 51l9-7 9 7" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M39 68h50c0 23-12 34-25 34S39 91 39 68Z" fill="#FFFDF5" stroke="#554F5B" stroke-width="2"/>
+  <path d="M47 91c8-8 26-8 34 0" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M29 59c-8 7-8 17 0 21M99 59c8 7 8 17 0 21" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+</svg>

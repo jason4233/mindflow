@@ -258,19 +258,38 @@ function decorateNodeAttachments({ doc, positions, nodesLayer, nodeLookup }, ctx
       element.style.height = `${position.h + height + 10}px`
       const wrapper = document.createElement('span')
       wrapper.className = 'node-image'
+      const stickerImage = isStickerImage(node.image)
+      wrapper.classList.toggle('node-image--sticker', stickerImage)
       wrapper.style.width = `${width}px`
       wrapper.style.height = `${height}px`
       const image = document.createElement('img')
       image.src = node.image.src
-      image.alt = ''
+      image.alt = node.image.alt || (stickerImage ? '節點貼紙' : '')
       image.draggable = false
       wrapper.append(image)
       if (selected.has(id)) {
-        const handle = document.createElement('span')
-        handle.className = 'node-image__resize'
-        handle.title = '拖曳調整圖片大小'
-        handle.addEventListener('pointerdown', event => beginImageResize(event, ctx, id, node.image, wrapper))
-        wrapper.append(handle)
+        for (const corner of ['nw', 'ne', 'sw', 'se']) {
+          const handle = document.createElement('span')
+          handle.className = `node-image__resize node-image__resize--${corner}`
+          handle.dataset.resizeCorner = corner
+          handle.title = '拖曳角落調整圖片大小'
+          handle.setAttribute('aria-hidden', 'true')
+          handle.addEventListener('pointerdown', event => beginImageResize(event, ctx, id, node.image, wrapper, corner))
+          wrapper.append(handle)
+        }
+        const remove = document.createElement('button')
+        remove.type = 'button'
+        remove.className = 'node-image__delete'
+        remove.textContent = '×'
+        remove.title = stickerImage ? '刪除貼紙' : '刪除圖片'
+        remove.setAttribute('aria-label', remove.title)
+        remove.addEventListener('pointerdown', event => { event.preventDefault(); event.stopPropagation() })
+        remove.addEventListener('click', event => {
+          event.preventDefault()
+          event.stopPropagation()
+          if (ctx.manager.execute(updateNodeFieldsCommand(ctx.doc, id, { image: null }, remove.title))) ctx.notify(`${remove.title}完成`)
+        })
+        wrapper.append(remove)
       }
       element.insertBefore(wrapper, element.querySelector('.mind-node__text'))
     }
@@ -615,19 +634,34 @@ async function attachImageFile(ctx, nodeId, file) {
   }
 }
 
-function beginImageResize(event, ctx, nodeId, original, wrapper) {
+export function calculateImageResize(original, delta, corner = 'se') {
+  const originalWidth = clamp(original?.w, 48, 360, 180)
+  const originalHeight = clamp(original?.h, 36, 260, 110)
+  const xDirection = corner.includes('e') ? 1 : -1
+  const yDirection = corner.includes('s') ? 1 : -1
+  const scaleX = (originalWidth + (Number(delta?.x) || 0) * xDirection) / originalWidth
+  const scaleY = (originalHeight + (Number(delta?.y) || 0) * yDirection) / originalHeight
+  // 取游標位移較明顯的軸，避免非正方形圖片拖角時比例在兩軸間跳動。
+  const scale = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY
+  const minScale = Math.max(48 / originalWidth, 36 / originalHeight)
+  const maxScale = Math.min(360 / originalWidth, 260 / originalHeight)
+  const safeScale = Math.max(minScale, Math.min(maxScale, scale))
+  return { w: Math.round(originalWidth * safeScale), h: Math.round(originalHeight * safeScale) }
+}
+
+function beginImageResize(event, ctx, nodeId, original, wrapper, corner = 'se') {
   event.preventDefault()
   event.stopPropagation()
   const pointerId = event.pointerId
   const start = ctx.viewport.screenToWorld(event.clientX, event.clientY)
-  const ratio = Math.max(0.1, Number(original.w) / Math.max(1, Number(original.h)))
   let width = clamp(original.w, 48, 360, 180)
   let height = clamp(original.h, 36, 260, 110)
   const move = moveEvent => {
     if (moveEvent.pointerId !== pointerId) return
     const point = ctx.viewport.screenToWorld(moveEvent.clientX, moveEvent.clientY)
-    width = Math.max(48, Math.min(360, Number(original.w) + point.x - start.x))
-    height = Math.max(36, Math.min(260, width / ratio))
+    const next = calculateImageResize(original, { x: point.x - start.x, y: point.y - start.y }, corner)
+    width = next.w
+    height = next.h
     wrapper.style.width = `${width}px`
     wrapper.style.height = `${height}px`
   }
@@ -681,4 +715,5 @@ function clamp(value, min, max, fallback) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback
 }
+function isStickerImage(image) { return /^assets\/stickers\/[a-z0-9-]+\/[a-z0-9-]+\.svg(?:[?#].*)?$/iu.test(String(image?.src || '')) }
 function cssEscape(value) { return globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^\w-]/g, '\\$&') }

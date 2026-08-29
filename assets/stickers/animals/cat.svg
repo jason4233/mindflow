@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Cat sticker">
+  <path d="m28 48 3-30 22 16c7-3 15-3 22 0l22-16 3 30c7 8 11 18 11 29 0 25-21 39-47 39S17 102 17 77c0-11 4-21 11-29Z" fill="#FFD4BA" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M37 67h1M89 67h1" fill="none" stroke="#554F5B" stroke-width="7" stroke-linecap="round"/>
+  <path d="m58 78 6 5 6-5-6-4-6 4ZM64 83v7M64 90c-5 6-12 6-16 1M64 90c5 6 12 6 16 1" fill="#F4A7A0" stroke="#554F5B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M43 83 18 78M43 91l-24 4M85 83l25-5M85 91l24 4" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

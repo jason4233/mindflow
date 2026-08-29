@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Bread sticker">
+  <path d="M24 43c0-17 16-31 40-31s40 14 40 31v64c0 6-5 10-11 10H35c-6 0-11-4-11-10V43Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M35 46c0-12 12-22 29-22s29 10 29 22v57c0 3-3 5-6 5H41c-3 0-6-2-6-5V46Z" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <path d="M48 50c4-8 10-12 18-13M47 70c5-8 11-11 19-12" fill="none" stroke="#FFE28A" stroke-width="5" stroke-linecap="round"/>
+</svg>

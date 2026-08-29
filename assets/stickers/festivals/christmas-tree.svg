@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Christmas tree sticker">
+  <path d="m64 8 6 12 14 2-10 10 3 14-13-7-13 7 3-14-10-10 14-2 6-12Z" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M64 31 35 69h16L27 98h74L77 69h16L64 31Z" fill="#A9D8C8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M55 98h18v21H55z" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="49" cy="72" r="5" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/><circle cx="77" cy="60" r="5" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/><circle cx="68" cy="87" r="5" fill="#C9B8E8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M44 83c13-8 27-8 40 0" fill="none" stroke="#FFF6D7" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Party hat sticker">
+  <path d="m19 105 47-88 44 88H19Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m41 65 35 19M52 44l35 19M30 86l34 19" fill="none" stroke="#F4A7A0" stroke-width="7"/>
+  <ellipse cx="64" cy="105" rx="48" ry="11" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="66" cy="17" r="9" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+  <path d="M91 21h1M105 39h1M94 53h1M28 23h1M16 45h1" fill="none" stroke="#AFCDF3" stroke-width="6" stroke-linecap="round"/>
+</svg>

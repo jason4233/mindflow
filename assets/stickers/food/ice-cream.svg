@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ice cream sticker">
+  <path d="m39 63 25 58 25-58H39Z" fill="#F4B78F" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m47 80 33 17M53 101l27-15" fill="none" stroke="#FFF6D7" stroke-width="2"/>
+  <circle cx="47" cy="52" r="24" fill="#C9B8E8" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="79" cy="52" r="24" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="64" cy="32" r="24" fill="#F4A7A0" stroke="#554F5B" stroke-width="2"/>
+  <path d="M55 23c5-5 11-6 18-3" fill="none" stroke="#FFFDF5" stroke-width="4" stroke-linecap="round"/>
+</svg>

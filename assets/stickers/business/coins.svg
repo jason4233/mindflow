@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Coins sticker">
+  <ellipse cx="47" cy="91" rx="29" ry="12" fill="#F4B78F" stroke="#554F5B" stroke-width="2"/>
+  <path d="M18 75v16c0 7 13 12 29 12s29-5 29-12V75" fill="#FFD4BA" stroke="#554F5B" stroke-width="2"/>
+  <ellipse cx="47" cy="75" rx="29" ry="12" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M34 58v16M60 58v16" fill="none" stroke="#D89B58" stroke-width="2"/>
+  <ellipse cx="47" cy="58" rx="29" ry="12" fill="#FFF6D7" stroke="#554F5B" stroke-width="2"/>
+  <circle cx="86" cy="46" r="27" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="M91 34c-3-3-13-3-13 4 0 8 16 4 16 13 0 8-11 9-17 4M85 29v34" fill="none" stroke="#554F5B" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Party face sticker">
+  <circle cx="60" cy="70" r="43" fill="#FFE28A" stroke="#554F5B" stroke-width="2"/>
+  <path d="m31 36 19-30 17 34-36-4Z" fill="#C9B8E8" stroke="#554F5B" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M39 62h1M76 59h1" fill="none" stroke="#554F5B" stroke-width="7" stroke-linecap="round"/>
+  <path d="M44 82c9 12 23 12 32 0" fill="none" stroke="#554F5B" stroke-width="4" stroke-linecap="round"/>
+  <path d="m89 44 20-9M91 57l25 3M87 31l8-17" fill="none" stroke="#F4A7A0" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="106" cy="82" r="5" fill="#AFCDF3" stroke="#554F5B" stroke-width="2"/><circle cx="19" cy="72" r="4" fill="#A9D8C8" stroke="#554F5B" stroke-width="2"/>
+</svg>
