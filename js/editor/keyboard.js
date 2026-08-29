@@ -135,21 +135,50 @@ export class KeyboardController {
     this.clipboard = []
     this.styleClipboard = null
     this.previewSessions = new Map()
+    this.pendingImeChord = null
     this.registerCoreActions()
     this.actions = createActionFacade()
     this.handleKeydown = this.handleKeydown.bind(this)
+    this.handleKeyup = this.handleKeyup.bind(this)
+  }
+
+  handleKeyup(event) {
+    const pending = this.pendingImeChord
+    if (!pending) return
+    const binding = resolveImeFallbackBinding(pending, event)
+    if (binding === undefined) return // 修飾鍵自身的 keyup，繼續等待實體鍵
+    this.pendingImeChord = null
+    if (!binding) return
+    const formMode = this.edit.isEditing || isFormTarget(event.target)
+    if (formMode && !FORM_GLOBAL_ACTIONS.has(binding.action)) return
+    if (!hasAction(binding.action)) return
+    event.preventDefault()
+    runAction(binding.action, event)
   }
 
   bind() {
     assertRegisteredActions([...ACTION_BINDINGS.map(binding => binding.action), ...TOOLBAR_ACTIONS])
     window.addEventListener('keydown', this.handleKeydown)
+    window.addEventListener('keyup', this.handleKeyup)
   }
 
   handleKeydown(event) {
     const formMode = this.edit.isEditing || isFormTarget(event.target)
     // 純大綱模式沒有 map 導覽語意；保留方向鍵給大綱本身，避免改到隱藏畫布的 selection。
     if (this.selection.canvas?.hidden && event.key.startsWith('Arrow')) return
-    if (dispatchGlobalShortcut(event, { formMode })) return
+    if (dispatchGlobalShortcut(event, { formMode })) { this.pendingImeChord = null; return }
+
+    // 部分 Windows IME 環境的修飾鍵組合 keydown 只給 key='Process' 且 code 缺失/異常，
+    // keydown 無從辨識實體鍵；記下修飾鍵狀態，改由緊接的 keyup（通常帶真實 code）補償派發。
+    if (event.key === 'Process' && (event.ctrlKey || event.metaKey || event.altKey)) {
+      this.pendingImeChord = {
+        ctrl: event.ctrlKey || event.metaKey,
+        alt: event.altKey,
+        shift: event.shiftKey,
+        time: Date.now()
+      }
+      return
+    }
     if (formMode) return
 
     const hasCommandModifier = event.ctrlKey || event.metaKey || event.altKey
@@ -754,6 +783,20 @@ export function isFormTarget(target) {
 
 export function findShortcutBinding(event) {
   return ACTION_BINDINGS.find(item => matchesBinding(event, item)) || null
+}
+
+// IME keyup 補償：keydown 只給 key='Process' 且 code 無法辨識時，改用緊接 keyup 的實體碼判定。
+// 回傳 undefined＝修飾鍵自身的 keyup（保留等待）；null＝清除補償狀態且不派發；binding＝補償命中。
+export function resolveImeFallbackBinding(pending, event, now = Date.now()) {
+  if (!pending) return null
+  const code = event.code || ''
+  if (/^(Control|Alt|Shift|Meta)/.test(event.key || '') || /^(Control|Alt|Shift|Meta)/.test(code)) return undefined
+  if (now - pending.time > 800) return null
+  if (!/^(Key[A-Z]|Digit\d|Numpad\d)$/u.test(code)) return null
+  // keyup 當下的修飾鍵需與 keydown 記錄一致（使用者慣性是先放開字母鍵、修飾鍵仍按著）。
+  const ctrl = event.ctrlKey || event.metaKey
+  if (ctrl !== pending.ctrl || event.altKey !== pending.alt || event.shiftKey !== pending.shift) return null
+  return findShortcutBinding({ key: 'Process', code, ctrlKey: pending.ctrl, metaKey: false, altKey: pending.alt, shiftKey: pending.shift })
 }
 
 export function dispatchGlobalShortcut(event, { formMode = false } = {}) {

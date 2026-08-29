@@ -144,23 +144,26 @@ function createKeyDiagnostic() {
   document.body.append(panel)
   const list = panel.querySelector('ol')
 
-  const onKeydown = event => {
+  const logEvent = (event, marker) => {
     const binding = findShortcutBinding(event)
     const mods = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta'].filter(Boolean).join('+') || '-'
     const row = document.createElement('li')
-    row.innerHTML = `key=<b></b> code=<b></b> kc=${event.keyCode} mod=${mods}`
+    row.innerHTML = `${marker} key=<b></b> code=<b></b> kc=${event.keyCode} mod=${mods}`
       + `${event.isComposing ? ' <i>組字中</i>' : ''}${isFormTarget(event.target) ? ' <i>表單焦點</i>' : ''}`
-      + ` → ${binding ? `<b></b>` : '<i>無對應</i>'}`
+      + ` → ${binding ? `<b></b>` : '<i>無對應</i>'}${event.defaultPrevented ? ' <i>已派發</i>' : ''}`
     const bolds = row.querySelectorAll('b')
     bolds[0].textContent = event.key
     bolds[1].textContent = event.code || '(空)'
     if (binding) bolds[2].textContent = binding.action
     list.prepend(row)
-    while (list.children.length > 10) list.lastChild.remove()
+    while (list.children.length > 12) list.lastChild.remove()
   }
+  const onKeydown = event => logEvent(event, '↓')
+  // keyup 也記錄：IME 補償機制在 keyup 派發，取證時能看到「已派發」標記。
+  const onKeyup = event => logEvent(event, '↑')
 
-  const show = () => { panel.hidden = false; window.addEventListener('keydown', onKeydown, true) }
-  const hide = () => { panel.hidden = true; window.removeEventListener('keydown', onKeydown, true) }
+  const show = () => { panel.hidden = false; window.addEventListener('keydown', onKeydown, true); window.addEventListener('keyup', onKeyup) }
+  const hide = () => { panel.hidden = true; window.removeEventListener('keydown', onKeydown, true); window.removeEventListener('keyup', onKeyup) }
   panel.querySelector('header button').addEventListener('click', hide)
   return { show, hide }
 }

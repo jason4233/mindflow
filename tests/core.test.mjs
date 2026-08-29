@@ -27,7 +27,7 @@ import {
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
 import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
-import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget, matchesBinding } from '../js/editor/keyboard.js'
+import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget, matchesBinding, resolveImeFallbackBinding } from '../js/editor/keyboard.js'
 import {
   createThemePreviewSvg,
   encodeLineToken,
@@ -610,6 +610,24 @@ function assertNoOverlaps(positions) {
     }
   }
 }
+
+test('IME keyup 補償：code 缺失的 Process keydown 由 keyup 實體碼補判', () => {
+  const pending = { ctrl: true, alt: true, shift: false, time: 1000 }
+  // keyup 帶真實碼且修飾鍵一致 → 命中 insertNote
+  const hit = resolveImeFallbackBinding(pending, { key: 'm', code: 'KeyM', ctrlKey: true, altKey: true, shiftKey: false }, 1200)
+  assert.equal(hit?.action, 'insertNote', '應補償命中 insertNote')
+  // 修飾鍵自身 keyup → undefined（保留等待）
+  assert.equal(resolveImeFallbackBinding(pending, { key: 'Alt', code: 'AltLeft', ctrlKey: true, altKey: false, shiftKey: false }, 1200), undefined)
+  // 超過 800ms → null
+  assert.equal(resolveImeFallbackBinding(pending, { key: 'm', code: 'KeyM', ctrlKey: true, altKey: true, shiftKey: false }, 2000), null)
+  // 修飾鍵狀態不一致（已放開）→ null，避免誤觸
+  assert.equal(resolveImeFallbackBinding(pending, { key: 'm', code: 'KeyM', ctrlKey: false, altKey: false, shiftKey: false }, 1200), null)
+  // 非英數實體碼 → null
+  assert.equal(resolveImeFallbackBinding(pending, { key: 'Enter', code: 'Enter', ctrlKey: true, altKey: true, shiftKey: false }, 1200), null)
+  // Numpad 數字：Ctrl+1 優先順序也可補償
+  const num = resolveImeFallbackBinding({ ctrl: true, alt: false, shift: false, time: 1000 }, { key: '1', code: 'Numpad1', ctrlKey: true, altKey: false, shiftKey: false }, 1200)
+  assert.equal(num?.action, 'priority1', 'Numpad1 應補償命中 priority1')
+})
 
 let passed = 0
 for (const { name, fn } of tests) {
