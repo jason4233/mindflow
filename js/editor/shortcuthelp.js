@@ -2,7 +2,7 @@
  * 更多選單、專注模式與快捷鍵說明面板。
  */
 import { hasAction, registerAction, runAction } from './actions.js'
-import { ACTION_BINDINGS } from './keyboard.js'
+import { ACTION_BINDINGS, findShortcutBinding, isFormTarget } from './keyboard.js'
 import { walkNodes } from './model.js'
 
 const ACTION_LABELS = {
@@ -29,6 +29,11 @@ export function initializeShortcutHelp(ctx) {
   dialog.querySelector('[data-shortcut-close]').addEventListener('click', closeDialog)
   dialog.addEventListener('click', event => {
     if (event.target === dialog) closeDialog()
+  })
+  const diagnostic = createKeyDiagnostic()
+  dialog.querySelector('[data-key-diagnostic]').addEventListener('click', () => {
+    closeDialog()
+    diagnostic.show()
   })
   ctx.featureHandlers.escape.push(() => {
     menu.close()
@@ -105,10 +110,59 @@ function createShortcutDialog() {
       return `<tr><td>${label}</td><td><kbd>${shortcutText(binding)}</kbd></td></tr>`
     }).join('')
   dialog.innerHTML = `
-    <header><div><small>MindFlow</small><h2>快速鍵</h2></div><button type="button" data-shortcut-close aria-label="關閉">×</button></header>
+    <header><div><small>MindFlow</small><h2>快速鍵</h2></div>
+      <button type="button" data-key-diagnostic class="shortcut-diagnostic-button">鍵盤診斷</button>
+      <button type="button" data-shortcut-close aria-label="關閉">×</button></header>
     <div class="shortcut-table-wrap"><table><thead><tr><th>功能</th><th>快速鍵</th></tr></thead><tbody>${rows}</tbody></table></div>`
   document.body.append(dialog)
   return dialog
+}
+
+// 鍵盤診斷浮動面板：即時顯示 app 實際收到的鍵盤事件，供排查「快捷鍵沒反應」時
+// 判斷是（a）事件根本沒送達（OS/輸入法攔截）還是（b）事件有到但比對失敗。
+function createKeyDiagnostic() {
+  const style = document.createElement('style')
+  style.textContent = `
+    .key-diagnostic { position: fixed; left: 12px; bottom: 12px; z-index: 9999; width: 360px;
+      background: rgba(20, 24, 34, .95); color: #e6e9f0; border-radius: 10px; padding: 10px 12px;
+      font: 12px/1.5 Consolas, monospace; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    .key-diagnostic header { display: flex; justify-content: space-between; align-items: center;
+      font-family: system-ui, sans-serif; font-size: 13px; margin-bottom: 6px; }
+    .key-diagnostic header button { background: none; border: 0; color: #9aa3b5; cursor: pointer; font-size: 16px; }
+    .key-diagnostic ol { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
+    .key-diagnostic li { padding: 2px 0; border-top: 1px solid rgba(255,255,255,.08); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .key-diagnostic li b { color: #7dd3a7; }
+    .key-diagnostic li i { color: #f0a662; font-style: normal; }
+    .shortcut-diagnostic-button { margin-left: auto; margin-right: 8px; font-size: 12px; cursor: pointer;
+      border: 1px solid currentColor; border-radius: 6px; padding: 2px 8px; background: none; color: inherit; }`
+  document.head.append(style)
+
+  const panel = document.createElement('div')
+  panel.className = 'key-diagnostic'
+  panel.hidden = true
+  panel.innerHTML = `<header><span>鍵盤診斷（按任意鍵）</span><button type="button" aria-label="關閉">×</button></header><ol></ol>`
+  document.body.append(panel)
+  const list = panel.querySelector('ol')
+
+  const onKeydown = event => {
+    const binding = findShortcutBinding(event)
+    const mods = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta'].filter(Boolean).join('+') || '-'
+    const row = document.createElement('li')
+    row.innerHTML = `key=<b></b> code=<b></b> kc=${event.keyCode} mod=${mods}`
+      + `${event.isComposing ? ' <i>組字中</i>' : ''}${isFormTarget(event.target) ? ' <i>表單焦點</i>' : ''}`
+      + ` → ${binding ? `<b></b>` : '<i>無對應</i>'}`
+    const bolds = row.querySelectorAll('b')
+    bolds[0].textContent = event.key
+    bolds[1].textContent = event.code || '(空)'
+    if (binding) bolds[2].textContent = binding.action
+    list.prepend(row)
+    while (list.children.length > 10) list.lastChild.remove()
+  }
+
+  const show = () => { panel.hidden = false; window.addEventListener('keydown', onKeydown, true) }
+  const hide = () => { panel.hidden = true; window.removeEventListener('keydown', onKeydown, true) }
+  panel.querySelector('header button').addEventListener('click', hide)
+  return { show, hide }
 }
 
 function shortcutText(binding) {
