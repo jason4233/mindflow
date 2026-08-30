@@ -62,6 +62,10 @@
       {
         "from": "../js",
         "to": "app/js"
+      },
+      {
+        "from": "../js/sync-plan.mjs",
+        "to": "js/sync-plan.mjs"
       }
     ],
     "win": {

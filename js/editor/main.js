@@ -33,6 +33,9 @@ import { initFocus } from './focus.js'
 import { initHistory } from './history.js'
 import { initFormula } from './formula.js'
 import { initSplitscreen } from './splitscreen.js'
+import { initMobileChrome } from './mobilechrome.js'
+// === C1 MOBILE TOUCH INIT import ===
+import { initTouchGestures } from './touch.js'
 
 const elements = {
   canvas: document.querySelector('#canvas'),
@@ -187,6 +190,8 @@ initFocus(featureContext)
 initHistory(featureContext)
 initFormula(featureContext)
 initSplitscreen(featureContext)
+initMobileChrome(featureContext) // === C2 MOBILE CHROME INIT ===
+initTouchGestures(featureContext) // === C1 MOBILE TOUCH INIT ===
 
 bindZoomControls()
 renderAll()

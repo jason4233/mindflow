@@ -1,0 +1,23 @@
+C2 editor 已完成，所有測試全綠；但 dashboard hamburger 因檔案所有權缺少掛載點，正常導航時尚未啟用，已主動自首，沒有越權修改。
+
+完成檔案：
+
+- [mobilechrome.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\editor\mobilechrome.js)
+- [mobile.css](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\css\mobile.css:56)
+- [main.js](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\editor\main.js:36)
+- [CODEX_C2_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_C2_NOTES.md)
+
+驗證結果：
+
+- Root：18/18
+- Desktop：136/136
+- Mobile：5/5
+- C2 assertions：全綠
+- Playwright 375×812、1280×900：無水平爆版
+- Browser console：0 errors、0 warnings
+- 修正 drawer 初始遮罩及 view-mode/zoom 交疊，皆完成 RED→GREEN
+- C1/C2 `mobile.css` 標記區塊完整
+- 未執行任何 git 指令
+- Playwright sessions 與測試 server 已清理
+
+dashboard 現況：卡片已單欄且無爆版；C2 hamburger/drawer 模組手動掛載驗證成功，但 `index.html`／`js/dashboard.js` 不屬 C2，因此正式頁面仍缺 init 掛載。

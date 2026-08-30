@@ -1,0 +1,23 @@
+B1 已完成，未執行 git，也未修改 C1/C2 擁有檔案。
+
+主要交付：
+
+- [mobile/package.json](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\mobile\package.json>)：獨立 Capacitor 6.2.1 專案
+- [copy-web.mjs](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\mobile\scripts\copy-web.mjs>)：資產 allowlist 複製
+- [sync-plan.mjs](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\js\sync-plan.mjs>)：web/desktop 共用同步核心
+- [android.yml](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\.github\workflows\android.yml>)：release APK、zipalign、臨時簽章、上傳 `latest/MindFlow.apk`
+- [CODEX_B1_NOTES.md](<C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_B1_NOTES.md>)：含完整主動自首
+
+驗證結果：
+
+- Mobile tests：5/5
+- Root Node tests：18/18
+- Desktop tests：136/136
+- `npm audit`：0 vulnerabilities
+- `cap sync android`：成功
+- copy-web 實際產物完整，無 desktop/tests/docs 洩入
+- `actionlint v1.7.12`：通過
+
+依 brief 的 JDK17 限制固定 Capacitor 6；Capacitor 7 官方要求 Android 使用 JDK21。[Capacitor 7 upgrade guide](https://capacitorjs.com/docs/updating/7-0)
+
+本機沒有 Java/Android SDK，因此未宣稱 APK 本機 build 成功；APK build、簽章及 release upload 由首次 push main 的 CI 驗證。唯一所有權越界是必要的 `desktop/package.json` packaged-runtime mapping，已在 notes 自首。

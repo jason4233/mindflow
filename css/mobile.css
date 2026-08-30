@@ -1,0 +1,371 @@
+/* === C1 MOBILE TOUCH GESTURES BEGIN — C1 owns this upper gesture block. === */
+
+html.mindflow-touch #canvas {
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+html.mindflow-touch .mind-node {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.touch-node-actions {
+  position: absolute;
+  z-index: 68;
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgb(226 232 240 / 94%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 9px 24px rgb(15 23 42 / 18%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+
+.touch-node-actions[hidden] {
+  display: none;
+}
+
+.touch-node-actions button {
+  min-width: 76px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: #9a481d;
+  background: #fff2e8;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+
+.touch-node-actions button:active {
+  background: #ffe1cc;
+}
+
+.touch-node-actions button:disabled {
+  color: #94a3b8;
+  background: #f1f5f9;
+}
+
+/* === C1 MOBILE TOUCH GESTURES END === */
+
+/* === C2 MOBILE CHROME LAYOUT BEGIN — C2 owns this lower layout block. === */
+
+.mobile-bottom-toolbar,
+.dashboard-hamburger,
+.dashboard-drawer-backdrop {
+  display: none;
+}
+
+html.is-mobile-chrome,
+body.is-mobile-chrome {
+  overscroll-behavior: none;
+}
+
+body.is-mobile-chrome .editor-toolbar {
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  right: 6px;
+  left: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+body.is-mobile-chrome .toolbar-section--left,
+body.is-mobile-chrome .toolbar-section--right {
+  grid-column: auto;
+  grid-row: 1;
+  height: 44px;
+}
+
+body.is-mobile-chrome .toolbar-section--left {
+  width: 100%;
+  justify-self: stretch;
+}
+
+body.is-mobile-chrome .toolbar-section--center {
+  display: none;
+}
+
+body.is-mobile-chrome .toolbar-section--right {
+  justify-self: end;
+}
+
+body.is-mobile-chrome .toolbar-section--left .toolbar-divider,
+body.is-mobile-chrome .save-status,
+body.is-mobile-chrome #share-button {
+  display: none;
+}
+
+body.is-mobile-chrome .document-title {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+body.is-mobile-chrome .toolbar-capsule {
+  border-radius: 11px;
+}
+
+body.is-mobile-chrome .mobile-bottom-toolbar {
+  position: fixed;
+  z-index: 70;
+  right: 8px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  left: 8px;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: stretch;
+  padding: 5px;
+  border: 1px solid rgb(226 232 240 / 92%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 12px 34px rgb(15 23 42 / 20%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+
+body.is-mobile-chrome .mobile-bottom-toolbar__button {
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  padding: 2px;
+  border: 0;
+  border-radius: 10px;
+  color: #536174;
+  background: transparent;
+  touch-action: manipulation;
+}
+
+body.is-mobile-chrome .mobile-bottom-toolbar__button:active {
+  color: var(--editor-orange, #f17e2e);
+  background: #fff2e8;
+}
+
+body.is-mobile-chrome .mobile-bottom-toolbar__button:disabled {
+  opacity: .38;
+}
+
+body.is-mobile-chrome .mobile-bottom-toolbar__icon {
+  font-size: 19px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+body.is-mobile-chrome .mobile-bottom-toolbar__label {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+body.is-mobile-chrome .sidepanel {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  width: auto;
+  border: 0;
+  border-radius: 0;
+  opacity: 1;
+  transform: none;
+  transform-origin: right center;
+}
+
+body.is-mobile-chrome .sidepanel.is-collapsed {
+  opacity: 1;
+  transform: translateX(100%);
+}
+
+body.is-mobile-chrome .sidepanel-header {
+  height: calc(56px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+body.is-mobile-chrome .sidepanel-content {
+  height: calc(100dvh - 56px - env(safe-area-inset-top, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+body.is-mobile-chrome .text-toolbar {
+  position: fixed;
+  right: 8px !important;
+  bottom: calc(max(var(--mobile-keyboard-inset, 0px), 70px) + 8px) !important;
+  left: 8px !important;
+  top: auto !important;
+  max-width: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+body.is-mobile-chrome .zoom-controls {
+  right: 8px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
+  max-width: calc(100vw - 16px);
+}
+
+body.is-mobile-chrome .viewmode-control,
+body.is-mobile-chrome .editor-shell[data-view-mode="split"] .viewmode-control {
+  right: 8px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 126px);
+}
+
+body.is-mobile-chrome .more-menu {
+  right: 8px !important;
+  left: 8px !important;
+  width: auto;
+  min-width: 0;
+  max-height: calc(100dvh - 76px - env(safe-area-inset-top, 0px));
+  overflow-y: auto;
+}
+
+body.is-mobile-chrome .more-menu button,
+body.is-mobile-chrome .more-menu .more-toggle {
+  min-height: 48px;
+  padding: 10px 12px;
+}
+
+body.is-mobile-chrome .more-menu [data-more-action="shortcutHelp"],
+body.is-mobile-chrome .shortcut-dialog,
+body.is-mobile-chrome .key-diagnostic {
+  display: none !important;
+}
+
+body.is-mobile-chrome .insert-menu {
+  right: 8px !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 76px) !important;
+  left: 8px !important;
+  top: auto !important;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.is-mobile-chrome .insert-menu[hidden] {
+  display: none;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-topbar {
+  position: sticky;
+  height: auto;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 8px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 10px;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-hamburger {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  color: #4b5563;
+  background: transparent;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-hamburger span {
+  width: 20px;
+  height: 2px;
+  display: block;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+body.is-mobile-chrome.dashboard-page .brand-lockup {
+  min-width: 0;
+}
+
+body.is-mobile-chrome.dashboard-page .templates-shortcut {
+  display: none;
+}
+
+body.is-mobile-chrome.dashboard-page .global-search {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-shell {
+  min-height: 0;
+  display: block;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-sidebar {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(86vw, 320px);
+  height: 100dvh;
+  display: flex;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
+  border-right: 1px solid var(--color-border);
+  border-bottom: 0;
+  background: #fff;
+  box-shadow: 18px 0 44px rgb(15 23 42 / 22%);
+  transform: translateX(-105%);
+  transition: transform 180ms ease-out;
+}
+
+body.is-mobile-chrome.dashboard-page .sidebar-nav {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+body.is-mobile-chrome.dashboard-page .sidebar-placeholder,
+body.is-mobile-chrome.dashboard-page .sidebar-library-card {
+  display: block !important;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-drawer-backdrop {
+  position: fixed;
+  z-index: 95;
+  inset: 0;
+  display: block;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: rgb(15 23 42 / 38%);
+  transition: opacity 180ms ease-out;
+}
+
+body.is-mobile-chrome.dashboard-page.is-dashboard-drawer-open .dashboard-sidebar {
+  transform: translateX(0);
+}
+
+body.is-mobile-chrome.dashboard-page.is-dashboard-drawer-open .dashboard-drawer-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+body.is-mobile-chrome.dashboard-page .dashboard-main {
+  padding: 24px 16px 54px;
+}
+
+body.is-mobile-chrome.dashboard-page .document-grid,
+body.is-mobile-chrome.dashboard-page .template-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.is-mobile-chrome.dashboard-page .search-result {
+  grid-template-columns: 1fr;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.is-mobile-chrome .dashboard-sidebar,
+  body.is-mobile-chrome .dashboard-drawer-backdrop {
+    transition-duration: 0ms;
+  }
+}
+
+/* === C2 MOBILE CHROME LAYOUT END === */

@@ -1,0 +1,26 @@
+{
+  "name": "mindflow-mobile",
+  "version": "1.0.0",
+  "description": "MindFlow Capacitor Android application",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/patch-capacitor-cli.mjs",
+    "copy-web": "node scripts/copy-web.mjs",
+    "test": "node --test test/*.test.mjs",
+    "sync": "npm run copy-web && cap sync android"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@capacitor/android": "6.2.1",
+    "@capacitor/core": "6.2.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.1"
+  },
+  "overrides": {
+    "tar": "7.5.22"
+  }
+}

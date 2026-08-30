@@ -48,13 +48,27 @@ test('NSIS is assisted, per-user by default and creates both shortcuts', () => {
 })
 
 // 漏一個檔在 build.files 裡，開發時照跑、打包後才會在使用者機器上 module not found。
-test('every module reachable from main.mjs is listed in build.files', async () => {
+test('every module reachable from main.mjs is included in the packaged runtime', async () => {
   const reached = await relativeImportClosure('main.mjs')
   const packaged = new Set(packageJson.build.files)
+  const externalResources = new Map(
+    (packageJson.build.extraResources || [])
+      .filter(resource => typeof resource === 'object' && resource.from && resource.to)
+      .map(resource => [resource.from.replaceAll('\\', '/'), resource.to.replaceAll('\\', '/')])
+  )
 
   assert.ok(reached.size > 1, 'main.mjs should import at least one local module')
   for (const file of reached) {
-    assert.ok(packaged.has(file), `${file} is reachable from main.mjs but missing from build.files`)
+    if (file.startsWith('../')) {
+      // app.asar 之外的模組必須落在 resources 下相同相對位置，re-export 才能在 packaged app 解析。
+      assert.equal(
+        externalResources.get(file),
+        file.slice(3),
+        `${file} is reachable from app.asar but missing its exact extraResources mapping`
+      )
+    } else {
+      assert.ok(packaged.has(file), `${file} is reachable from main.mjs but missing from build.files`)
+    }
   }
 })
 

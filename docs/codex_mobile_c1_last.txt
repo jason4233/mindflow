@@ -1,0 +1,21 @@
+C1 觸控手勢引擎已完成：
+
+- 單指平移、雙指 midpoint pinch。
+- tap 選取、double-tap 編輯／新增懸浮節點。
+- long-press 複用既有 context menu。
+- 節點拖曳沿既有 DnD command path 重掛。
+- 「＋子節點／＋同級」浮動按鈕。
+- Desktop mouse path 不啟用 touch engine。
+- C2 的 `css/mobile.css` 區塊完整保留。
+
+驗證：
+
+- Root tests：18/18
+- Desktop tests：136/136
+- Touch unit：5/5
+- Playwright touch/desktop：7/7
+- Syntax checks：全綠
+
+交付筆記與主動自首：[CODEX_C1_NOTES.md](C:\Users\ASUS\Desktop\工具\AI工具項目\gitmind-clone\docs\CODEX_C1_NOTES.md)
+
+未執行 git。未跑會覆寫非 C1 所有權報告的 `shortcuts.matrix.mjs`；Android 真機／WebView 也尚未測試，已在筆記明確揭露。
