@@ -1,4 +1,10 @@
-/** GitHub 私有 repo 同步設定 UI；renderer 只接觸 preload 凍結介面，不持有 token。 */
+/** GitHub 私有 repo 同步設定 UI；Electron、Capacitor 與純 web 共用同一套畫面。 */
+
+import {
+  createMobileSyncApi,
+  getCapacitorPreferences,
+  isNativeCapacitor
+} from './sync-mobile.mjs'
 
 const STATUS_COPY = {
   disabled: { label: '同步未啟用', tone: 'muted' },
@@ -10,10 +16,17 @@ const STATUS_COPY = {
 
 const boundTriggers = new WeakSet()
 let controller = null
+let mobileSyncApi = null
 
-export function describeSyncStatus(status = {}, desktopAvailable = true) {
-  if (!desktopAvailable) {
-    return { state: 'web', label: '同步僅桌面版', detail: '在 MindFlow 桌面版連接 GitHub 私有 repo。', tone: 'muted' }
+export function describeSyncStatus(status = {}, environment = true) {
+  const syncAvailable = environment === true || environment === 'electron' || environment === 'capacitor'
+  if (!syncAvailable) {
+    return {
+      state: 'web',
+      label: '同步僅桌面版與手機 App',
+      detail: '請在 MindFlow 桌面版或手機 App 連接 GitHub 私有 repo。',
+      tone: 'muted'
+    }
   }
   const state = Object.hasOwn(STATUS_COPY, status.state) ? status.state : 'error'
   const copy = STATUS_COPY[state]
@@ -59,8 +72,10 @@ export function openSyncSettings() {
 }
 
 function createSyncSettingsController() {
-  const api = getSyncApi()
-  const desktopAvailable = Boolean(api)
+  const environment = resolveSyncEnvironment()
+  const api = environment.api
+  const syncAvailable = Boolean(api)
+  const clientLabel = environment.kind === 'capacitor' ? '手機 App' : '桌面版'
   const dialog = createDialog()
   const form = dialog.querySelector('[data-sync-form]')
   const desktopPanel = dialog.querySelector('[data-sync-desktop]')
@@ -78,12 +93,12 @@ function createSyncSettingsController() {
   const saveButton = dialog.querySelector('[data-sync-save]')
   const sidebarViews = new Set()
   let config = { enabled: false, repo: '', hasToken: false }
-  let status = { state: desktopAvailable ? 'disabled' : 'error', lastSyncAt: null, lastError: null, docCount: 0 }
+  let status = { state: syncAvailable ? 'disabled' : 'error', lastSyncAt: null, lastError: null, docCount: 0 }
   let unsubscribe = null
   let busy = false
 
-  desktopPanel.hidden = !desktopAvailable
-  webPanel.hidden = desktopAvailable
+  desktopPanel.hidden = !syncAvailable
+  webPanel.hidden = syncAvailable
 
   dialog.querySelector('[data-sync-close]').addEventListener('click', () => dialog.close())
   dialog.addEventListener('click', event => {
@@ -120,7 +135,7 @@ function createSyncSettingsController() {
     }
     await refresh()
     window.requestAnimationFrame(() => {
-      const target = desktopAvailable ? (config.repo ? enabledInput : repoInput) : dialog.querySelector('[data-sync-close]')
+      const target = syncAvailable ? (config.repo ? enabledInput : repoInput) : dialog.querySelector('[data-sync-close]')
       target?.focus({ preventScroll: true })
     })
   }
@@ -136,7 +151,7 @@ function createSyncSettingsController() {
       status = normalizeStatus(nextStatus)
       if (config.warning) showFeedback(config.warning, 'warning')
     } catch {
-      status = { ...status, state: 'error', lastError: '無法讀取同步設定，請重新開啟桌面版後再試。' }
+      status = { ...status, state: 'error', lastError: `無法讀取同步設定，請重新開啟${clientLabel}後再試。` }
     }
     renderState()
     return { config, status }
@@ -200,9 +215,9 @@ function createSyncSettingsController() {
       const nextConfig = await api.getConfig()
       config = normalizeConfig(nextConfig)
       status = normalizeStatus(await api.getStatus())
-      showFeedback('同步設定已安全儲存。', 'success')
+      showFeedback(environment.kind === 'capacitor' ? '同步設定已存於手機 Preferences。' : '同步設定已安全儲存。', 'success')
     } catch {
-      showFeedback('設定儲存失敗，請確認桌面版仍在執行。', 'error')
+      showFeedback(`設定儲存失敗，請確認${clientLabel}仍在執行。`, 'error')
     } finally {
       tokenInput.value = ''
       setBusy(false)
@@ -228,7 +243,7 @@ function createSyncSettingsController() {
       status = normalizeStatus(await api.getStatus())
     } catch {
       status = { ...status, state: 'error', lastError: '無法啟動同步' }
-      showFeedback('無法啟動同步，請確認網路與桌面版狀態。', 'error')
+      showFeedback(`無法啟動同步，請確認網路與${clientLabel}狀態。`, 'error')
     } finally {
       setBusy(false)
       renderState()
@@ -245,25 +260,33 @@ function createSyncSettingsController() {
   }
 
   function renderState() {
-    const presentation = describeSyncStatus(status, desktopAvailable)
+    const presentation = describeSyncStatus(status, syncAvailable ? environment.kind : 'web')
     statusLabel.textContent = presentation.label
     statusDetail.textContent = presentation.detail
     statusDot.dataset.state = presentation.state
-    if (desktopAvailable) {
+    if (syncAvailable) {
       enabledInput.checked = config.enabled
       if (document.activeElement !== repoInput) repoInput.value = config.repo
-      tokenInput.placeholder = config.hasToken ? '已安全儲存；留空則不變更' : 'github_pat_…'
-      tokenHint.textContent = config.hasToken
-        ? '已有加密 PAT。若要更換，輸入新 token 後儲存。'
-        : '需要 repo Contents 讀寫權限；token 只會交給桌面主程序加密保存。'
+      tokenInput.placeholder = config.hasToken
+        ? (environment.kind === 'capacitor' ? '已存於手機；留空則不變更' : '已安全儲存；留空則不變更')
+        : 'github_pat_…'
+      if (environment.kind === 'capacitor') {
+        tokenHint.textContent = config.hasToken
+          ? 'PAT 已存於手機的 Capacitor Preferences；若要更換，輸入新 token 後儲存。'
+          : '需要 repo Contents 讀寫權限；token 只存於手機的 Capacitor Preferences。'
+      } else {
+        tokenHint.textContent = config.hasToken
+          ? '已有加密 PAT。若要更換，輸入新 token 後儲存。'
+          : '需要 repo Contents 讀寫權限；token 只會交給桌面主程序加密保存。'
+      }
       guide.hidden = Boolean(config.hasToken && config.repo)
     }
-    syncNowButton.disabled = !desktopAvailable || busy || !config.enabled || !config.repo || !config.hasToken || status.state === 'syncing'
+    syncNowButton.disabled = !syncAvailable || busy || !config.enabled || !config.repo || !config.hasToken || status.state === 'syncing'
     sidebarViews.forEach(renderSidebarView)
   }
 
   function renderSidebarView(view) {
-    const presentation = describeSyncStatus(status, desktopAvailable)
+    const presentation = describeSyncStatus(status, syncAvailable ? environment.kind : 'web')
     view.querySelector('[data-sync-sidebar-label]').textContent = presentation.label
     view.querySelector('[data-sync-sidebar-detail]').textContent = presentation.detail
     view.querySelector('[data-sync-sidebar-dot]').dataset.state = presentation.state
@@ -306,14 +329,14 @@ function createDialog() {
       </header>
       <section class="sync-web-notice" data-sync-web hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17h10M9 21h6M5 3h14v14H5z"/></svg>
-        <div><h3>同步僅桌面版</h3><p>Web 版仍會保留所有本機功能。請開啟 MindFlow 桌面版，再連接 GitHub 私有 repo。</p></div>
+        <div><h3>同步僅桌面版與手機 App</h3><p>Web 版仍會保留所有本機功能。請開啟 MindFlow 桌面版或手機 App，再連接 GitHub 私有 repo。</p></div>
       </section>
       <div data-sync-desktop>
         <section class="sync-first-run" data-sync-first-run>
           <strong>首次設定</strong>
           <ol>
             <li>建立 GitHub fine-grained PAT，開啟 repo Contents 讀寫權限。</li>
-            <li>填入 <code>owner/repo</code>；repo 不存在時，桌面版會自動建立 private repo。</li>
+            <li>填入 <code>owner/repo</code>；repo 不存在時，MindFlow 會自動建立 private repo。</li>
             <li>開啟同步並儲存，再按「立即同步」。</li>
           </ol>
         </section>
@@ -349,10 +372,41 @@ function createDialog() {
   return dialog
 }
 
-function getSyncApi() {
-  const api = globalThis.window?.mindflowSync
+function validSyncApi(api) {
   const methods = ['getConfig', 'setConfig', 'syncNow', 'getStatus', 'onStatus']
   return api && methods.every(name => typeof api[name] === 'function') ? api : null
+}
+
+export function detectSyncEnvironment(windowRef = globalThis.window) {
+  if (windowRef?.mindflowSync) return 'electron'
+  if (isNativeCapacitor(windowRef)) return 'capacitor'
+  return 'web'
+}
+
+function resolveSyncEnvironment(windowRef = globalThis.window) {
+  const kind = detectSyncEnvironment(windowRef)
+  if (kind === 'electron') return { kind, api: validSyncApi(windowRef.mindflowSync) }
+  if (kind === 'capacitor') {
+    if (!mobileSyncApi) {
+      const preferences = getCapacitorPreferences(windowRef)
+      if (preferences && windowRef?.localStorage) {
+        mobileSyncApi = createMobileSyncApi({
+          preferences,
+          storage: windowRef.localStorage,
+          fetchFn: windowRef.fetch?.bind(windowRef) || globalThis.fetch,
+          documentRef: windowRef.document,
+          windowRef
+        })
+      }
+    }
+    return { kind, api: validSyncApi(mobileSyncApi) }
+  }
+  return { kind: 'web', api: null }
+}
+
+// settings.js 也由 editor 入口匯入；在 UI 尚未開啟前先啟動，才能保證 app 開啟即 pull。
+if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis.window) === 'capacitor') {
+  resolveSyncEnvironment(globalThis.window)
 }
 
 function normalizeConfig(value) {

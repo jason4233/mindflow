@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -6,6 +6,8 @@ const DEFAULT_SOURCE_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const DEFAULT_WEB_DIR = fileURLToPath(new URL('../www', import.meta.url))
 const WEB_FILES = ['index.html', 'editor.html']
 const WEB_DIRECTORIES = ['css', 'js', 'assets']
+const STRICT_CONNECT_SRC = "connect-src 'self';"
+const MOBILE_CONNECT_SRC = "connect-src 'self' https://api.github.com;"
 
 function optionValue(name, fallback) {
   const index = process.argv.indexOf(name)
@@ -29,7 +31,13 @@ await rm(webDir, { recursive: true, force: true })
 await mkdir(webDir, { recursive: true })
 
 for (const file of WEB_FILES) {
-  await copyFile(join(sourceRoot, file), join(webDir, file))
+  const source = join(sourceRoot, file)
+  const html = await readFile(source, 'utf8')
+  if (!html.includes(STRICT_CONNECT_SRC)) {
+    throw new Error(`${file}: expected CSP directive ${STRICT_CONNECT_SRC}`)
+  }
+  // Web 版維持嚴格 CSP，只在 APK 的 WebView 副本開放同步所需的 GitHub API。
+  await writeFile(join(webDir, file), html.replace(STRICT_CONNECT_SRC, MOBILE_CONNECT_SRC), 'utf8')
 }
 for (const directory of WEB_DIRECTORIES) {
   const source = join(sourceRoot, directory)
