@@ -1,7 +1,7 @@
 # MindFlow 快捷鍵與文字工具列 E2E 矩陣
 
-> 產生時間：2026年8月30日 凌晨2:01:51  
-> 總結果：**160/160 PASS**
+> 產生時間：2026年9月5日 晚上8:42:19  
+> 總結果：**206/206 PASS**
 
 ## 原有矩陣
 
@@ -11,10 +11,10 @@
 
 | 執行環境 | 快捷鍵／控制 | 狀態 | 預期 | 實測 | PASS/FAIL |
 |---|---|---|---|---|---|
-| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_0t303w3k461u4t1l | PASS
+| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_456q032z6f2o1m1w | PASS
 | Chromium | Tab | 面板焦點 | 只移動面板焦點，不新增節點 | 節點 6→6 | PASS
 | Chromium | Enter | 單選 | 新增 1 個同級節點並選中新節點 | 節點=7 | PASS
-| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_360x23383n3o0350"] | PASS
+| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_1n4x20341w6h6v61"] | PASS
 | Chromium | Ctrl+/ | 單選 | 收合有子節點的分支，再按一次展開 | 收合 class=collapse-control is-collapsed；節點 5→6 | PASS
 | Chromium | Delete | 單選 | 刪除節點及整個子樹 | 節點=4；a1=false | PASS
 | Chromium | Delete | 多選 | 刪除所有選取節點及其子樹 | 節點=3 | PASS
@@ -180,3 +180,59 @@
 | Electron | Ctrl+Alt+T [KeyT] | IME 模式／多選 | 對連續同級節點建立概要 | summary DOM=1 | PASS
 | Electron | Alt+P [KeyP] | IME 模式／單選 | 打開圖片 file chooser | file input click=true；filechooser=true | PASS
 | Electron | Ctrl+Alt+R [KeyR] | IME 模式／單選 | 評論佔位功能提供可見回饋 | toast=此功能即將推出 | PASS |
+
+## 全域熱鍵吞 keydown（孤兒 keyup 救援）
+
+> 背景：Windows 常駐程式以 RegisterHotKey 搶註和弦（實測晨睿主力機 Ctrl+Alt+M 即被佔用）時，OS 只把 keyup 送到前景視窗。本節以 Playwright 真實 keyboard down/up 序列重現「修飾鍵 down → 字母鍵只有 up」，驗證應用層改由 keyup 派發。
+> 自首：兩個「（注入）」負向案例只是 WebContents 層輸入注入，不會真的執行 OS 的 Alt+Tab／Win+D 與焦點切換；回焦未武裝、AltGr、code 不對稱、defaultPrevented 等負向情境由 `tests/core.test.mjs` 控制器層測試覆蓋。
+
+> 結果：**46/46 PASS**
+
+| 執行環境 | 快捷鍵／控制 | 狀態 | 預期 | 實測 | PASS/FAIL |
+|---|---|---|---|---|---|
+| Chromium | Ctrl+Z [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 復原上一個新增動作 | 節點=6 | PASS
+| Chromium | Ctrl+Y [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 重做剛復原的新增動作 | 節點=7 | PASS
+| Chromium | Ctrl+C / Ctrl+V [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 複製子樹並貼到目前節點 | 節點=8 | PASS
+| Chromium | Ctrl+X / Ctrl+V [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 剪下子樹後可貼回其他節點 | 節點 4→6 | PASS
+| Chromium | Ctrl+A [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 選取所有可見節點 | 選取=6 | PASS
+| Chromium | Ctrl+S [keydown 被吞] | 全域熱鍵吞 keydown／編輯後 | 立即把最新文件寫入 localStorage | 儲存節點 6→7 | PASS
+| Chromium | Ctrl+Alt+C / Ctrl+Alt+V [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 把來源節點樣式貼到目標節點 | B shape=diamond | PASS
+| Chromium | Ctrl+Alt+C / Ctrl+Alt+V [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 把來源節點樣式貼到目標節點 | B shape=diamond | PASS
+| Chromium | Ctrl+D [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 複製選取節點與子樹 | 節點=8 | PASS
+| Chromium | Ctrl+P [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 打開右側主題分頁 | panel={"collapsed":false,"tab":"theme"} | PASS
+| Chromium | Alt+Y [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 打開右側樣式分頁 | panel={"collapsed":false,"tab":"style"} | PASS
+| Chromium | Ctrl+G [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 啟動格式刷並把來源樣式套到下一個點擊節點 | armed=true；B shape=diamond | PASS
+| Chromium | Ctrl+1 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 1 | icons=priority:1 | PASS
+| Chromium | Ctrl+2 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 2 | icons=priority:2 | PASS
+| Chromium | Ctrl+3 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 3 | icons=priority:3 | PASS
+| Chromium | Ctrl+4 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 4 | icons=priority:4 | PASS
+| Chromium | Ctrl+5 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 5 | icons=priority:5 | PASS
+| Chromium | Ctrl+6 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 6 | icons=priority:6 | PASS
+| Chromium | Ctrl+7 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 7 | icons=priority:7 | PASS
+| Chromium | Ctrl+8 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 8 | icons=priority:8 | PASS
+| Chromium | Ctrl+9 [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 設定優先順序圖示 9 | icons=priority:9 | PASS
+| Chromium | Ctrl+Alt+K [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 開啟連結輸入 dialog | 連結 dialog 未開啟 | PASS
+| Chromium | Ctrl+Alt+M [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 備註 drawer 已掛載並開啟、textarea 取得焦點 | {"mounted":true,"open":true,"focused":true} | PASS
+| Chromium | Ctrl+Alt+T [keydown 被吞] | 全域熱鍵吞 keydown／多選 | 對連續同級節點建立概要 | summary DOM=1 | PASS
+| Chromium | Alt+P [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 打開圖片 file chooser | file input click=true；filechooser=true | PASS
+| Chromium | Alt+I [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 打開右側圖示分頁 | panel={"collapsed":false,"tab":"icon"} | PASS
+| Chromium | Ctrl+Alt+R [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 評論佔位功能提供可見回饋 | toast=此功能即將推出 | PASS
+| Chromium | Ctrl+0 [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 把縮放重設為 100% | zoom=100% | PASS
+| Chromium | Ctrl+Shift+L [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 一鍵整理並重新 fit 畫布 | zoom 223%→292%；nodesWithinCanvas=true | PASS
+| Chromium | Ctrl+O [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 切換到大綱相關視圖 | view map→outline | PASS
+| Chromium | Ctrl+Alt+F [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 適應整張心智圖 | zoom 272%→292%；nodesWithinCanvas=true | PASS
+| Chromium | Ctrl+Shift+R [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 把根節點置中畫布 | rootCenter=720.0；canvasCenter=720.0 | PASS
+| Chromium | Ctrl+F [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 打開尋找與取代面板並聚焦搜尋框 | {"open":true,"focused":true} | PASS
+| Chromium | Shift+Alt+H [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 切換歷史版本 drawer | history hidden=null | PASS
+| Chromium | Shift+Alt+F [keydown 被吞] | 全域熱鍵吞 keydown／畫布 | 新增並選取懸浮節點 | 節點=7；floating=1 | PASS
+| Chromium | Alt 按住時的孤兒 Tab keyup（注入） | 全域熱鍵吞 keydown／單選 | Tab 孤兒 keyup 不得插入子節點 | 節點 6→6 | PASS
+| Chromium | Win 鍵按住時的孤兒 D keyup（注入） | 全域熱鍵吞 keydown／單選 | Win 鍵組合的 keyup 不得觸發 Ctrl+D 複製節點 | 節點 6→6 | PASS
+| Electron | Ctrl+Alt+C / Ctrl+Alt+V [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 把來源節點樣式貼到目標節點 | B shape=diamond | PASS
+| Electron | Ctrl+Alt+C / Ctrl+Alt+V [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 把來源節點樣式貼到目標節點 | B shape=diamond | PASS
+| Electron | Ctrl+Alt+K [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 開啟連結輸入 dialog | 連結 dialog 未開啟 | PASS
+| Electron | Ctrl+Alt+M [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 備註 drawer 已掛載並開啟、textarea 取得焦點 | {"mounted":true,"open":true,"focused":true} | PASS
+| Electron | Ctrl+Alt+T [keydown 被吞] | 全域熱鍵吞 keydown／多選 | 對連續同級節點建立概要 | summary DOM=1 | PASS
+| Electron | Alt+P [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 打開圖片 file chooser | file input click=true；filechooser=true | PASS
+| Electron | Ctrl+Alt+R [keydown 被吞] | 全域熱鍵吞 keydown／單選 | 評論佔位功能提供可見回饋 | toast=此功能即將推出 | PASS
+| Electron | Alt 按住時的孤兒 Tab keyup（注入） | 全域熱鍵吞 keydown／單選 | Tab 孤兒 keyup 不得插入子節點 | 節點 6→6 | PASS
+| Electron | Win 鍵按住時的孤兒 D keyup（注入） | 全域熱鍵吞 keydown／單選 | Win 鍵組合的 keyup 不得觸發 Ctrl+D 複製節點 | 節點 6→6 | PASS |

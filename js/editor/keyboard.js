@@ -136,19 +136,61 @@ export class KeyboardController {
     this.styleClipboard = null
     this.previewSessions = new Map()
     this.pendingImeChord = null
+    this.seenKeydownCodes = new Set()
+    this.heldModifiers = new Set()
     this.registerCoreActions()
     this.actions = createActionFacade()
     this.handleKeydown = this.handleKeydown.bind(this)
     this.handleKeyup = this.handleKeyup.bind(this)
+    this.trackKeydown = this.trackKeydown.bind(this)
+    this.resetKeyState = this.resetKeyState.bind(this)
+    this.handleVisibilityChange = this.handleVisibilityChange.bind(this)
+  }
+
+  // capture 階段記錄本視窗真的收到過的 keydown。Windows 全域熱鍵（RegisterHotKey，例如常駐程式
+  // 搶註 Ctrl+Alt+M）只吞字母鍵的 keydown，修飾鍵 keydown 與所有 keyup 照常送達；
+  // handleKeyup 靠「修飾鍵已武裝 + 字母鍵沒見過 keydown」辨識孤兒 keyup，改由 keyup 派發。
+  trackKeydown(event) {
+    const modifier = modifierFromCode(event.code)
+    if (modifier) {
+      this.heldModifiers.add(modifier)
+      return
+    }
+    if (event.code) this.seenKeydownCodes.add(event.code)
+    // code 缺失或非標準（IME、Intl* 鍵）時 keydown 是以 key 命中 binding；把該 binding 的標準碼
+    // 一併記下，否則帶標準碼的 keyup 會被誤判為孤兒而雙重派發。已知標準碼只記觀測值：
+    // 否則 Ctrl+Digit1 會順手記下 Numpad1，之後真正的 Ctrl+Numpad1 孤兒 keyup 會被漏救。
+    if (KNOWN_BINDING_CODES.has(event.code)) return
+    const binding = findShortcutBinding(event)
+    if (binding) binding.codes.forEach(code => this.seenKeydownCodes.add(code))
+  }
+
+  // 失焦／隱藏後 keyup 可能落到別的視窗：清掉武裝與記錄，回焦後必須重新按修飾鍵才可救援。
+  resetKeyState() {
+    this.seenKeydownCodes.clear()
+    this.heldModifiers.clear()
+    this.pendingImeChord = null
+  }
+
+  handleVisibilityChange() {
+    if (document.hidden) this.resetKeyState()
   }
 
   handleKeyup(event) {
+    const modifier = modifierFromCode(event.code)
+    if (modifier) this.heldModifiers.delete(modifier)
+    const seen = event.code ? this.seenKeydownCodes.delete(event.code) : false
     const pending = this.pendingImeChord
-    if (!pending) return
-    const binding = resolveImeFallbackBinding(pending, event)
-    if (binding === undefined) return // 修飾鍵自身的 keyup，繼續等待實體鍵
-    this.pendingImeChord = null
+    let binding = null
+    if (pending) {
+      binding = resolveImeFallbackBinding(pending, event)
+      if (binding === undefined) return // 修飾鍵自身的 keyup，繼續等待實體鍵
+      this.pendingImeChord = null
+    } else if (!seen && !modifier) {
+      binding = resolveOrphanKeyupBinding(event, this.heldModifiers)
+    }
     if (!binding) return
+    if (event.defaultPrevented || event.isComposing) return
     const formMode = this.edit.isEditing || isFormTarget(event.target)
     if (formMode && !FORM_GLOBAL_ACTIONS.has(binding.action)) return
     if (!hasAction(binding.action)) return
@@ -158,8 +200,12 @@ export class KeyboardController {
 
   bind() {
     assertRegisteredActions([...ACTION_BINDINGS.map(binding => binding.action), ...TOOLBAR_ACTIONS])
+    window.addEventListener('keydown', this.trackKeydown, true)
     window.addEventListener('keydown', this.handleKeydown)
     window.addEventListener('keyup', this.handleKeyup)
+    window.addEventListener('blur', this.resetKeyState)
+    window.addEventListener('pagehide', this.resetKeyState)
+    document.addEventListener('visibilitychange', this.handleVisibilityChange)
   }
 
   handleKeydown(event) {
@@ -797,6 +843,30 @@ export function resolveImeFallbackBinding(pending, event, now = Date.now()) {
   const ctrl = event.ctrlKey || event.metaKey
   if (ctrl !== pending.ctrl || event.altKey !== pending.alt || event.shiftKey !== pending.shift) return null
   return findShortcutBinding({ key: 'Process', code, ctrlKey: pending.ctrl, metaKey: false, altKey: pending.alt, shiftKey: pending.shift })
+}
+
+// 由實體碼判定修飾鍵種類（ControlLeft/Right → control 等），非修飾鍵回 null。
+export function modifierFromCode(code) {
+  const match = /^(Control|Alt|Shift|Meta)(Left|Right)$/u.exec(code || '')
+  return match ? match[1].toLowerCase() : null
+}
+
+// 孤兒 keyup 救援：keydown 被系統全域熱鍵吞掉、只剩 keyup 時，以 keyup 派發修飾鍵和弦。
+// 武裝條件：keyup 帶的每個 Ctrl／Alt 都必須在本 focus 世代內收到過 keydown（heldModifiers），
+// 否則按著修飾鍵從別的視窗／原生對話框回焦後放開字母鍵，會被當成 app 快捷鍵。
+// 只救 Ctrl／Alt 和弦（全域熱鍵必帶修飾鍵）；Win 鍵組合屬 OS、AltGr 是打字、單鍵與純 Shift
+// 和弦不會被搶，一律不救——否則 Alt+Tab 切回視窗時落下的 Tab keyup 會誤插節點。
+export function resolveOrphanKeyupBinding(event, heldModifiers = new Set()) {
+  if (event.metaKey || heldModifiers.has('meta')) return null
+  if (!event.ctrlKey && !event.altKey) return null
+  if (event.ctrlKey && !heldModifiers.has('control')) return null
+  if (event.altKey && !heldModifiers.has('alt')) return null
+  if (event.shiftKey && !heldModifiers.has('shift')) return null
+  if (typeof event.getModifierState === 'function' && event.getModifierState('AltGraph')) return null
+  if (!/^(Key[A-Z]|Digit\d|Numpad\d)$/u.test(event.code || '')) return null
+  const binding = findShortcutBinding({ key: event.key, code: event.code, ctrlKey: event.ctrlKey, metaKey: false, altKey: event.altKey, shiftKey: event.shiftKey })
+  if (!binding || binding.action === 'paste') return null
+  return binding
 }
 
 export function dispatchGlobalShortcut(event, { formMode = false } = {}) {

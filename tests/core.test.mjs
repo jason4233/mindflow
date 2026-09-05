@@ -27,7 +27,7 @@ import {
 } from '../js/editor/commands.js'
 import { getLayoutBounds, layout } from '../js/editor/layout.js'
 import { getRegisteredActionNames, hasAction, registerAction, runAction } from '../js/editor/actions.js'
-import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget, matchesBinding, resolveImeFallbackBinding } from '../js/editor/keyboard.js'
+import { ACTION_BINDINGS, KeyboardController, assertRegisteredActions, dispatchGlobalShortcut, findShortcutBinding, isFormTarget, matchesBinding, modifierFromCode, resolveImeFallbackBinding, resolveOrphanKeyupBinding } from '../js/editor/keyboard.js'
 import {
   createThemePreviewSvg,
   encodeLineToken,
@@ -627,6 +627,134 @@ test('IME keyup 補償：code 缺失的 Process keydown 由 keyup 實體碼補�
   // Numpad 數字：Ctrl+1 優先順序也可補償
   const num = resolveImeFallbackBinding({ ctrl: true, alt: false, shift: false, time: 1000 }, { key: '1', code: 'Numpad1', ctrlKey: true, altKey: false, shiftKey: false }, 1200)
   assert.equal(num?.action, 'priority1', 'Numpad1 應補償命中 priority1')
+})
+
+test('孤兒 keyup 救援：系統全域熱鍵吞掉 keydown 時，Ctrl+Alt+M 仍由 keyup 派發且不重複', () => {
+  const calls = []
+  registerAction('insertNote', () => { calls.push('insertNote'); return true })
+  const controller = new KeyboardController({
+    doc: createDefaultDoc(),
+    manager: new CommandManager(),
+    selection: { primaryId: 'x', getSelectedIds: () => ['x'] },
+    viewport: {},
+    edit: { isEditing: false },
+    save: () => true,
+    getPositions: () => new Map()
+  })
+  const makeEvent = props => ({
+    key: '', code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, target: null,
+    defaultPrevented: false, preventDefault() { this.defaultPrevented = true }, ...props
+  })
+
+  const keydown = props => {
+    const event = makeEvent(props)
+    controller.trackKeydown(event)
+    controller.handleKeydown(event)
+    return event
+  }
+  const armChord = () => {
+    keydown({ key: 'Control', code: 'ControlLeft', ctrlKey: true })
+    keydown({ key: 'Alt', code: 'AltLeft', ctrlKey: true, altKey: true })
+  }
+  const releaseChord = () => {
+    controller.handleKeyup(makeEvent({ key: 'Alt', code: 'AltLeft', ctrlKey: true }))
+    controller.handleKeyup(makeEvent({ key: 'Control', code: 'ControlLeft' }))
+  }
+
+  // 實測指紋（RegisterHotKey）：Ctrl↓ Alt↓ 到達，M 的 keydown 消失，只剩 M↑ Alt↑ Ctrl↑
+  armChord()
+  const orphan = makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true })
+  controller.handleKeyup(orphan)
+  assert.deepEqual(calls, ['insertNote'], '孤兒 keyup 應派發 insertNote')
+  assert.equal(orphan.defaultPrevented, true)
+  releaseChord()
+  assert.deepEqual(calls, ['insertNote'], '修飾鍵 keyup 不得再派發')
+
+  // 正常路徑：keydown 有到 → keydown 派發一次，緊接的 keyup 不得重複派發
+  armChord()
+  keydown({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true })
+  controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }))
+  releaseChord()
+  assert.deepEqual(calls, ['insertNote', 'insertNote'], 'keydown 已派發者 keyup 不得重複')
+
+  // 未武裝：按著修飾鍵從別的視窗／原生對話框回焦（blur 已重置），放開字母鍵不得派發
+  armChord()
+  controller.resetKeyState()
+  controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }))
+  assert.deepEqual(calls, ['insertNote', 'insertNote'], '回焦後未重按修飾鍵的 keyup 不得派發')
+  // 重新按下修飾鍵（keydown 在本視窗到達）才重新武裝
+  armChord()
+  controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }))
+  releaseChord()
+  assert.deepEqual(calls, ['insertNote', 'insertNote', 'insertNote'], '重新武裝後孤兒 keyup 可救援')
+
+  // keydown/keyup code 不對稱（IME／Intl 鍵）：keydown 以 key 命中並派發，帶標準碼的 keyup 不得再派發
+  for (const asymmetricCode of ['', 'IntlYen']) {
+    armChord()
+    keydown({ key: 'm', code: asymmetricCode, ctrlKey: true, altKey: true })
+    controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }))
+    releaseChord()
+  }
+  assert.deepEqual(calls, ['insertNote', 'insertNote', 'insertNote', 'insertNote', 'insertNote'], 'code 不對稱時只派發一次（keydown）')
+
+  // 已被較早 listener 消費（defaultPrevented）或組字中的孤兒 keyup 不派發
+  armChord()
+  controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true, defaultPrevented: true }))
+  controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true, isComposing: true }))
+  assert.equal(calls.length, 5, 'defaultPrevented／isComposing 不得派發')
+
+  // 已知標準碼只記觀測值：正常 Ctrl+Digit1 不得順手殘留 Numpad1，之後 Ctrl+Numpad1 孤兒 keyup 仍要救
+  registerAction('priority1', () => { calls.push('priority1'); return true })
+  keydown({ key: 'Control', code: 'ControlLeft', ctrlKey: true })
+  keydown({ key: '1', code: 'Digit1', ctrlKey: true })
+  controller.handleKeyup(makeEvent({ key: '1', code: 'Digit1', ctrlKey: true }))
+  assert.equal(controller.seenKeydownCodes.has('Numpad1'), false, '標準碼 keydown 不得污染等價碼')
+  controller.handleKeyup(makeEvent({ key: '1', code: 'Numpad1', ctrlKey: true }))
+  controller.handleKeyup(makeEvent({ key: 'Control', code: 'ControlLeft' }))
+  assert.deepEqual(calls.slice(-2), ['priority1', 'priority1'], 'Digit1 於 keydown 派發、Numpad1 孤兒 keyup 仍救援')
+
+  // 節點文字編輯中（formMode）：非表單全域動作不派發
+  controller.edit.isEditing = true
+  armChord()
+  controller.handleKeyup(makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }))
+  assert.equal(calls.length, 7, '編輯中不得派發 insertNote')
+})
+
+test('孤兒 keyup 救援的排除規則：只救已武裝的 Ctrl／Alt 和弦，Win／AltGr／單鍵／paste 一律不救', () => {
+  const up = props => ({ key: '', code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...props })
+  const armed = new Set(['control', 'alt'])
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }), armed)?.action, 'insertNote')
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'k', code: 'KeyK', ctrlKey: true, altKey: true }), armed)?.action, 'insertLink')
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'Process', code: 'KeyT', ctrlKey: true, altKey: true }), armed)?.action, 'insertSummary', 'IME 模式 keyup 以實體碼判定')
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'h', code: 'KeyH', altKey: true, shiftKey: true }), new Set(['alt', 'shift']))?.action, 'history')
+  // Shift 同樣要武裝：只武裝 Alt 的 Shift+Alt+H 不救（floatingNode 等有資料副作用）
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'h', code: 'KeyH', altKey: true, shiftKey: true }), new Set(['alt'])), null, 'Shift 未武裝')
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'f', code: 'KeyF', altKey: true, shiftKey: true }), new Set(['alt'])), null, 'Shift 未武裝（floatingNode）')
+  // 未武裝：keyup 帶的修飾鍵沒有在本視窗收到過 keydown → 不救
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true })), null)
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true }), new Set(['control'])), null, 'Alt 未武裝')
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'x', code: 'KeyX', ctrlKey: true }), new Set(['alt'])), null, 'Ctrl 未武裝')
+  // Win 鍵組合（Win+S 等）屬 OS，keyup 落到本視窗也不派發；Win 鍵武裝中亦不救
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 's', code: 'KeyS', metaKey: true }), armed), null)
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 's', code: 'KeyS', ctrlKey: true, metaKey: true }), armed), null)
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 's', code: 'KeyS', ctrlKey: true }), new Set(['control', 'meta'])), null)
+  // AltGr（歐洲配置打 µ 等字元）在 Chromium 呈現為 Ctrl+Alt + AltGraph 狀態 → 不救
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'µ', code: 'KeyM', ctrlKey: true, altKey: true, getModifierState: name => name === 'AltGraph' }), armed), null)
+  // Alt+Tab 切回視窗：Tab keyup（帶 Alt 或不帶）都不得插入節點
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'Tab', code: 'Tab', altKey: true }), armed), null)
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'Tab', code: 'Tab' }), armed), null)
+  // 無修飾鍵的單鍵、純 Shift 和弦不救（沒有全域熱鍵會搶它們）
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'Enter', code: 'Enter' }), armed), null)
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'ArrowUp', code: 'ArrowUp', shiftKey: true }), armed), null)
+  // Ctrl+V 保留原生 paste 資料流
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'v', code: 'KeyV', ctrlKey: true }), armed), null)
+  // 修飾鍵自身 keyup
+  assert.equal(resolveOrphanKeyupBinding(up({ key: 'Alt', code: 'AltLeft', ctrlKey: true }), armed), null)
+  assert.equal(modifierFromCode('ControlRight'), 'control')
+  assert.equal(modifierFromCode('AltLeft'), 'alt')
+  assert.equal(modifierFromCode('MetaLeft'), 'meta')
+  assert.equal(modifierFromCode('KeyM'), null)
+  assert.equal(modifierFromCode(''), null)
 })
 
 let passed = 0

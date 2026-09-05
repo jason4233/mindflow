@@ -44,7 +44,9 @@ function matrix(shortcut, state, expected, run, options = {}) {
     electron: Boolean(options.electron),
     targetedSynthetic: Boolean(options.targetedSynthetic),
     imeBinding: options.imeBinding || null,
-    imeCode: options.imeCode || ''
+    imeCode: options.imeCode || '',
+    orphanKeyup: Boolean(options.orphanKeyup),
+    orphanBinding: options.orphanBinding || null
   }
 }
 
@@ -617,7 +619,56 @@ IME_MATRIX_CASES.push(matrix(
   { targetedSynthetic: true }
 ))
 
-const ALL_MATRIX_CASES = [...MATRIX_CASES, ...IME_MATRIX_CASES]
+// 系統全域熱鍵（RegisterHotKey）指紋：修飾鍵 keydown 到達、字母鍵 keydown 被 OS 吞掉、只剩 keyup。
+// 用 Playwright 真實 keyboard down/up 序列重現（trusted 事件），驗證孤兒 keyup 救援對每條 Ctrl／Alt 和弦生效。
+const ORPHAN_MATRIX_CASES = ALPHANUMERIC_BINDINGS
+  .filter(binding => (binding.ctrl || binding.alt) && binding.action !== 'paste')
+  .map(binding => {
+    const locator = IME_CANONICAL_CASES[binding.action]
+    const baseline = MATRIX_CASES.find(testCase => testCase.shortcut === locator[0] && testCase.state === locator[1])
+    if (!baseline) throw new Error(`孤兒 keyup 掃描找不到 ${binding.action} canonical case：${locator.join(' / ')}`)
+    return matrix(
+      `${baseline.shortcut} [keydown 被吞]`,
+      `全域熱鍵吞 keydown／${baseline.state}`,
+      baseline.expected,
+      baseline.run,
+      { electron: baseline.electron, orphanKeyup: true, orphanBinding: binding }
+    )
+  })
+
+// 注意：以下兩案是 WebContents 層的輸入注入，不會真的觸發 OS 的 Alt+Tab／Win+D 與焦點切換；
+// 只驗證 resolver 對「帶 Alt 的 Tab keyup」「帶 Win 鍵的字母 keyup」的排除規則。
+ORPHAN_MATRIX_CASES.push(matrix(
+  'Alt 按住時的孤兒 Tab keyup（注入）',
+  '全域熱鍵吞 keydown／單選',
+  'Tab 孤兒 keyup 不得插入子節點',
+  async h => {
+    await h.select('a')
+    const before = await h.countNodes()
+    await h.page.keyboard.down('Alt')
+    await h.page.keyboard.up('Tab')
+    await h.page.keyboard.up('Alt')
+    // 修飾鍵先放開、Tab 才放開的順序：孤兒 Tab keyup 無修飾鍵，同樣不得插入
+    await h.page.keyboard.up('Tab')
+    return h.expect(await h.countNodes() === before, `節點 ${before}→${await h.countNodes()}`)
+  },
+  { electron: true, orphanKeyup: true }
+), matrix(
+  'Win 鍵按住時的孤兒 D keyup（注入）',
+  '全域熱鍵吞 keydown／單選',
+  'Win 鍵組合的 keyup 不得觸發 Ctrl+D 複製節點',
+  async h => {
+    await h.select('a')
+    const before = await h.countNodes()
+    await h.page.keyboard.down('Meta')
+    await h.page.keyboard.up('d')
+    await h.page.keyboard.up('Meta')
+    return h.expect(await h.countNodes() === before, `節點 ${before}→${await h.countNodes()}`)
+  },
+  { electron: true, orphanKeyup: true }
+))
+
+const ALL_MATRIX_CASES = [...MATRIX_CASES, ...IME_MATRIX_CASES, ...ORPHAN_MATRIX_CASES]
 
 await main()
 
@@ -702,8 +753,10 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
     let pass = false
     try {
       h.setSyntheticImeTarget(null)
+      h.setOrphanKeyup(null)
       await h.reset()
       h.setSyntheticImeTarget(testCase.imeBinding ? { binding: testCase.imeBinding, code: testCase.imeCode } : null)
+      h.setOrphanKeyup(testCase.orphanBinding)
       actual = await testCase.run(h)
       if (runtimeErrors.length > 0) throw new MatrixFailure(runtimeErrors.join('；'))
       pass = true
@@ -711,6 +764,7 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
       actual = error instanceof MatrixFailure ? error.actual : `${error.name || 'Error'}: ${error.message || error}`
     } finally {
       h.setSyntheticImeTarget(null)
+      h.setOrphanKeyup(null)
     }
     results.push({
       project,
@@ -719,7 +773,8 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
       expected: testCase.expected,
       actual: String(actual || (pass ? '行為符合預期' : '未取得結果')),
       pass,
-      targetedSynthetic: testCase.targetedSynthetic
+      targetedSynthetic: testCase.targetedSynthetic,
+      orphanKeyup: testCase.orphanKeyup
     })
     console.log(`${pass ? 'PASS' : 'FAIL'} [${project}] ${testCase.shortcut} / ${testCase.state}`)
     if (!pass) console.log(`  ${actual}`)
@@ -730,10 +785,14 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
 function createHarness({ page, baseURL, connectCDP }) {
   const editorURL = `${baseURL}/editor.html?id=${FIXTURE_ID}`
   let syntheticImeTarget = null
+  let orphanBinding = null
   return {
     page,
     setSyntheticImeTarget(target) {
       syntheticImeTarget = target
+    },
+    setOrphanKeyup(binding) {
+      orphanBinding = binding || null
     },
     async reset() {
       await page.goto(`${baseURL}/index.html`, { waitUntil: 'domcontentloaded' })
@@ -765,6 +824,7 @@ function createHarness({ page, baseURL, connectCDP }) {
           binding: syntheticImeTarget.binding
         })
       }
+      if (orphanBinding && shortcutMatchesBinding(shortcut, orphanBinding)) return pressWithSwallowedKeydown(page, shortcut)
       return page.keyboard.press(shortcut)
     },
     dispatchImeKey: ({ code, binding = null }) => dispatchSyntheticImeKey(page, { code, binding }),
@@ -887,6 +947,16 @@ function createHarness({ page, baseURL, connectCDP }) {
       }
     }
   }
+}
+
+// 重現全域熱鍵指紋：修飾鍵正常 down，字母鍵只送 keyup（keydown 被 OS 攔走），再放開修飾鍵。
+async function pressWithSwallowedKeydown(page, shortcut) {
+  const tokens = shortcut.split('+')
+  const key = tokens.at(-1)
+  const modifiers = tokens.slice(0, -1)
+  for (const modifier of modifiers) await page.keyboard.down(modifier)
+  await page.keyboard.up(key)
+  for (const modifier of modifiers.reverse()) await page.keyboard.up(modifier)
 }
 
 function imeCodesForBinding(binding) {
@@ -1223,8 +1293,9 @@ function writeReport(results) {
     timeZone: 'Asia/Taipei'
   }).format(new Date())
   const passed = results.filter(result => result.pass).length
-  const regularResults = results.filter(result => !result.targetedSynthetic)
+  const regularResults = results.filter(result => !result.targetedSynthetic && !result.orphanKeyup)
   const imeResults = results.filter(result => result.targetedSynthetic)
+  const orphanResults = results.filter(result => result.orphanKeyup)
   const renderRows = sectionResults => sectionResults.map(result => [
     result.project,
     result.shortcut,
@@ -1258,6 +1329,13 @@ ${renderSection(regularResults)}
 > 自首：Playwright 無法真實切換 Windows 注音／微軟 IME。本節用 \`dispatchEvent(new KeyboardEvent(...))\` 合成 \`key='Process'\`、正確 \`code\`、\`keyCode/which=229\` 與修飾鍵；untrusted keydown 不會產生瀏覽器 default paste，因此 paste 案例另補 synthetic \`paste\` event。這批案例只驗證應用層事件路由，不冒充真實 OS IME E2E。
 
 ${renderSection(imeResults)}
+
+## 全域熱鍵吞 keydown（孤兒 keyup 救援）
+
+> 背景：Windows 常駐程式以 RegisterHotKey 搶註和弦（實測晨睿主力機 Ctrl+Alt+M 即被佔用）時，OS 只把 keyup 送到前景視窗。本節以 Playwright 真實 keyboard down/up 序列重現「修飾鍵 down → 字母鍵只有 up」，驗證應用層改由 keyup 派發。
+> 自首：兩個「（注入）」負向案例只是 WebContents 層輸入注入，不會真的執行 OS 的 Alt+Tab／Win+D 與焦點切換；回焦未武裝、AltGr、code 不對稱、defaultPrevented 等負向情境由 \`tests/core.test.mjs\` 控制器層測試覆蓋。
+
+${renderSection(orphanResults)}
 `
   writeFileSync(REPORT_PATH, markdown, 'utf8')
 }
