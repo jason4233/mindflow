@@ -1,6 +1,6 @@
 # MindFlow 快捷鍵與文字工具列 E2E 矩陣
 
-> 產生時間：2026年9月5日 晚上8:42:19  
+> 產生時間：2026年9月5日 晚上8:57:53  
 > 總結果：**206/206 PASS**
 
 ## 原有矩陣
@@ -11,10 +11,10 @@
 
 | 執行環境 | 快捷鍵／控制 | 狀態 | 預期 | 實測 | PASS/FAIL |
 |---|---|---|---|---|---|
-| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_456q032z6f2o1m1w | PASS
+| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_5y4865541y596a24 | PASS
 | Chromium | Tab | 面板焦點 | 只移動面板焦點，不新增節點 | 節點 6→6 | PASS
 | Chromium | Enter | 單選 | 新增 1 個同級節點並選中新節點 | 節點=7 | PASS
-| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_1n4x20341w6h6v61"] | PASS
+| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_5v66613p0p1t5d5x"] | PASS
 | Chromium | Ctrl+/ | 單選 | 收合有子節點的分支，再按一次展開 | 收合 class=collapse-control is-collapsed；節點 5→6 | PASS
 | Chromium | Delete | 單選 | 刪除節點及整個子樹 | 節點=4；a1=false | PASS
 | Chromium | Delete | 多選 | 刪除所有選取節點及其子樹 | 節點=3 | PASS

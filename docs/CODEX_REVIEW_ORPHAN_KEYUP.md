@@ -194,3 +194,85 @@ Electron 攔截層結論同意：`before-input-event`／`globalShortcut`／prelo
 **Claude（作者）簽字：第三版通過自審；Codex 第二輪兩項合併條件已補齊並有測試。**
 
 **Codex（審查者）簽字：第二輪「有條件通過」之條件——Shift 武裝、Digit/Numpad 殘留——均已由上列測試證明補齊；#7 保留為獨立議題。視為通過。**
+
+---
+
+## Codex 複審（第三輪：keyup 不 preventDefault）
+
+### 簽字摘要
+
+**結論：通過。** 本輪最小變更能修正 Ctrl+Alt+M 孤兒 keyup 派發後翻出 Electron 自動隱藏選單列的副作用；未發現功能層 Major 或阻擋性 Minor。IME pending 與 orphan 共享同一派發尾端，不再 `preventDefault()` 沒有造成可重現回歸。唯一 Minor 是 IME pending 的新契約尚未被正式 controller 測試直接鎖住，屬測試覆蓋缺口，不影響本輪通過。
+
+### Findings（標級別）
+
+#### Major — 無
+
+沒有發現資料誤操作、雙重派發、快捷鍵失效或選單列仍會被此事件序列翻出的阻擋缺陷。
+
+#### Minor（測試覆蓋，非阻擋）— IME pending 完整派發未直接斷言新契約
+
+- `tests/core.test.mjs:614-630` 只測 `resolveImeFallbackBinding()` 的純函數結果；`tests/core.test.mjs:632-670` 對 `mindflowDispatched === true` 與 `defaultPrevented === false` 的斷言只走 orphan controller 路徑。
+- 現行程式沒有錯：`js/editor/keyboard.js:185-201` 的 pending 與 orphan 在取得 binding 後共用完全相同的 guard／旗標／`runAction` 尾端。我另跑唯讀完整路徑探針：`Process` keydown → `KeyM` keyup，結果為 action 1 次、pending 清除、`defaultPrevented:false`、`mindflowDispatched:true`。
+- 建議後續把這個探針濃縮成 core controller 測試，避免未來將 pending/orphan 分支拆開時，只保住 orphan 契約。依任務書限制，本輪不改測試檔。
+
+#### Info — Electron／Chromium 事件鏈支持本修法，且能根治目前序列
+
+1. 本專案鎖定 Electron 43.3.0；該版 `DEPS` 鎖定 Chromium 150.0.7871.212。
+2. Chromium 150 的 `WebContentsDelegate` 契約明載 `HandleKeyboardEvent` 接的是 renderer 回傳的 **unhandled keyboard messages**；Electron 的 `WebContents::HandleKeyboardEvent` 再經 `PlatformHandleKeyboardEvent` 轉給 owner window；`NativeWindowViews::HandleKeyboardEvent` 最後依序呼叫 `keyboard_event_handler_` 與 `root_view_.HandleKeyEvent(event)`。
+3. Electron 43.3.0 `RootView::HandleKeyEvent` 在 Alt RawKeyDown 將 `menu_bar_alt_pressed_` 設為 true；只有緊接的 Alt KeyUp 才切換自動隱藏選單。其間任何其他 keydown／keyup 都走 `else` 清成 false。
+4. 因此實際序列 `Ctrl↓ Alt↓ M↑ Alt↑ Ctrl↑` 中，舊實作在 M↑ 呼叫 `preventDefault()`，renderer 將它回報為 handled，browser 端看不到 M↑，Alt 狀態保持 true；新實作讓 M↑ 回到 `RootView`，先把狀態清掉，後續 Alt↑ 不再切換選單。這也與正常快捷鍵路徑一致：正常 M↓ 由頁面處理，但對應 M↑ 原本就不會被 `handleKeyup` 取消。
+5. 目前其他 renderer keyup listener 只有 viewport 的 Space 狀態清理與按需啟用的診斷 listener；前者不匹配英數孤兒鍵，後者不取消事件。`preventDefault()` 本來也不會停止 propagation，所以移除它不會改變其他 JS listener 是否收到事件。
+
+原始碼對照：
+
+- [Chromium 150 `WebContentsDelegate`：只接 renderer 未處理鍵盤事件](https://chromium.googlesource.com/chromium/src/+/refs/tags/150.0.7871.212/content/public/browser/web_contents_delegate.h#343)
+- [Electron 43.3.0 `WebContents::HandleKeyboardEvent` → owner window](https://github.com/electron/electron/blob/v43.3.0/shell/browser/api/electron_api_web_contents.cc#L1432-L1456)
+- [Electron 43.3.0 `NativeWindowViews::HandleKeyboardEvent` → `RootView`](https://github.com/electron/electron/blob/v43.3.0/shell/browser/native_window_views.cc#L1867-L1882)
+- [Electron 43.3.0 `RootView` 的單獨 Alt 狀態機](https://github.com/electron/electron/blob/v43.3.0/shell/browser/ui/views/root_view.cc#L89-L132)
+
+#### Info — keyup 沒有本案需要抑制的 renderer 預設行為
+
+- Chromium 150 Blink 的 keyup default handler 只處理 Enter，以及既有鍵盤捲動的 `scrollend` 收尾；本案 `resolveImeFallbackBinding`／`resolveOrphanKeyupBinding` 只接受 `KeyA-Z`、`DigitN`、`NumpadN`，且 orphan 至少要帶已武裝的 Ctrl／Alt，所以不會落入 Enter、Space、Tab、方向鍵等 keyup/default 行為。
+- 文字輸入、access key、表單提交、頁面捲動與 Electron menu accelerator 的實際觸發點都不依賴本案的英數 keyup。讓 M↑ 回到 browser 端的目的正是完成 Electron 自己的 Alt 狀態清理。
+- IME pending 也安全：`Process` keydown 本身沒有被頁面取消，已足以在 browser 端把「單獨 Alt」狀態清掉；其後英數實體 keyup 不取消，沒有新增輸入或 composition default action。`isComposing`、較早 listener 的 `defaultPrevented`、formMode、action existence 與 800ms/modifier 一致性 guard 均未改動。
+
+Chromium 150 對照：[Blink `KeyboardEventManager` 的 keyup 預設處理](https://chromium.googlesource.com/chromium/src/+/refs/tags/150.0.7871.212/third_party/blink/renderer/core/input/keyboard_event_manager.cc#461)。
+
+#### Info — `Menu.setApplicationMenu(null)` 是更強的產品層防線，但不是本輪必要條件
+
+- Electron 官方文件明載：若 app 從未設定 menu，Electron 會自動建立 File／Edit／View／Window 預設 menu；`Menu.setApplicationMenu(null)` 在 Windows/Linux 會同時移除 menu bar。Electron `RootView::SetMenu(nullptr)` 也會解除 accelerators 並令後續 Alt 狀態機直接 return。
+- 若 MindFlow 明確不提供原生應用程式選單，另案在 main process 移除 application menu，會比單純 `autoHideMenuBar`／`setMenuBarVisibility(false)` 更徹底，也能一併收掉第二輪 #7 的預設 menu accelerator collision。
+- 但這會移除整套原生選單與 accelerators，屬產品行為變更；若未來要保留原生 menu 或跨 macOS，共用 renderer 的正確事件處理仍不可省。本輪不應為此擴大最小修補範圍。
+
+官方文件：[Electron `Menu.setApplicationMenu(null)` 行為](https://www.electronjs.org/docs/latest/api/menu/#menusetapplicationmenumenu)。
+
+### 測試結果
+
+- `node tests/core.test.mjs`：exit 0，**29/29 passed**。
+- `node --test tests/*.test.mjs`：exit 0，Node runner **18 tests、18 pass、0 fail**；各檔內自管 suite 全數通過。
+- `cd desktop && npm test`：exit 0，**136 tests、136 pass、0 fail**。
+- 額外唯讀 IME pending controller 探針：action **1 次**、pending 已清、`defaultPrevented:false`、`mindflowDispatched:true`。
+- 依任務書要求，**未執行矩陣**。
+
+### 自首
+
+- 沒有以實體鍵盤／Windows `RegisterHotKey` 重播，也沒有在本輪啟動真 Electron 安裝版觀察原生 menu bar；根治判定來自 Electron 43.3.0、Chromium 150.0.7871.212 的鎖版原始碼、現行 listener 拓撲與 controller 探針。
+- core 測試與額外探針使用事件 stub，不證明真實 DOM `KeyboardEvent` 到 browser process 的 ACK；該 ACK 語意由 Chromium `WebContentsDelegate` 契約與作者已觀察到「preventDefault 時選單翻出」的真機指紋交叉佐證。
+- `mindflowDispatched` 表示 controller 已進入派發，不代表 action 最終成功；診斷面板仍以 `defaultPrevented || mindflowDispatched` 顯示「已派發」，也仍可能把其他 listener 的 `defaultPrevented` 當成派發。這是既有診斷語意限制，不是本輪功能回歸。
+- 未執行任何 Git 操作，未修改報告以外檔案。
+
+### 簽字結論
+
+**通過。** 移除成功 keyup 派發的 `preventDefault()`、改用 `mindflowDispatched` 診斷旗標，是針對目前 Electron Alt 狀態機的正確最小修法；orphan 與 IME pending 均維持單次派發與原有 guard，指定測試全綠。建議另案補 IME pending controller 斷言，並由產品決策是否徹底移除 Electron 預設 application menu；兩者均不阻擋本輪。
+
+---
+
+## 作者回應（第三輪）與最終雙簽
+
+- 第三輪 Minor「IME pending 契約未被控制器測試鎖住」：**接受並已補**——`tests/core.test.mjs` 新增 Process(code 空) keydown → KeyM keyup 的完整路徑斷言：單次派發、pending 清除、`defaultPrevented:false`、`mindflowDispatched:true`。
+- `Menu.setApplicationMenu(null)`：同意是更強的產品層防線，列為獨立議題（與第二輪 #7 合併），本輪不擴大範圍。
+- 矩陣第五輪（2026-09-05 20:57，keyup 不 preventDefault 後）：**206/206 PASS**。
+- 真機驗收（主力機、安裝版 v1.0.15 經 app 自身更新提示安裝）：Ctrl+Alt+M 的 keydown 仍被系統吞（面板僅 `m↑`），**備註抽屜正確打開**；副作用「翻出預設選單列」即本輪修正對象，將於 v1.0.16 再驗。
+
+**Claude（作者）簽字：三輪修訂完成，通過自審。**
+**Codex（審查者）簽字：第三輪「通過」；建議事項已補或列為獨立議題。**

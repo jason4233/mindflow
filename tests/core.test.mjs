@@ -666,7 +666,8 @@ test('孤兒 keyup 救援：系統全域熱鍵吞掉 keydown 時，Ctrl+Alt+M �
   const orphan = makeEvent({ key: 'm', code: 'KeyM', ctrlKey: true, altKey: true })
   controller.handleKeyup(orphan)
   assert.deepEqual(calls, ['insertNote'], '孤兒 keyup 應派發 insertNote')
-  assert.equal(orphan.defaultPrevented, true)
+  assert.equal(orphan.mindflowDispatched, true, '派發以旗標標記')
+  assert.equal(orphan.defaultPrevented, false, 'keyup 不得 preventDefault，否則 Electron 會把 Alt↑ 當單獨按 Alt 翻出選單列')
   releaseChord()
   assert.deepEqual(calls, ['insertNote'], '修飾鍵 keyup 不得再派發')
 
@@ -750,6 +751,24 @@ test('孤兒 keyup 救援的排除規則：只救已武裝的 Ctrl／Alt 和弦�
   assert.equal(resolveOrphanKeyupBinding(up({ key: 'v', code: 'KeyV', ctrlKey: true }), armed), null)
   // 修飾鍵自身 keyup
   assert.equal(resolveOrphanKeyupBinding(up({ key: 'Alt', code: 'AltLeft', ctrlKey: true }), armed), null)
+  // IME pending 完整路徑與 orphan 共用派發尾端：同樣單次派發、不 preventDefault、旗標標記
+  const calls = []
+  registerAction('insertNote', () => { calls.push('insertNote'); return true })
+  const controller = new KeyboardController({
+    doc: createDefaultDoc(), manager: new CommandManager(),
+    selection: { primaryId: 'x', getSelectedIds: () => ['x'] },
+    viewport: {}, edit: { isEditing: false }, save: () => true, getPositions: () => new Map()
+  })
+  const processDown = { key: 'Process', code: '', ctrlKey: true, altKey: true, shiftKey: false, metaKey: false, target: null, defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
+  controller.trackKeydown(processDown)
+  controller.handleKeydown(processDown)
+  assert.ok(controller.pendingImeChord, 'code 缺失的 Process keydown 應進入 pending')
+  const imeUp = { key: 'm', code: 'KeyM', ctrlKey: true, altKey: true, shiftKey: false, metaKey: false, target: null, defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
+  controller.handleKeyup(imeUp)
+  assert.deepEqual(calls, ['insertNote'])
+  assert.equal(controller.pendingImeChord, null, 'pending 派發後清除')
+  assert.equal(imeUp.defaultPrevented, false, 'IME pending 派發同樣不得 preventDefault')
+  assert.equal(imeUp.mindflowDispatched, true)
   assert.equal(modifierFromCode('ControlRight'), 'control')
   assert.equal(modifierFromCode('AltLeft'), 'alt')
   assert.equal(modifierFromCode('MetaLeft'), 'meta')

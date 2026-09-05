@@ -153,7 +153,7 @@ function createKeyDiagnostic() {
     const row = document.createElement('li')
     row.innerHTML = `${marker} key=<b></b> code=<b></b> kc=${event.keyCode} mod=${mods}`
       + `${event.isComposing ? ' <i>組字中</i>' : ''}${isFormTarget(event.target) ? ' <i>表單焦點</i>' : ''}`
-      + ` → ${binding ? `<b></b>` : '<i>無對應</i>'}${event.defaultPrevented ? ' <i>已派發</i>' : ''}`
+      + ` → ${binding ? `<b></b>` : '<i>無對應</i>'}${event.defaultPrevented || event.mindflowDispatched ? ' <i>已派發</i>' : ''}`
     const bolds = row.querySelectorAll('b')
     bolds[0].textContent = event.key
     bolds[1].textContent = event.code || '(空)'

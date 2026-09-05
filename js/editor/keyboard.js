@@ -194,7 +194,10 @@ export class KeyboardController {
     const formMode = this.edit.isEditing || isFormTarget(event.target)
     if (formMode && !FORM_GLOBAL_ACTIONS.has(binding.action)) return
     if (!hasAction(binding.action)) return
-    event.preventDefault()
+    // 不 preventDefault：keyup 沒有需要抑制的瀏覽器預設行為，而 Electron 只會收到頁面未處理的
+    // 鍵盤事件——若吞掉這個 keyup，Alt↑ 會被當成「單獨按 Alt」而翻出自動隱藏的選單列。
+    // 派發事實改以旗標標記，供鍵盤診斷面板顯示。
+    event.mindflowDispatched = true
     runAction(binding.action, event)
   }
 
