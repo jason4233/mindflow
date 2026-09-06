@@ -2,7 +2,7 @@
  * MindFlow 文件的純邏輯匯出器；只回傳字串，不下載檔案、不存取 DOM。
  */
 import { getLayoutBounds, layout } from '../editor/layout.js'
-import { serializeDoc, walkNodes } from '../editor/model.js'
+import { buildMapContext, buildMapRootLookup, collectMapRoots, getFloatingMeta, serializeDoc, walkNodes } from '../editor/model.js'
 import { getConnectionPath } from '../editor/render.js'
 import { getLineAppearance, getNodeAppearance, getTheme } from '../editor/themes.js'
 
@@ -34,12 +34,18 @@ export function exportDocumentMarkdown(doc, options = {}) {
   if (rows.length === 0) return ''
 
   const indent = typeof options.indent === 'string' ? options.indent : DEFAULT_INDENT
-  const [root, ...children] = rows
-  const lines = [`# ${escapeOutlineText(root.node.text)}`]
-  if (children.length > 0) lines.push('')
-  for (const { node, depth } of children) {
+  const lines = []
+  for (const { node, depth } of rows) {
+    // 每張圖各自是一個 H1 段落：獨立心智圖不是主圖的項目
+    if (depth === 0) {
+      if (lines.length > 0) lines.push('')
+      lines.push(`# ${escapeOutlineText(node.text)}`)
+      lines.push('')
+      continue
+    }
     lines.push(`${indent.repeat(Math.max(0, depth - 1))}- ${escapeOutlineText(node.text)}`)
   }
+  while (lines.length > 0 && lines.at(-1) === '') lines.pop()
   return lines.join('\n')
 }
 
@@ -50,7 +56,9 @@ export function exportDocumentMarkdown(doc, options = {}) {
 export function exportDocumentWord(doc, options = {}) {
   const title = String(options.title ?? doc?.title ?? doc?.root?.text ?? 'MindFlow')
   const root = doc?.root
-  const body = root ? wordOutlineHtml(root) : '<p class="empty"></p>'
+  const body = root
+    ? collectMapRoots(root).map((mapRoot, index) => wordOutlineHtml(mapRoot, index === 0)).join('')
+    : '<p class="empty"></p>'
   return `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/1999/xhtml" lang="zh-Hant">
 <head>
@@ -88,15 +96,19 @@ export function documentToSvg(doc, options = {}) {
   const textLayouts = new Map()
   const measure = (node, depth) => measureSvgNode(node, depth, activeTheme, textLayouts, options)
   const positions = layout(workingDoc, measure)
-  applyDocumentSpacing(positions, workingRoot.id, doc.canvas)
+  applyDocumentSpacing(positions, workingDoc, doc.canvas)
 
   const nodes = new Map()
   const parents = new Map()
   const branches = buildBranchLookup(workingRoot, activeTheme)
 
+  // 與畫布同語意：獨立心智圖 root 是中心主題（depth 0），且不畫主圖連到它的線，
+  // 否則匯出的 PNG/JPG/PDF 會重新出現晨睿回報的那條殘段。
+  const mapContext = buildMapContext(workingRoot)
   walkNodes(workingRoot, (node, parent, depth) => {
-    nodes.set(node.id, { node, depth })
-    if (parent) parents.set(node.id, parent.id)
+    const entry = mapContext.get(node.id)
+    nodes.set(node.id, { node, depth: entry ? entry.depth : depth })
+    if (parent && !(entry && entry.isMapRoot)) parents.set(node.id, parent.id)
   }, { includeHidden: true })
 
   // overlay 幾何先算好，才能把關聯線標籤與概要括弧納入畫布邊界，避免匯出後被裁掉。
@@ -142,18 +154,26 @@ export function documentToSvg(doc, options = {}) {
   return pieces.join('')
 }
 
+// 逐圖走訪：獨立心智圖（懸浮）自成一棵樹，depth 從 0 起算並標記 mapIndex，
+// 文字類匯出才不會把它列成主圖的子項。
 function outlineRows(root) {
   if (!root || typeof root !== 'object') return []
   const rows = []
-  const stack = [{ node: root, depth: 0 }]
-  while (stack.length > 0) {
-    const entry = stack.pop()
-    rows.push(entry)
-    const children = Array.isArray(entry.node.children) ? entry.node.children : []
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      stack.push({ node: children[index], depth: entry.depth + 1 })
+  collectMapRoots(root).forEach((mapRoot, mapIndex) => {
+    const skipIndependent = mapIndex === 0
+    const stack = [{ node: mapRoot, depth: 0, mapIndex }]
+    while (stack.length > 0) {
+      const entry = stack.pop()
+      rows.push(entry)
+      const children = Array.isArray(entry.node.children) ? entry.node.children : []
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        const child = children[index]
+        // 主圖走訪時跳過獨立圖：它們會各自成為下一輪的 mapRoot
+        if (skipIndependent && entry.node === mapRoot && getFloatingMeta(child)) continue
+        stack.push({ node: child, depth: entry.depth + 1, mapIndex })
+      }
     }
-  }
+  })
   return rows
 }
 
@@ -173,9 +193,11 @@ function escapeOutlineText(value) {
   return escaped
 }
 
-function wordOutlineHtml(root) {
+function wordOutlineHtml(root, skipIndependent = false) {
   const pieces = [`<h1>${escapeHtmlWithBreaks(root.text)}</h1>`]
-  const children = Array.isArray(root.children) ? root.children : []
+  // 獨立心智圖各自輸出一個 h1 段落，不當成主圖的清單項目
+  const children = (Array.isArray(root.children) ? root.children : [])
+    .filter(child => !(skipIndependent && getFloatingMeta(child)))
   if (children.length === 0) return pieces.join('')
 
   pieces.push('<ul>')
@@ -609,17 +631,23 @@ function expandedClone(root) {
   return clone
 }
 
-function applyDocumentSpacing(positions, rootId, canvas) {
+function applyDocumentSpacing(positions, doc, canvas) {
+  const rootId = doc?.root?.id
+  const mapRoots = buildMapRootLookup(doc?.root)
   const root = positions.get(rootId)
   if (!root) return
   const horizontalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingH) || 30) - 30) / 50))
   const verticalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingV) || 30) - 30) / 50))
   if (horizontalScale === 1 && verticalScale === 1) return
-  const rootCenterX = root.x + root.w / 2
-  const rootCenterY = root.y + root.h / 2
-  // 與畫面渲染相同：只縮放節點中心距離，節點本身尺寸不變。
+  // 與畫面渲染相同：只縮放節點中心距離，節點本身尺寸不變；每張圖以自己的 root 為中心，
+  // 否則調過間距的文件匯出時會把獨立心智圖拉離它的座標。
   for (const [id, position] of positions) {
-    if (id === rootId) continue
+    const mapRootId = mapRoots.get(id) || rootId
+    if (id === mapRootId) continue
+    const mapRoot = positions.get(mapRootId)
+    if (!mapRoot) continue
+    const rootCenterX = mapRoot.x + mapRoot.w / 2
+    const rootCenterY = mapRoot.y + mapRoot.h / 2
     const centerX = position.x + position.w / 2
     const centerY = position.y + position.h / 2
     position.x = rootCenterX + (centerX - rootCenterX) * horizontalScale - position.w / 2

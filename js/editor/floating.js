@@ -3,22 +3,10 @@
  */
 import { registerAction } from './actions.js'
 import { moveNode, setStyle } from './commands.js'
-import { createId, createNode, findNode, findNodeContext, structuredCloneSafe } from './model.js'
+import { FLOATING_PREFIX, buildMapContext, createId, createNode, findNode, findNodeContext, getFloatingMeta, structuredCloneSafe } from './model.js'
 import { registerOverlay } from './render.js'
 
-const FLOATING_PREFIX = '__floating__:'
-
-export function getFloatingMeta(node) {
-  const token = node?.icons?.find(icon => icon.startsWith(FLOATING_PREFIX))
-  if (!token) return null
-  const [rawX, rawY] = token.slice(FLOATING_PREFIX.length).split(',')
-  const x = Number(rawX)
-  const y = Number(rawY)
-  return {
-    x: Number.isFinite(x) ? x : 0,
-    y: Number.isFinite(y) ? y : 0
-  }
-}
+export { getFloatingMeta }
 
 export function stripFloatingMeta(node) {
   if (!node || typeof node !== 'object') return node
@@ -179,27 +167,51 @@ function isBlankCanvasDoubleClick(event, ctx) {
   return event.target === canvas || event.target === world || event.target === nodesLayer || event.target === svgLayer
 }
 
-function drawFloatingNodes({ doc, positions, nodesLayer, svgLayer, nodeLookup }, ctx) {
-  const orderedIds = Array.from(nodeLookup.keys()).filter(id => id !== doc.root.id)
-  const connectionPaths = Array.from(svgLayer.querySelectorAll(':scope > .connection-path'))
-  for (const [id, position] of positions) {
+function drawFloatingNodes({ doc, positions, nodesLayer, nodeLookup }, ctx) {
+  // 座標與連線已由 layout/render 處理（獨立心智圖自成一棵樹、不畫來自原圖的連線）；
+  // 這裡只負責標記與拖曳。以前是在 overlay 事後搬位置＋用索引隱藏連線，
+  // 子節點不會跟著搬，而且索引一錯就會在原圖留下連線殘段。
+  for (const [id] of positions) {
     const record = nodeLookup.get(id)
     const node = record?.node || findNode(doc.root, id)
     const meta = getFloatingMeta(node)
-    // 舊資料若把 token 洩漏到樹內子節點，不再讓它脫離父節點與隱藏連線。
     if (!meta || record?.parent !== doc.root) continue
-    // overlay 先改 positions，讓後續關聯線/概要 hook 讀到自由座標。
-    position.x = meta.x
-    position.y = meta.y
     const element = nodesLayer.querySelector(`[data-node-id="${cssEscape(id)}"]`)
     if (!element) continue
     element.classList.add('mind-node--floating')
-    element.style.left = `${meta.x}px`
-    element.style.top = `${meta.y}px`
-    const pathIndex = orderedIds.indexOf(id)
-    if (pathIndex >= 0 && connectionPaths[pathIndex]) connectionPaths[pathIndex].hidden = true
     element.addEventListener('pointerdown', event => beginFloatingDrag(event, ctx, id, element, meta))
   }
+}
+
+// 收集同一張獨立心智圖的節點元素起始座標與圖內連線，供拖曳時整體平移。
+function collectMapFollowers(ctx, mapRootId) {
+  const context = buildMapContext(ctx.doc.root)
+  const ids = new Set(Array.from(context.entries())
+    .filter(([, entry]) => entry.mapRootId === mapRootId)
+    .map(([id]) => id))
+  const followers = []
+  for (const id of ids) {
+    const element = ctx.elements.nodesLayer.querySelector(`[data-node-id="${cssEscape(id)}"]`)
+    if (!element) continue
+    followers.push({ element, x: Number.parseFloat(element.style.left) || 0, y: Number.parseFloat(element.style.top) || 0 })
+  }
+  // 圖內連線：render 依 parentLookup 順序輸出，這裡用 data 屬性比對子節點 id
+  followers.edges = Array.from(ctx.elements.svgLayer.querySelectorAll(':scope > .connection-path'))
+    .filter(path => ids.has(path.dataset.childId))
+  // 關聯線與概要 overlay：只搬「渲染時明確標記為本圖」的（data-map-root）。
+  // 用 selector 猜所屬圖會誤搬別張圖的 overlay；跨圖關聯線刻意不標記，
+  // 整條平移會讓另一端脫離它的節點，放開後由完整重繪校正。
+  followers.overlays = []
+  for (const layer of [ctx.elements.svgLayer, ctx.elements.nodesLayer]) {
+    if (!layer) continue
+    for (const element of layer.querySelectorAll(`[data-map-root="${cssEscape(mapRootId)}"]`)) {
+      // SVG 用 transform；HTML（概要標籤是 button）改位移 left/top——
+      // 直接寫 inline transform 會取代 CSS 的 translateY(-50%) 置中，拖曳中會多偏半個標籤高。
+      if (typeof SVGElement !== 'undefined' && element instanceof SVGElement) followers.overlays.push(element)
+      else followers.push({ element, x: Number.parseFloat(element.style.left) || 0, y: Number.parseFloat(element.style.top) || 0 })
+    }
+  }
+  return followers
 }
 
 function beginFloatingDrag(event, ctx, nodeId, element, meta) {
@@ -212,13 +224,24 @@ function beginFloatingDrag(event, ctx, nodeId, element, meta) {
   let moved = false
   ctx.selection.set([nodeId])
   element.classList.add('is-floating-dragging')
+  // 使用者拖的是「整張圖」：先收集這張圖的所有節點 DOM 與圖內連線，拖曳中一起平移，
+  // 否則 root 會脫離自己的子樹，放開時才跳回去。
+  const followers = collectMapFollowers(ctx, nodeId)
   const move = moveEvent => {
     if (moveEvent.pointerId !== pointerId) return
     const point = ctx.viewport.screenToWorld(moveEvent.clientX, moveEvent.clientY)
     latest = { x: meta.x + point.x - start.x, y: meta.y + point.y - start.y }
     moved = moved || Math.hypot(point.x - start.x, point.y - start.y) > 3
-    element.style.left = `${latest.x}px`
-    element.style.top = `${latest.y}px`
+    const dx = latest.x - meta.x
+    const dy = latest.y - meta.y
+    for (const follower of followers) {
+      follower.element.style.left = `${follower.x + dx}px`
+      follower.element.style.top = `${follower.y + dy}px`
+    }
+    for (const edge of followers.edges) edge.setAttribute('transform', `translate(${dx},${dy})`)
+    // overlay 用 CSS transform：SVG 與 HTML（概要標籤是 button）都適用，
+    // 也不會覆蓋 relation-label 既有的 transform 屬性。
+    for (const overlay of followers.overlays) overlay.style.transform = `translate(${dx}px, ${dy}px)`
   }
   const end = endEvent => {
     if (endEvent.pointerId !== pointerId) return
@@ -226,6 +249,8 @@ function beginFloatingDrag(event, ctx, nodeId, element, meta) {
     window.removeEventListener('pointerup', end)
     window.removeEventListener('pointercancel', end)
     element.classList.remove('is-floating-dragging')
+    for (const edge of followers.edges) edge.removeAttribute('transform')
+    for (const overlay of followers.overlays) overlay.style.transform = ''
     if (!moved) { ctx.renderAll(); return }
     element.style.pointerEvents = 'none'
     const target = document.elementsFromPoint(endEvent.clientX, endEvent.clientY).find(candidate => candidate.classList?.contains('mind-node') && candidate.dataset.nodeId !== nodeId)

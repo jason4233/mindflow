@@ -231,6 +231,73 @@ export function walkNodes(root, visitor, options = {}) {
   visit(root, null, 0, 0)
 }
 
+// 懸浮（獨立心智圖）座標存在 node.icons 的 token 裡。放在 model.js 是為了讓 layout 與 render
+// 都能判讀而不必 import floating.js（floating.js 反向 import 了 render.js，會構成循環相依）。
+export const FLOATING_PREFIX = '__floating__:'
+
+// 世界座標的合理範圍。超出的值（含 NaN/Infinity）不當成獨立心智圖，
+// 以免壞掉的 token 讓整張圖被丟到 (0,0) 疊在主圖上，或大到浮點精度失效。
+export const FLOATING_COORD_LIMIT = 1e7
+
+export function getFloatingMeta(node) {
+  const token = node?.icons?.find(icon => typeof icon === 'string' && icon.startsWith(FLOATING_PREFIX))
+  if (!token) return null
+  const [rawX, rawY] = token.slice(FLOATING_PREFIX.length).split(',')
+  const x = Number(rawX)
+  const y = Number(rawY)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+  if (Math.abs(x) > FLOATING_COORD_LIMIT || Math.abs(y) > FLOATING_COORD_LIMIT) return null
+  return { x, y }
+}
+
+// 獨立心智圖＝掛在 root 底下、帶懸浮座標的節點；其子樹自成一張圖。
+export function isIndependentMap(node, parent, root) {
+  return Boolean(parent && root && parent === root && getFloatingMeta(node))
+}
+
+// 節點 → 所屬心智圖 root 的對照表。間距縮放必須以「自己那張圖的中心」為基準，
+// 否則調整文件間距會把獨立心智圖從它的座標拉走，並用主圖中心扭曲它的內部排版。
+// 心智圖森林上下文：獨立心智圖（懸浮）自成一棵樹，語意上不是主圖的子節點。
+// render／樣式面板／command／匯出／大綱／小地圖／演示／縮圖一律共用這份，
+// 禁止各模組自己算 depth - 1（會造成畫面與面板不一致，實測會讓選色 no-op）。
+export function buildMapContext(root) {
+  const context = new Map()
+  if (!root) return context
+  const assign = (node, mapRootId, depth, parent) => {
+    context.set(node.id, { mapRootId, depth, parent, isMapRoot: depth === 0 })
+    for (const child of Array.isArray(node.children) ? node.children : []) {
+      assign(child, mapRootId, depth + 1, node)
+    }
+  }
+  context.set(root.id, { mapRootId: root.id, depth: 0, parent: null, isMapRoot: true })
+  for (const child of Array.isArray(root.children) ? root.children : []) {
+    if (getFloatingMeta(child)) assign(child, child.id, 0, null)
+    else assign(child, root.id, 1, root)
+  }
+  return context
+}
+
+// 每張圖的 root 節點（主圖 root 排在最前）
+export function collectMapRoots(root) {
+  if (!root) return []
+  const independents = (Array.isArray(root.children) ? root.children : []).filter(child => getFloatingMeta(child))
+  return [root, ...independents]
+}
+
+export function buildMapRootLookup(root) {
+  const lookup = new Map()
+  if (!root) return lookup
+  const assign = (node, mapRootId) => {
+    lookup.set(node.id, mapRootId)
+    for (const child of Array.isArray(node.children) ? node.children : []) assign(child, mapRootId)
+  }
+  lookup.set(root.id, root.id)
+  for (const child of Array.isArray(root.children) ? root.children : []) {
+    assign(child, getFloatingMeta(child) ? child.id : root.id)
+  }
+  return lookup
+}
+
 export function findNode(root, id) {
   let found = null
   walkNodes(root, node => {
@@ -240,10 +307,24 @@ export function findNode(root, id) {
 }
 
 export function findNodeContext(root, id) {
+  if (!root) return null
   let found = null
+  // 同一次走訪順便記錄每個節點的頂層祖先，用來判斷它屬於哪一張圖。
+  // 不要另外呼叫 buildMapContext：findNodeContext 是熱路徑，每次多走一次全樹
+  // 在大文件上會退化成 O(n²)（實測會讓 E2E 的畫面等待逾時）。
+  const topLevel = new Map()
   walkNodes(root, (node, parent, depth, index) => {
+    if (parent === root) topLevel.set(node.id, node)
+    else if (parent) topLevel.set(node.id, topLevel.get(parent.id) || null)
     if (!found && node.id === id) found = { node, parent, depth, index }
   })
+  if (!found) return found
+  // depth 是資料樹深度（結構操作用）；semanticDepth 是「在自己那張圖裡的深度」，
+  // 樣式外觀一律用後者，否則獨立心智圖的面板顯示會與畫布不一致（選色會 no-op）。
+  const branch = found.node === root ? null : topLevel.get(found.node.id)
+  const independent = branch && getFloatingMeta(branch) ? branch : null
+  found.semanticDepth = independent ? found.depth - 1 : found.depth
+  found.mapRootId = independent ? independent.id : root.id
   return found
 }
 

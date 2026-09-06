@@ -1,7 +1,7 @@
 /**
  * 將 model + layout 座標冪等渲染為 SVG 連線、HTML 節點與可擴充 overlay。
  */
-import { countDescendants, walkNodes } from './model.js'
+import { buildMapRootLookup, collectMapRoots, countDescendants, getFloatingMeta, walkNodes } from './model.js'
 import { getLineAppearance, getNodeAppearance, getTheme } from './themes.js'
 import { strings } from '../strings.js'
 
@@ -50,15 +50,21 @@ export function render(doc, positions, {
   onToggleCollapse = () => {}
 }) {
   const activeTheme = getTheme(doc.themeId)
-  applyDocumentSpacing(positions, doc.root.id, doc.canvas)
+  applyDocumentSpacing(positions, doc, doc.canvas)
   const previousPositions = readRenderedPositions(nodesLayer)
   const nodeLookup = new Map()
   const parentLookup = new Map()
   const branchLookup = buildBranchLookup(doc.root, activeTheme)
 
+  // 獨立心智圖（懸浮）自成一張圖：depth 從 0 起算，所以它渲染成中心主題、子節點是分支；
+  // 也不畫「原圖 → 獨立圖」的連線，否則兩張圖看起來還是同一張。
+  const independentIds = new Set()
   walkNodes(doc.root, (node, parent, depth) => {
-    nodeLookup.set(node.id, { node, parent, depth })
-    if (parent) parentLookup.set(node.id, parent.id)
+    const isIndependentRoot = parent === doc.root && Boolean(getFloatingMeta(node))
+    const inIndependentMap = isIndependentRoot || Boolean(parent && independentIds.has(parent.id))
+    if (inIndependentMap) independentIds.add(node.id)
+    nodeLookup.set(node.id, { node, parent, depth: inIndependentMap ? depth - 1 : depth })
+    if (parent && !isIndependentRoot) parentLookup.set(node.id, parent.id)
   }, { includeHidden: false })
 
   const fragment = document.createDocumentFragment()
@@ -85,12 +91,16 @@ export function render(doc, positions, {
     const record = nodeLookup.get(childId)
     if (!parentPosition || !childPosition || !record) continue
     const branchColor = branchLookup.get(childId) || activeTheme.branchPalette[0]
-    paths.append(createConnection(
+    const connection = createConnection(
       parentPosition,
       childPosition,
       getLineAppearance(record.node, record.depth, activeTheme, branchColor),
       childPosition.connector || doc.layout
-    ))
+    )
+    // 標記這條線屬於哪個子節點：拖曳整張獨立圖時要一起平移圖內連線，
+    // 用索引對位很脆弱（節點缺 position 就整排錯位）。
+    connection.dataset.childId = childId
+    paths.append(connection)
   }
   svgLayer.replaceChildren(paths)
   animateLayoutChange(nodesLayer, svgLayer, movingNodes)
@@ -261,24 +271,34 @@ export function getConnectionPath(parent, child, appearanceShape = 'curved', lay
 
 function buildBranchLookup(root, activeTheme) {
   const palette = activeTheme.branchPalette
-  const lookup = new Map([[root.id, palette[0]]])
-  root.children.forEach((branch, index) => {
-    const color = activeTheme.rainbow ? palette[index % palette.length] : palette[0]
-    walkNodes(branch, node => lookup.set(node.id, color))
-  })
+  const lookup = new Map()
+  // 每張心智圖各自從 palette 頭開始配色：獨立心智圖是中心主題，
+  // 它的第一層子節點才是分支，不該共用主圖某一條分支的顏色。
+  for (const mapRoot of collectMapRoots(root)) {
+    lookup.set(mapRoot.id, palette[0])
+    const branches = (mapRoot.children || []).filter(child => !(mapRoot === root && getFloatingMeta(child)))
+    branches.forEach((branch, index) => {
+      const color = activeTheme.rainbow ? palette[index % palette.length] : palette[0]
+      walkNodes(branch, node => lookup.set(node.id, color))
+    })
+  }
   return lookup
 }
 
-function applyDocumentSpacing(positions, rootId, canvas) {
-  const root = positions.get(rootId)
-  if (!root) return
+function applyDocumentSpacing(positions, doc, canvas) {
+  if (!positions.get(doc?.root?.id)) return
   const horizontalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingH) || 30) - 30) / 50))
   const verticalScale = Math.max(0.72, Math.min(2.4, 1 + ((Number(canvas?.spacingV) || 30) - 30) / 50))
   if (horizontalScale === 1 && verticalScale === 1) return
-  const rootCenterX = root.x + root.w / 2
-  const rootCenterY = root.y + root.h / 2
+  // 每張圖各自以自己的 root 為中心縮放：獨立心智圖不會被主圖中心拉走。
+  const mapRoots = buildMapRootLookup(doc.root)
   for (const [id, position] of positions) {
-    if (id === rootId) continue
+    const mapRootId = mapRoots.get(id) || doc.root.id
+    if (id === mapRootId) continue
+    const mapRoot = positions.get(mapRootId)
+    if (!mapRoot) continue
+    const rootCenterX = mapRoot.x + mapRoot.w / 2
+    const rootCenterY = mapRoot.y + mapRoot.h / 2
     const centerX = position.x + position.w / 2
     const centerY = position.y + position.h / 2
     position.x = rootCenterX + (centerX - rootCenterX) * horizontalScale - position.w / 2

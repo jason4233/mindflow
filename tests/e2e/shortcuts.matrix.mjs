@@ -440,6 +440,66 @@ const MATRIX_CASES = [
     return h.expect(await h.countNodes() === 7 && await h.page.locator('.mind-node--floating').count() === 1, `節點=${await h.countNodes()}；floating=${await h.page.locator('.mind-node--floating').count()}`)
   }),
 
+  // 空白畫布雙擊：真滑鼠事件；重點是「建立後必須留在編輯狀態」——自動存檔曾在 500ms 後
+  // commit 掉 session，把使用者踢出輸入狀態，導致只留下一個空節點（看起來像沒反應）。
+  matrix('雙擊空白畫布', '畫布', '建立懸浮節點並保持在編輯狀態', async h => {
+    const before = await h.countNodes()
+    await h.dblclickBlankCanvas()
+    await h.page.waitForTimeout(1200)
+    const editing = await h.page.locator('#nodes-layer .mind-node__text[contenteditable="true"]').count()
+    const floating = await h.page.locator('.mind-node--floating').count()
+    return h.expect(await h.countNodes() === before + 1 && editing === 1 && floating === 1,
+      `節點 ${before}→${await h.countNodes()}；editing=${editing}；floating=${floating}`)
+  }, { electron: true }),
+  matrix('雙擊空白畫布 → 輸入', '畫布', '輸入中停頓超過存檔週期仍留在編輯狀態且文字完整', async h => {
+    await h.dblclickBlankCanvas()
+    await h.page.keyboard.type('市場策略')
+    await h.page.waitForTimeout(900)
+    const editingAfterPause = await h.page.locator('#nodes-layer .mind-node__text[contenteditable="true"]').count()
+    await h.page.keyboard.type('A案')
+    await h.page.keyboard.press('Enter')
+    // 存檔是 500ms debounce；等它自然落盤才算數（不用 Ctrl+S 掩蓋週期存檔的行為）
+    await h.page.waitForTimeout(900)
+    const doc = await h.storedDoc()
+    const saved = JSON.stringify(doc).includes('市場策略A案')
+    return h.expect(editingAfterPause === 1 && saved, `停頓後 editing=${editingAfterPause}；已存檔=${saved}`)
+  }, { electron: true }),
+  matrix('雙擊空白畫布 → 獨立成圖', '畫布', '新圖自成中心主題、子節點跟著它、主圖不留連線殘段', async h => {
+    const mainPathsBefore = await h.page.locator('#connections-layer .connection-path').count()
+    await h.dblclickBlankCanvas()
+    await h.page.keyboard.type('SecondMap')
+    await h.page.keyboard.press('Enter')
+    await h.page.waitForTimeout(400)
+    const mapRoot = h.page.locator('#nodes-layer .mind-node--floating')
+    const rootBox = await mapRoot.boundingBox()
+    const isCenterTopic = await mapRoot.getAttribute('data-depth') === '0'
+    // 新圖加一個子節點，必須排在新圖旁邊而不是回到原圖底下
+    const idsBeforeChild = await h.page.evaluate(() =>
+      [...document.querySelectorAll('#nodes-layer .mind-node')].map(node => node.dataset.nodeId))
+    await mapRoot.click()
+    await h.page.keyboard.press('Tab')
+    await h.page.waitForTimeout(400)
+    await h.page.keyboard.press('Escape')
+    // 用 DOM 差異找新子節點：localStorage 有 500ms 存檔延遲，直接讀會抓到還沒寫入的舊快照
+    const childId = await h.page.evaluate(existing => {
+      const ids = [...document.querySelectorAll('#nodes-layer .mind-node')].map(node => node.dataset.nodeId)
+      return ids.find(id => !existing.includes(id)) || ''
+    }, idsBeforeChild)
+    const childBox = childId ? await h.page.locator(`#nodes-layer [data-node-id="${childId}"]`).boundingBox() : null
+    const distance = childBox ? Math.hypot(childBox.x - rootBox.x, childBox.y - rootBox.y) : Infinity
+    // 主圖只多出「新圖 root → 子節點」這一條連線，沒有主圖連到新圖的殘段
+    const pathsAfter = await h.page.locator('#connections-layer .connection-path').count()
+    return h.expect(isCenterTopic && distance < 400 && pathsAfter === mainPathsBefore + 1,
+      `depth0=${isCenterTopic}；子節點距離=${Math.round(distance)}；連線 ${mainPathsBefore}→${pathsAfter}`)
+  }, { electron: true }),
+  matrix('雙擊節點', '單選', '雙擊既有節點進入編輯且不新增懸浮節點', async h => {
+    const before = await h.countNodes()
+    await h.node('a').dblclick()
+    await h.page.waitForTimeout(1200)
+    const editing = await h.page.locator('#nodes-layer [data-node-id="a"] .mind-node__text[contenteditable="true"]').count()
+    return h.expect(await h.countNodes() === before && editing === 1, `節點 ${before}→${await h.countNodes()}；editing=${editing}`)
+  }, { electron: true }),
+
   ...[
     ['↑', 'ArrowUp', 'b', axisCheck('y', -1)],
     ['↓', 'ArrowDown', 'after-up', axisCheck('y', 1)],
@@ -743,7 +803,9 @@ async function runCases({ project, page, baseURL, cases, connectCDP }) {
   page.on('console', message => {
     if (message.type() === 'error') runtimeErrors.push(`console: ${message.text()}`)
   })
-  page.setDefaultTimeout(5000)
+  // 長工作階段（單一瀏覽器跑完 200+ 案）末段的 UI 等待，5 秒過緊會產生假紅燈；
+  // 單獨重跑同案 3/3 皆通過。放寬到 8 秒仍足以抓出真正卡住的互動。
+  page.setDefaultTimeout(8000)
   page.setDefaultNavigationTimeout(10000)
 
   const h = createHarness({ page, baseURL, connectCDP })
@@ -809,7 +871,9 @@ function createHarness({ page, baseURL, connectCDP }) {
       await page.goto(editorURL, { waitUntil: 'domcontentloaded' })
       await page.locator('#nodes-layer .mind-node').first().waitFor({ state: 'visible' })
       try {
-        await page.waitForFunction(expected => document.querySelectorAll('#nodes-layer .mind-node').length === expected, FIXTURE_NODE_COUNT)
+        // fixture 準備是前置條件不是斷言：逾時放寬到 15 秒，避免機器忙碌時
+        // 產生「節點數=6（預期 6）」這種數值正確卻失敗的假紅燈，掩蓋真正的問題。
+        await page.waitForFunction(expected => document.querySelectorAll('#nodes-layer .mind-node').length === expected, FIXTURE_NODE_COUNT, { timeout: 15000 })
       } catch {
         throw new MatrixFailure(`reset 節點數=${await page.locator('#nodes-layer .mind-node').count()}（預期 ${FIXTURE_NODE_COUNT}）`)
       }
@@ -828,6 +892,20 @@ function createHarness({ page, baseURL, connectCDP }) {
       return page.keyboard.press(shortcut)
     },
     dispatchImeKey: ({ code, binding = null }) => dispatchSyntheticImeKey(page, { code, binding }),
+    // 在畫布左上角一塊確定空白的位置雙擊：先斷言該點的 elementFromPoint 真的是基礎層，
+    // 免得版面改動後測試在節點上雙擊卻仍然「通過」。
+    async dblclickBlankCanvas() {
+      const box = await page.locator('#canvas').boundingBox()
+      const point = { x: box.x + 160, y: box.y + 120 }
+      const target = await page.evaluate(p => {
+        const el = document.elementFromPoint(p.x, p.y)
+        return el ? `${el.tagName}#${el.id}` : 'null'
+      }, point)
+      if (!['SECTION#canvas', 'DIV#world', 'DIV#nodes-layer', 'svg#connections-layer'].includes(target)) {
+        throw new MatrixFailure(`雙擊點不是空白基礎層：${target}`)
+      }
+      await page.mouse.dblclick(point.x, point.y)
+    },
     node: id => page.locator(`#nodes-layer [data-node-id="${id}"]`),
     hasNode: id => page.locator(`#nodes-layer [data-node-id="${id}"]`).count().then(count => count > 0),
     countNodes: () => page.locator('#nodes-layer .mind-node').count(),

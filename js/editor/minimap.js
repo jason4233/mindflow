@@ -2,7 +2,7 @@
  * 右下導航器：透過 render overlay hook 接收最新座標，紅框與 viewport 即時同步。
  */
 import { getLayoutBounds } from './layout.js'
-import { walkNodes } from './model.js'
+import { buildMapContext, walkNodes } from './model.js'
 import { registerOverlay } from './render.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -92,9 +92,11 @@ class MinimapController {
     const offsetY = (136 - bounds.height * scale) / 2 - bounds.minY * scale
     this.transform = { scale, offsetX, offsetY }
 
+    // 不畫主圖連到獨立心智圖的線（它們是兩張圖）
+    const mapContext = buildMapContext(context.doc.root)
     const parentLookup = new Map()
     walkNodes(context.doc.root, (node, parent) => {
-      if (parent) parentLookup.set(node.id, parent.id)
+      if (parent && !mapContext.get(node.id)?.isMapRoot) parentLookup.set(node.id, parent.id)
     }, { includeHidden: false })
     const fragment = document.createDocumentFragment()
     for (const [childId, parentId] of parentLookup) {
@@ -114,8 +116,9 @@ class MinimapController {
       rect.setAttribute('y', format(position.y * scale + offsetY))
       rect.setAttribute('width', format(Math.max(2, position.w * scale)))
       rect.setAttribute('height', format(Math.max(2, position.h * scale)))
-      rect.setAttribute('rx', id === context.doc.root.id ? '3' : '1.5')
-      if (id === context.doc.root.id) rect.classList.add('is-root')
+      const isMapRoot = Boolean(mapContext.get(id)?.isMapRoot)
+      rect.setAttribute('rx', isMapRoot ? '3' : '1.5')
+      if (isMapRoot) rect.classList.add('is-root')
       fragment.append(rect)
     }
     this.content.replaceChildren(fragment)

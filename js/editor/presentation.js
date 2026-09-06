@@ -2,7 +2,7 @@
  * 演示模式與 C1 面板 command：演示只切換視圖，所有樣式異動仍走可逆 command。
  */
 import { registerAction, runAction } from './actions.js'
-import { findNode, findNodeContext, structuredCloneSafe } from './model.js'
+import { collectMapRoots, findNode, findNodeContext, getFloatingMeta, structuredCloneSafe } from './model.js'
 import {
   getLineAppearance,
   getTheme,
@@ -13,13 +13,22 @@ import {
 
 export function buildPresentationSteps(root) {
   if (!root) return []
-  const rootStep = { branchId: root.id, label: root.text || '中心主題', ids: [root.id] }
-  const branchSteps = (root.children || []).map(branch => ({
-    branchId: branch.id,
-    label: branch.text || '分支',
-    ids: [root.id, ...collectIds(branch)]
-  }))
-  return [rootStep, ...branchSteps]
+  // 每張心智圖各自成組：獨立心智圖的步驟不可把主圖 root 一起納入，
+  // 否則演示會被迫 fit 兩張相距很遠的圖，縮到看不清楚。
+  return collectMapRoots(root).flatMap((mapRoot, mapIndex) => {
+    const children = (mapRoot.children || []).filter(child => !(mapIndex === 0 && getFloatingMeta(child)))
+    const rootStep = {
+      branchId: mapRoot.id,
+      label: mapRoot.text || (mapIndex === 0 ? '中心主題' : '獨立心智圖'),
+      ids: [mapRoot.id]
+    }
+    const branchSteps = children.map(branch => ({
+      branchId: branch.id,
+      label: branch.text || '分支',
+      ids: [mapRoot.id, ...collectIds(branch)]
+    }))
+    return [rootStep, ...branchSteps]
+  })
 }
 
 export function createSummaryStyleCommand(doc, summaryId, patch = {}) {
@@ -248,7 +257,7 @@ function registerC1PanelActions(ctx) {
   // 覆寫舊 action，避免只改線型時把主題的 lineShape 寫死在節點 token。
   registerAction('setLineStyle', (config = {}) => mutateSelectedStyles(ctx, '設定連接線樣式', (node, context) => {
     const selectedTheme = getTheme(ctx.doc.themeId)
-    const current = getLineAppearance(node, context.depth, selectedTheme)
+    const current = getLineAppearance(node, context.semanticDepth ?? context.depth, selectedTheme)
     const shapeExplicit = Object.hasOwn(config, 'shape')
     const nextStyle = config.style || current.style
     const nextShape = shapeExplicit ? config.shape : current.shape

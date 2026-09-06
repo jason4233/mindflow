@@ -17,6 +17,7 @@ import {
   importDocumentTxt,
   importOutline
 } from '../js/io/import.js'
+import { createDefaultDoc, createNode, getFloatingMeta } from '../js/editor/model.js'
 
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })
@@ -387,6 +388,51 @@ test('JSON 非物件輸入明確拒絕', () => {
   assert.throws(() => importDocumentJson('null'), /文件物件/u)
   assert.throws(() => importDocumentJson('[]'), /文件物件/u)
   assert.throws(() => importDocumentJson('{bad json'), SyntaxError)
+})
+
+test('多張心智圖的 TXT / Markdown 往返：獨立圖不得被拉平成主圖子項', () => {
+  const doc = createDefaultDoc()
+  doc.root.text = 'ROOT'
+  doc.root.children = [createNode('MAIN')]
+  doc.root.children[0].children = [createNode('MAIN_CHILD')]
+  const independent = createNode('SECOND')
+  independent.icons = ['__floating__:600,-400']
+  independent.children = [createNode('SECOND_CHILD')]
+  independent.children[0].children = [createNode('SECOND_GRAND')]
+  doc.root.children.push(independent)
+
+  for (const [name, exporter, importer] of [
+    ['TXT', exportDocumentTxt, importDocumentTxt],
+    ['Markdown', exportDocumentMarkdown, importDocumentMarkdown]
+  ]) {
+    const restored = importer(exporter(doc, {}), {})
+    const root = restored.root || restored
+    const main = root.children.find(node => node.text === 'MAIN')
+    const second = root.children.find(node => node.text === 'SECOND')
+    assert.ok(second, `${name}: 第二張圖應還原成 root 的直屬節點`)
+    assert.ok(getFloatingMeta(second), `${name}: 第二張圖應還原成獨立心智圖（帶座標）`)
+    assert.deepEqual(second.children.map(node => node.text), ['SECOND_CHILD'], `${name}: 第二張圖的子節點不得被拉平到主圖`)
+    assert.deepEqual(second.children[0].children.map(node => node.text), ['SECOND_GRAND'], `${name}: 孫節點階層要保留`)
+    assert.deepEqual(main.children.map(node => node.text), ['MAIN_CHILD'], `${name}: 主圖階層不受影響`)
+    assert.equal(root.children.filter(node => node.text.startsWith('SECOND')).length, 1, `${name}: 不得把第二張圖的後代提升成 root 子節點`)
+  }
+})
+
+test('SVG 匯出不畫主圖連到獨立心智圖的線，且獨立圖用中心主題樣式', () => {
+  const doc = createDefaultDoc()
+  doc.root.children = [createNode('MAIN')]
+  const independent = createNode('SECOND')
+  independent.icons = ['__floating__:500,300']
+  independent.children = [createNode('SECOND_CHILD')]
+  doc.root.children.push(independent)
+
+  const control = createDefaultDoc()
+  control.root.children = [createNode('MAIN')]
+  const controlPaths = (documentToSvg(control, {}).match(/<path/gu) || []).length
+  const paths = (documentToSvg(doc, {}).match(/<path/gu) || []).length
+  // 對照組只有主圖一條線；加一張各有一個子節點的獨立圖，只該多一條「獨立圖→其子節點」，
+  // 不該多出主圖連到獨立圖的殘線
+  assert.equal(paths, controlPaths + 1, `連線數 ${controlPaths} → ${paths}，多出的必須只有獨立圖內部那條`)
 })
 
 let passed = 0

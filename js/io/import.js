@@ -1,10 +1,11 @@
 /**
  * MindFlow 文件的純邏輯匯入器；解析 JSON／TXT／Markdown，不存取 DOM 或檔案系統。
  */
-import { deserializeDoc } from '../editor/model.js'
+import { FLOATING_PREFIX, deserializeDoc } from '../editor/model.js'
 
 const DEFAULT_TIMESTAMP = '1970-01-01T00:00:00.000Z'
 const DEFAULT_TITLE = '未命名'
+const INDEPENDENT_IMPORT_GAP = 520 // 匯入多張圖時彼此錯開的世界座標間距
 const VALID_LAYOUTS = new Set([
   'mindmap-right', 'mindmap-left', 'mindmap-both', 'org',
   'tree-left', 'tree-right', 'timeline-h', 'fishbone'
@@ -127,11 +128,23 @@ function buildTree(tokens, makeId) {
 
   const root = createImportedNode(tokens[0].text, makeId(0))
   const stack = [root]
+  // 匯出端會把每張獨立心智圖輸出成另一個零層段落；匯入時要還原成獨立心智圖
+  // （root 的直屬子節點 + 座標 token），並讓它底下的縮排項目掛在它身上，
+  // 而不是全部拉平成主圖的子節點。
+  let independentIndex = 0
   for (let index = 1; index < tokens.length; index += 1) {
     const token = tokens[index]
-    // Doc 只能有一個根；額外的零層項目視為根的直接子節點。
-    const depth = Math.max(1, Math.min(Math.max(0, token.depth), stack.length))
     const node = createImportedNode(token.text, makeId(index))
+    if (Math.max(0, token.depth) === 0) {
+      independentIndex += 1
+      node.icons = [`${FLOATING_PREFIX}${INDEPENDENT_IMPORT_GAP * independentIndex},${-INDEPENDENT_IMPORT_GAP}`]
+      root.children.push(node)
+      // 這張獨立圖成為目前段落的 root：後續縮排項目掛在它身上
+      stack.length = 0
+      stack[0] = node
+      continue
+    }
+    const depth = Math.max(1, Math.min(token.depth, stack.length))
     stack[depth - 1].children.push(node)
     stack[depth] = node
     stack.length = depth + 1

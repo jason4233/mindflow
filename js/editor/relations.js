@@ -3,7 +3,7 @@
  */
 import { registerAction, runAction } from './actions.js'
 import { deleteNodes } from './commands.js'
-import { createId, findNode, findNodeContext, structuredCloneSafe } from './model.js'
+import { buildMapContext, createId, findNode, findNodeContext, structuredCloneSafe } from './model.js'
 import { registerOverlay } from './render.js'
 import { getSummaryNodes } from './summary.js'
 
@@ -261,11 +261,18 @@ export function initializeRelations(ctx) {
 
 function drawRelations(overlayCtx, appCtx, selectRelation, startLabelEdit) {
   const { doc, positions, svgLayer } = overlayCtx
+  // 標記所屬心智圖：拖曳整張獨立圖時只平移同圖的 overlay。
+  // 兩端不同圖（跨圖關聯線）不標記——整條平移會讓另一端脫離它的節點。
+  const mapContext = buildMapContext(doc.root)
   for (const relation of doc.relations || []) {
     const geometry = relationGeometry(positions, relation)
     if (!geometry) continue
     const selected = appCtx.featureState.selectedOverlay?.type === 'relation' && appCtx.featureState.selectedOverlay.id === relation.id
-    const group = svgElement('g', { class: `relation-overlay${selected ? ' is-selected' : ''}`, 'data-relation-id': relation.id })
+    const fromMap = mapContext.get(relation.fromId)?.mapRootId
+    const toMap = mapContext.get(relation.toId)?.mapRootId
+    const groupAttrs = { class: `relation-overlay${selected ? ' is-selected' : ''}`, 'data-relation-id': relation.id }
+    if (fromMap && fromMap === toMap) groupAttrs['data-map-root'] = fromMap
+    const group = svgElement('g', groupAttrs)
     const hit = svgElement('path', { d: geometry.path, class: 'relation-hitarea' })
     const path = svgElement('path', {
       d: geometry.path,

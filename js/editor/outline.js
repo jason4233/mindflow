@@ -2,7 +2,7 @@
  * 大綱檢視：與心智圖共用同一份 Doc，文字與層級異動全部走 command。
  */
 import { addChild, addSiblingAfter, moveNode, updateRichText, updateText } from './commands.js'
-import { findNode, findNodeContext, walkNodes } from './model.js'
+import { buildMapContext, findNode, findNodeContext, walkNodes } from './model.js'
 import { registerOverlay } from './render.js'
 
 export function initializeOutline(options = {}) {
@@ -155,8 +155,13 @@ class OutlineController {
     if (!force && !this.opened) return
     const active = document.activeElement
     if (!force && active?.closest?.('[data-outline-list]') === this.list) return
+    // 獨立心智圖自成一張圖：大綱要顯示成另一個 depth 0 段落，不是主圖的分支
+    const mapContext = buildMapContext(this.doc.root)
     const records = []
-    walkNodes(this.doc.root, (node, _parent, depth) => records.push({ node, depth }))
+    walkNodes(this.doc.root, (node, _parent, depth) => {
+      const entry = mapContext.get(node.id)
+      records.push({ node, depth: entry ? entry.depth : depth })
+    })
     const fragment = document.createDocumentFragment()
     for (const { node, depth } of records) {
       const row = document.createElement('div')

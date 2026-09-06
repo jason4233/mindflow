@@ -467,18 +467,8 @@
   box-shadow: 0 8px 22px rgb(15 23 42 / 16%);
   cursor: move;
 }
-.mind-node--floating::after {
-  position: absolute;
-  right: 6px;
-  bottom: -18px;
-  padding: 2px 6px;
-  border-radius: 8px;
-  color: #8a4a1e;
-  background: #ffeddc;
-  content: "懸浮";
-  font-size: 9px;
-  pointer-events: none;
-}
+/* 獨立心智圖的中心主題：本身已渲染成中心主題樣式且沒有連向原圖的線，
+   不再另外掛「懸浮」小標籤（那個標籤會讓它看起來像原圖的附屬品）。 */
 .mind-node--floating.is-floating-dragging { opacity: .72; filter: drop-shadow(0 10px 16px rgb(15 23 42 / 20%)); }
 .canvas.is-format-painting,
 .canvas.is-format-painting .mind-node { cursor: copy; }

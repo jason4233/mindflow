@@ -528,7 +528,7 @@ export class KeyboardController {
     const changedIds = ids.filter(id => {
       const context = findNodeContext(this.doc.root, id)
       if (!context) return false
-      const appearance = getNodeAppearance(context.node, context.depth, theme)
+      const appearance = getNodeAppearance(context.node, context.semanticDepth ?? context.depth, theme)
       return Object.entries(patch).some(([key, value]) => {
         const effective = key === 'align' ? appearance.textAlign : appearance[key]
         return Number.isFinite(Number(effective)) && Number.isFinite(Number(value))
@@ -555,7 +555,7 @@ export class KeyboardController {
   applyLineStyle(config = {}) {
     return this.mutateSelectedStyles('設定連接線樣式', (node, context) => {
       const activeTheme = getTheme(this.doc.themeId)
-      const current = getLineAppearance(node, context.depth, activeTheme)
+      const current = getLineAppearance(node, context.semanticDepth ?? context.depth, activeTheme)
       const styleExplicit = Object.hasOwn(config, 'style') && Boolean(config.style)
       const shapeExplicit = Object.hasOwn(config, 'shape') && Boolean(config.shape)
       const nextStyle = config.style || current.style
@@ -691,7 +691,7 @@ export class KeyboardController {
     ]
     if (Object.keys(stylePatch).length > 0) {
       const context = findNodeContext(this.doc.root, id)
-      const appearance = getNodeAppearance(context.node, context.depth, getTheme(this.doc.themeId))
+      const appearance = getNodeAppearance(context.node, context.semanticDepth ?? context.depth, getTheme(this.doc.themeId))
       const effectivePatch = Object.fromEntries(Object.entries(stylePatch).filter(([key, value]) => {
         const effective = key === 'align' ? appearance.textAlign : appearance[key]
         return Number.isFinite(Number(effective)) && Number.isFinite(Number(value))
@@ -791,7 +791,7 @@ export class KeyboardController {
       doc: this.doc,
       selectedIds: this.selection.getSelectedIds(),
       primaryNode: context?.node || null,
-      primaryAppearance: context ? getNodeAppearance(context.node, context.depth, getTheme(this.doc.themeId)) : null,
+      primaryAppearance: context ? getNodeAppearance(context.node, context.semanticDepth ?? context.depth, getTheme(this.doc.themeId)) : null,
       rootAppearance: {
         ...getNodeAppearance(this.doc.root, 0, getTheme(this.doc.themeId)),
         spacingH: this.doc.canvas.spacingH,

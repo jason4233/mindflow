@@ -7,6 +7,7 @@ import { protectSyncAppliedReload } from '../settings.js'
 import { createMeasureFn, render } from './render.js'
 import { layout } from './layout.js'
 import { CommandManager, moveNode, toggleCollapse, updateDocumentTitle, updateText } from './commands.js'
+import { findNode } from './model.js'
 import { ViewportController } from './viewport.js'
 import { SelectionManager } from './selection.js'
 import { EditController } from './edit.js'
@@ -121,7 +122,9 @@ selection = new SelectionManager({
 
 const edit = new EditController({
   nodesLayer: elements.nodesLayer,
-  onCommit: (id, text) => manager.execute(updateText(doc, id, text))
+  onCommit: (id, text) => manager.execute(updateText(doc, id, text)),
+  // 編輯中每次輸入都排一次快照存檔（有 max-wait，連續輸入不會被無限延後）
+  onLiveChange: () => scheduleLiveSave()
 })
 edit.bindEvents()
 
@@ -220,26 +223,82 @@ function scheduleSave() {
   saveTimer = window.setTimeout(saveNow, 500)
 }
 
+// 編輯進行中的存檔節流：trailing debounce 800ms，但最多等 4 秒一定落盤。
+// 純 debounce 會被連續輸入無限延後，等於長段落完全沒有崩潰保護。
+let liveSaveTimer = null
+let liveSaveDeadline = 0
+// storage 目前是否留著與 canonical 不同的 live 快照（見 saveNow 的說明）
+let liveSnapshotPersisted = false
+
+function scheduleLiveSave() {
+  const now = Date.now()
+  if (!liveSaveDeadline) liveSaveDeadline = now + 4000
+  const delay = Math.max(0, Math.min(800, liveSaveDeadline - now))
+  window.clearTimeout(liveSaveTimer)
+  liveSaveTimer = window.setTimeout(() => {
+    liveSaveTimer = null
+    liveSaveDeadline = 0
+    saveNow()
+  }, delay)
+}
+
+function cancelLiveSave() {
+  window.clearTimeout(liveSaveTimer)
+  liveSaveTimer = null
+  liveSaveDeadline = 0
+}
+
+// 把進行中編輯的即時文字暫時寫進 doc 供存檔快照使用，回傳還原函式。
+// 只在同步的存檔區間內生效：不進 undo 堆疊、不觸發重繪，因此不會打斷編輯。
+function applyLiveEditToDoc() {
+  const live = edit?.getLiveEdit?.()
+  if (!live?.changed) return null
+  const node = findNode(doc.root, live.id)
+  if (!node) return null
+  const previousText = node.text
+  const previousRich = node.richText
+  node.text = live.text
+  // richText 一起寫：render 只要 richText 非空就優先畫它，只寫 text 會在重載後被舊 HTML 蓋掉
+  node.richText = live.richText
+  return () => {
+    node.text = previousText
+    node.richText = previousRich
+  }
+}
+
 function saveNow(force = false) {
-  // 進行中的文字編輯先收進 doc，堵住「打完字直接關視窗」遺失最後一段的窗口
-  if (edit?.session && !edit.session.finishing) edit.commit()
+  // 關窗／強制存檔才 commit（結束編輯無妨）；週期性存檔改用快照，
+  // 否則 commit 會 cleanup contenteditable，把正在輸入的使用者踢出編輯狀態。
+  if (force && edit?.session && !edit.session.finishing) edit.commit()
   window.clearTimeout(saveTimer)
   saveTimer = null
+  cancelLiveSave()
   if (saveBlocked) {
     // 使用者把橫幅按掉但衝突還沒解決：下一次存檔嘗試時把橫幅帶回來，不准無聲吞掉變更
     if (dirty && !document.querySelector('[data-mindflow-banner="save-error"]')) showConflictBanner()
     return
   }
-  // 本分頁沒有未儲存變更就不寫入：避免多分頁時「乾淨的舊分頁」在關閉時把新內容蓋回舊版
-  if (!dirty) return
+  // 進行中的編輯尚未 commit 成 command，doc 仍是「乾淨」的；但這一頁確實有較新內容，
+  // 仍要落盤（CAS 會擋掉舊版覆寫），否則週期存檔不再 commit 後會失去崩潰保護。
+  const restoreLiveEdit = applyLiveEditToDoc()
+  // 本分頁沒有未儲存變更就不寫入：避免多分頁時「乾淨的舊分頁」在關閉時把新內容蓋回舊版。
+  // 但若 storage 還留著先前的 live 快照（使用者改回原狀或按 Esc 取消），必須再寫一次
+  // 把 canonical 蓋回去，否則被刪掉的文字會在重載後復活。
+  if (!dirty && !restoreLiveEdit && !liveSnapshotPersisted) return
   // 預覽進行中不落盤（關閉頁面例外：寧可存下預覽值也不丟失已確認的變更）
   if (!force && previewUntil && Date.now() < previewUntil) {
+    restoreLiveEdit?.()
     saveTimer = window.setTimeout(saveNow, 600)
     return
   }
   try {
+    // 先記下「storage 可能已含 live 快照」再寫：部分寫入（文件本體已寫、index 才失敗）
+    // 時仍要成立，否則之後的取消／改回原狀不會觸發寫回，幽靈內容會留在 storage。
+    if (restoreLiveEdit) liveSnapshotPersisted = true
     const stamp = saveDocument(doc, { expectedUpdatedAt: lastSavedUpdatedAt })
     if (stamp !== false) {
+      // 這次寫進 storage 的是不是「與 canonical 不同的 live 快照」
+      liveSnapshotPersisted = Boolean(restoreLiveEdit)
       dirty = false
       lastSavedUpdatedAt = stamp
       toolbar?.setSaveStatus('saved')
@@ -247,6 +306,9 @@ function saveNow(force = false) {
     }
   } catch (error) {
     toolbar?.setSaveStatus('failed')
+    // 部分寫入：文件本體已落盤，先把版本戳校正到已生效的值，
+    // 否則下一次存檔會與自己剛寫入的版本衝突、把使用者鎖在衝突橫幅裡
+    if (error?.appliedUpdatedAt) lastSavedUpdatedAt = error.appliedUpdatedAt
     if (error?.name === 'MindflowSaveConflictError') {
       // 另一個視窗已寫入較新版本：停止自動存檔，讓使用者決定，不做任何靜默覆蓋
       saveBlocked = true
@@ -257,6 +319,9 @@ function saveNow(force = false) {
     showSaveBanner('save-error', '⚠ 無法儲存（儲存空間可能已滿）。變更尚未寫入，請匯出備份或清理文件後重試。', '#dc2626', [
       { label: '重試儲存', onClick: () => { dirty = true; saveNow() } }
     ])
+  } finally {
+    // 衝突分支會提前 return，還原必須放 finally，否則 doc 會留著未 commit 的即時文字
+    restoreLiveEdit?.()
   }
 }
 

@@ -1,6 +1,7 @@
 /**
  * 資料驅動主題、樣式 metadata 與 mini-SVG；不依賴 DOM，可直接單元測試。
  */
+import { buildMapRootLookup } from './model.js'
 
 const FONT_STACK = 'Inter, "Segoe UI", "Noto Sans TC", sans-serif'
 const STYLE_SEPARATOR = '|'
@@ -354,11 +355,14 @@ export function withScopedSpacing(value, patch = {}) {
 
 export function applyScopedSpacing(root, positions) {
   if (!root || !(positions instanceof Map)) return positions
+  // 主圖 root 的節點級間距不得把獨立心智圖一起縮放（它們是另一張圖）。
+  const mapRoots = buildMapRootLookup(root)
   walkThemeNodes(root, node => {
     const spacing = getScopedSpacing(node)
     const anchor = positions.get(node.id)
     if (!spacing || !anchor) return
-    const descendants = collectDescendantIds(node)
+    const anchorMap = mapRoots.get(node.id)
+    const descendants = collectDescendantIds(node).filter(id => mapRoots.get(id) === anchorMap)
     const anchorX = anchor.x + anchor.w / 2
     const anchorY = anchor.y + anchor.h / 2
     const scaleX = spacing.spacingH / DEFAULT_SPACING

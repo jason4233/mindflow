@@ -16,9 +16,12 @@ export function shouldCommitBeforeGlobalAction(action) {
 }
 
 export class EditController {
-  constructor({ nodesLayer, onCommit }) {
+  constructor({ nodesLayer, onCommit, onLiveChange = null }) {
     this.nodesLayer = nodesLayer
     this.onCommit = onCommit
+    // 輸入時通知外層排存檔：改成「存檔不結束編輯」之後，
+    // 若沒有這條通知，使用者可以一直打字但只有第一次快照被存下來。
+    this.onLiveChange = onLiveChange
     this.session = null
     this.toolbar = document.querySelector('#text-toolbar')
     this.bindToolbar()
@@ -68,11 +71,15 @@ export class EditController {
       })
     }
     const selectionChange = () => this.captureRange()
+    const liveChange = () => { if (typeof this.onLiveChange === 'function') this.onLiveChange() }
     this.session.keydown = keydown
     this.session.blur = blur
     this.session.selectionChange = selectionChange
+    this.session.liveChange = liveChange
     textElement.addEventListener('keydown', keydown)
     textElement.addEventListener('blur', blur)
+    textElement.addEventListener('input', liveChange)
+    textElement.addEventListener('compositionend', liveChange)
     document.addEventListener('selectionchange', selectionChange)
     return true
   }
@@ -97,6 +104,25 @@ export class EditController {
       event.preventDefault()
       this.executeTextCommand(({ b: 'bold', i: 'italic', u: 'underline' })[event.key.toLowerCase()])
     }
+  }
+
+  // 週期性存檔用：讀出進行中編輯的即時文字，但**不結束 session**。
+  // commit() 會 cleanup（contenteditable=false + blur），等於把使用者踢出輸入狀態；
+  // 自動存檔不該有這種副作用（雙擊空白畫布新建節點時會在 500ms 後失去游標）。
+  getLiveEdit() {
+    if (!this.session || this.session.finishing) return null
+    const { id, textElement, original, originalHtml } = this.session
+    const text = normalizeEditableText(textElement.innerText)
+    // richText 必須跟著走：render 只要 richText 非空就優先畫它，
+    // 只存 plain text 會讓重載後看到「舊 HTML 蓋住新文字」。
+    // 無 DOM 環境（純函數單元測試）只回 plain text。
+    if (typeof document === 'undefined' || typeof textElement.innerHTML !== 'string') {
+      return { id, text, richText: null, changed: text !== original }
+    }
+    const richHtml = normalizeRichHtml(textElement.innerHTML)
+    const richText = hasRichFormatting(richHtml) ? richHtml : null
+    const richChanged = richHtml !== normalizeRichHtml(originalHtml)
+    return { id, text, richText, changed: text !== original || richChanged }
   }
 
   commit() {
@@ -126,6 +152,9 @@ export class EditController {
     this.session.finishing = true
     this.session.textElement.innerHTML = this.session.originalHtml || '\u200b'
     this.cleanup()
+    // 取消後 canonical 回到原值，但 storage 可能還留著中途的 live 快照：
+    // 主動排一次存檔把 canonical 寫回去，否則被取消的文字會在重載後復活。
+    if (typeof this.onLiveChange === 'function') this.onLiveChange()
     return true
   }
 
@@ -134,6 +163,10 @@ export class EditController {
     if (!session) return
     session.textElement.removeEventListener('keydown', session.keydown)
     session.textElement.removeEventListener('blur', session.blur)
+    if (session.liveChange) {
+      session.textElement.removeEventListener('input', session.liveChange)
+      session.textElement.removeEventListener('compositionend', session.liveChange)
+    }
     document.removeEventListener('selectionchange', session.selectionChange)
     session.textElement.contentEditable = 'false'
     session.nodeElement.classList.remove('is-editing')

@@ -2,6 +2,7 @@
  * 所有文件修改的 Command Pattern 實作；每個 command 都必須可逆。
  */
 import {
+  FLOATING_PREFIX,
   NODE_STYLE_KEYS,
   chooseBalancedSide,
   createNode,
@@ -331,7 +332,8 @@ export function moveNode(doc, id, newParentId, index, side = null) {
         original = {
           parentId: context.parent.id,
           index: context.index,
-          side: context.node.side
+          side: context.node.side,
+          icons: Array.isArray(context.node.icons) ? [...context.node.icons] : context.node.icons
         }
       }
 
@@ -351,6 +353,10 @@ export function moveNode(doc, id, newParentId, index, side = null) {
         node.side = null
       }
       newParent.children.splice(clampIndex(targetIndex, newParent.children.length), 0, node)
+      // 掛到非 root 之下就不再是獨立心智圖：清掉座標 token，否則日後移回 root 舊座標會復活
+      if (newParent !== doc.root && Array.isArray(node.icons)) {
+        node.icons = node.icons.filter(icon => !String(icon).startsWith(FLOATING_PREFIX))
+      }
       return true
     },
     () => {
@@ -360,6 +366,7 @@ export function moveNode(doc, id, newParentId, index, side = null) {
       if (!current?.parent || !oldParent) return
       current.parent.children.splice(current.index, 1)
       current.node.side = original.side
+      if (original.icons !== undefined) current.node.icons = Array.isArray(original.icons) ? [...original.icons] : original.icons
       oldParent.children.splice(clampIndex(original.index, oldParent.children.length), 0, current.node)
     },
     { affectedIds: [id, newParentId] }

@@ -2,6 +2,8 @@
  * 全域與局部佈局引擎；只依賴 Doc 與 measureFn，絕不讀寫 DOM 或修改輸入資料。
  */
 
+import { getFloatingMeta } from './model.js'
+
 export const HORIZONTAL_GAP = 48
 export const VERTICAL_GAP = 42
 export const SIBLING_GAP = 16
@@ -47,7 +49,11 @@ export function layout(doc, measureFn) {
   if (!doc?.root || typeof measureFn !== 'function') return new Map()
 
   const globalLayout = normalizeLayoutName(doc.layout)
-  const meta = buildMeta(doc.root, 0, measureFn)
+  // 獨立心智圖（懸浮）不參與主圖排版：留在主樹裡會佔掉一個子節點位置，
+  // 在原圖上留下一條通往空位的連線殘段（晨睿 2026-09-06 回報的畫面）。
+  const independentRoots = (Array.isArray(doc.root.children) ? doc.root.children : [])
+    .filter(child => getFloatingMeta(child))
+  const meta = buildMeta(doc.root, 0, measureFn, independentRoots)
   const box = composeSubtree(meta, globalLayout)
   const root = box.positions.get(doc.root.id)
   if (!root) return new Map()
@@ -55,10 +61,26 @@ export function layout(doc, measureFn) {
   // 根節點中心固定在世界座標原點，切換佈局時 viewport 不會無故漂移。
   const centered = translatePositions(box.positions, -root.x - root.w / 2, -root.y - root.h / 2)
   applyManualOffsets(centered, meta)
+
+  // 每張獨立心智圖用同一套演算法自成一棵樹（depth 從 0 起算＝中心主題），
+  // 再整棵平移到它自己的座標，子節點因此永遠跟著走。
+  for (const independent of independentRoots) {
+    const anchor = getFloatingMeta(independent)
+    const subMeta = buildMeta(independent, 0, measureFn)
+    const subBox = composeSubtree(subMeta, globalLayout)
+    const subRoot = subBox.positions.get(independent.id)
+    if (!subRoot) continue
+    applyManualOffsets(subBox.positions, subMeta)
+    // token 座標定義為獨立圖 root 的最終位置：先套後代的手動位移，再整棵對齊 token，
+    // 這樣舊檔即使 root 帶 legacy offset 也不會位移（過去 overlay 會把 root 壓回 token）。
+    const offsetRoot = subBox.positions.get(independent.id)
+    const placed = translatePositions(subBox.positions, anchor.x - offsetRoot.x, anchor.y - offsetRoot.y)
+    for (const [id, position] of placed) centered.set(id, position)
+  }
   return centered
 }
 
-function buildMeta(node, depth, measureFn) {
+function buildMeta(node, depth, measureFn, excluded = []) {
   const measured = measureFn(node, depth) || {}
   const w = finiteDimension(measured.w, 80, 360)
   const h = finiteDimension(measured.h, 32, 1000)
@@ -69,7 +91,9 @@ function buildMeta(node, depth, measureFn) {
     h,
     children: node.collapsed
       ? []
-      : (Array.isArray(node.children) ? node.children : []).map(child => buildMeta(child, depth + 1, measureFn))
+      : (Array.isArray(node.children) ? node.children : [])
+        .filter(child => !excluded.includes(child))
+        .map(child => buildMeta(child, depth + 1, measureFn))
   }
 }
 

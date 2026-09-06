@@ -3,6 +3,7 @@
  */
 import {
   createDefaultDoc,
+  getFloatingMeta,
   createId,
   deserializeDoc,
   normalizeDoc,
@@ -267,8 +268,15 @@ export function saveDocument(doc, options = {}) {
   if (activeIndex !== -1) index.docs[activeIndex] = meta
   else if (trashIndex !== -1) index.trash[trashIndex] = { ...meta, deletedAt: index.trash[trashIndex].deletedAt }
   else index.docs.push(meta)
-  writeIndex(index)
-  maybeCreateDocumentSnapshot(persisted, options)
+  try {
+    writeIndex(index)
+    maybeCreateDocumentSnapshot(persisted, options)
+  } catch (error) {
+    // 文件本體已經寫進去了：把已生效的版本戳交給呼叫端，否則它會拿舊戳重試，
+    // 與自己剛寫入的版本產生 CAS 衝突而永久鎖住存檔。
+    error.appliedUpdatedAt = persisted.updatedAt
+    throw error
+  }
   return persisted.updatedAt
 }
 
@@ -387,16 +395,19 @@ export function createDocumentThumbnail(doc) {
   const branchText = safeColor(selectedTheme.level2Style.textColor, '#3b4149')
   const background = safeColor(normalized.canvas?.background, '#fbfaf8')
   const lines = visible.slice(1).map(entry => {
+    // 獨立心智圖是另一個中心（parent 為 null），沒有連過來的線
+    if (!entry.parent) return ''
     const from = positions.get(entry.parent.id)
     const to = positions.get(entry.node.id)
     if (!from || !to) return ''
     const bend = (from.x + to.x) / 2
     return `<path d="M${from.x} ${from.y} C${bend} ${from.y} ${bend} ${to.y} ${to.x} ${to.y}" fill="none" stroke="${accent}" stroke-width="2" stroke-linecap="round" opacity=".72"/>`
   }).join('')
-  const nodes = visible.map((entry, index) => {
+  const nodes = visible.map(entry => {
     const point = positions.get(entry.node.id)
     if (!point) return ''
-    const root = index === 0
+    // 每張圖的中心都用 root 樣式（獨立心智圖不是分支）
+    const root = !entry.parent
     const boxWidth = root ? 96 : 74
     const boxHeight = root ? 30 : 24
     const fill = root ? rootFill : branchFill
@@ -409,18 +420,35 @@ export function createDocumentThumbnail(doc) {
 }
 
 function collectThumbnailNodes(root) {
-  const result = [{ node: root, parent: null, depth: 0, side: 'center' }]
-  const queue = root.children.map((node, index) => ({
-    node,
-    parent: root,
-    depth: 1,
-    side: node.side || (index % 2 ? 'left' : 'right')
-  }))
-  while (queue.length && result.length < 13) {
+  // 獨立心智圖在縮圖裡是另一個中心（parent=null），不畫主圖連過去的線
+  const THUMBNAIL_NODE_LIMIT = 13
+  // 獨立心智圖也受節點上限約束：全部無條件塞入會突破上限、縮圖擠成一團
+  const independents = root.children.filter(node => getFloatingMeta(node)).slice(0, THUMBNAIL_NODE_LIMIT - 1)
+  const result = [
+    { node: root, parent: null, depth: 0, side: 'center', mapRootId: root.id },
+    ...independents.map(node => ({ node, parent: null, depth: 0, side: 'center', mapRootId: node.id }))
+  ]
+  const queue = [
+    ...root.children.filter(node => !getFloatingMeta(node)).map((node, index) => ({
+      node,
+      parent: root,
+      depth: 1,
+      side: node.side || (index % 2 ? 'left' : 'right'),
+      mapRootId: root.id
+    })),
+    ...independents.flatMap(independent => (independent.children || []).map((node, index) => ({
+      node,
+      parent: independent,
+      depth: 1,
+      side: node.side || (index % 2 ? 'left' : 'right'),
+      mapRootId: independent.id
+    })))
+  ]
+  while (queue.length && result.length < THUMBNAIL_NODE_LIMIT) {
     const entry = queue.shift()
     result.push(entry)
     for (const child of entry.node.children) {
-      queue.push({ node: child, parent: entry.node, depth: entry.depth + 1, side: entry.side })
+      queue.push({ node: child, parent: entry.node, depth: entry.depth + 1, side: entry.side, mapRootId: entry.mapRootId })
     }
   }
   return result
@@ -428,14 +456,24 @@ function collectThumbnailNodes(root) {
 
 function positionThumbnailNodes(entries, center, width, height) {
   const positions = new Map([[entries[0].node.id, center]])
+  // 獨立心智圖各自是一個中心：沿上緣排開，與主圖中心錯開
+  const independentRoots = entries.slice(1).filter(entry => !entry.parent)
+  independentRoots.forEach((entry, index) => {
+    const step = width / (independentRoots.length + 1)
+    positions.set(entry.node.id, {
+      x: Math.max(48, Math.min(width - 48, step * (index + 1))),
+      y: Math.max(24, Math.min(height - 24, center.y - 66))
+    })
+  })
   for (const side of ['left', 'right']) {
     const sideEntries = entries.filter(entry => entry.side === side)
     sideEntries.forEach((entry, index) => {
       const depth = Math.min(entry.depth, 3)
       const direction = side === 'left' ? -1 : 1
-      const x = center.x + direction * (78 + (depth - 1) * 54)
+      const mapCenter = positions.get(entry.mapRootId) || center
+      const x = mapCenter.x + direction * (78 + (depth - 1) * 54)
       const step = Math.min(44, (height - 42) / Math.max(sideEntries.length, 1))
-      const y = center.y + (index - (sideEntries.length - 1) / 2) * step
+      const y = mapCenter.y + (index - (sideEntries.length - 1) / 2) * step
       positions.set(entry.node.id, {
         x: Math.max(38, Math.min(width - 38, x)),
         y: Math.max(20, Math.min(height - 20, y))

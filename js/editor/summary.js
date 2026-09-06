@@ -2,7 +2,7 @@
  * 同父連續節點的概要 command、右側大括弧 overlay 與範圍邊界拖曳。
  */
 import { registerAction } from './actions.js'
-import { createId, findNode, findNodeContext, structuredCloneSafe } from './model.js'
+import { buildMapContext, createId, findNode, findNodeContext, getFloatingMeta, structuredCloneSafe } from './model.js'
 import { registerOverlay } from './render.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -12,8 +12,13 @@ export function getSummaryRange(root, selectedIds, layoutName = 'mindmap-both') 
   if (contexts.length < 2) return null
   const parent = contexts[0].parent
   if (contexts.some(context => context.parent !== parent)) return null
+  // 概要不得跨圖：獨立心智圖的 root 與主圖分支都掛在 doc.root 底下，光比 parent 擋不住
+  const mapRootId = contexts[0].mapRootId
+  if (contexts.some(context => context.mapRootId !== mapRootId)) return null
   // 根節點 children 會左右交錯保存；概要的「連續」必須以同側視覺順序判定。
+  // 同層兄弟要排除獨立心智圖：它們不是這張圖的節點，混進來會讓「連續」判定錯位
   const visualSiblings = getVisualSiblings(parent, contexts[0].node, layoutName)
+    .filter(node => node === contexts[0].node || !getFloatingMeta(node))
   const indexes = contexts.map(context => visualSiblings.findIndex(node => node.id === context.node.id)).sort((a, b) => a - b)
   if (indexes.some(index => index < 0)) return null
   if (indexes.some((value, index) => index > 0 && value !== indexes[index - 1] + 1)) return null
@@ -187,10 +192,12 @@ function drawSummaries(overlayCtx, appCtx, selectSummary, editSummary) {
     const geometry = summaryGeometry(summary, parent, overlayCtx.positions, overlayCtx.doc.layout)
     if (!geometry) continue
     const selected = appCtx.featureState.selectedOverlay?.type === 'summary' && appCtx.featureState.selectedOverlay.id === summary.id
+    const summaryMapRoot = buildMapContext(overlayCtx.doc.root).get(summary.parentId)?.mapRootId
     const path = svgElement('path', {
       d: geometry.path,
       class: `summary-bracket${selected ? ' is-selected' : ''}`,
-      'data-summary-id': summary.id
+      'data-summary-id': summary.id,
+      ...(summaryMapRoot ? { 'data-map-root': summaryMapRoot } : {})
     })
     path.addEventListener('click', event => { event.stopPropagation(); selectSummary(summary.id) })
     overlayCtx.svgLayer.append(path)
@@ -199,6 +206,7 @@ function drawSummaries(overlayCtx, appCtx, selectSummary, editSummary) {
     label.type = 'button'
     label.className = `summary-node${selected ? ' is-selected' : ''}`
     label.dataset.summaryNode = summary.id
+    if (summaryMapRoot) label.dataset.mapRoot = summaryMapRoot
     label.textContent = summary.text || '概要'
     label.style.left = `${geometry.labelX}px`
     label.style.top = `${geometry.middle}px`
@@ -209,7 +217,10 @@ function drawSummaries(overlayCtx, appCtx, selectSummary, editSummary) {
     if (selected) {
       for (const edge of ['startNodeId', 'endNodeId']) {
         const y = edge === 'startNodeId' ? geometry.top : geometry.bottom
-        const control = svgElement('circle', { cx: geometry.x + 20, cy: y, r: 7, class: 'summary-boundary', 'data-summary-edge': edge })
+        const control = svgElement('circle', {
+          cx: geometry.x + 20, cy: y, r: 7, class: 'summary-boundary', 'data-summary-edge': edge,
+          ...(summaryMapRoot ? { 'data-map-root': summaryMapRoot } : {})
+        })
         control.addEventListener('pointerdown', event => beginBoundaryDrag(event, summary, parent, edge, geometry, appCtx, control))
         overlayCtx.svgLayer.append(control)
       }

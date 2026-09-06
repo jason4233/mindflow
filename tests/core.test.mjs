@@ -4,6 +4,10 @@
 import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import {
+  FLOATING_PREFIX,
+  buildMapRootLookup,
+  findNodeContext,
+  getFloatingMeta,
   chooseBalancedSide,
   createDefaultDoc,
   createNode,
@@ -476,6 +480,164 @@ test('編輯中的 Ctrl+F 會先 commit，避免搜尋重繪留下 detached sess
   assert.equal(event.defaultPrevented, true)
   assert.equal(event.propagationStopped, true)
   cleanup()
+})
+
+test('獨立心智圖：懸浮節點自成一棵樹，不佔主圖版位、子樹跟著它走', () => {
+  const doc = createDefaultDoc()
+  const independent = createNode('第二張圖')
+  independent.icons = [`${FLOATING_PREFIX}600,-400`]
+  const child = createNode('子項')
+  independent.children = [child]
+  const mainChildIds = doc.root.children.map(node => node.id)
+  doc.root.children.push(independent)
+
+  const positions = layout(doc, measure)
+  const anchorPos = positions.get(independent.id)
+  const childPos = positions.get(child.id)
+  assert.ok(anchorPos && childPos)
+
+  // 1. 錨點就是它自己的座標（不被主圖排版擺佈）
+  assert.equal(anchorPos.x, 600)
+  assert.equal(anchorPos.y, -400)
+  // 2. 子節點跟著它走：距離必須在同一張圖的合理範圍
+  assert.ok(Math.hypot(childPos.x - anchorPos.x, childPos.y - anchorPos.y) < 400,
+    `子節點離錨點 ${Math.round(Math.hypot(childPos.x - anchorPos.x, childPos.y - anchorPos.y))}px，等於沒跟著走`)
+  // 3. 它自成一棵樹：depth 從 0 起算（＝中心主題）
+  assert.equal(anchorPos.depth, 0)
+  assert.equal(childPos.depth, 1)
+  // 4. 不佔主圖版位：主圖各節點座標與「沒有這張獨立圖」時完全相同
+  const withoutIndependent = createDefaultDoc()
+  const basePositions = layout(withoutIndependent, measure)
+  const baseIds = withoutIndependent.root.children.map(node => node.id)
+  mainChildIds.forEach((id, index) => {
+    const actual = positions.get(id)
+    const expected = basePositions.get(baseIds[index])
+    assert.deepEqual({ x: actual.x, y: actual.y }, { x: expected.x, y: expected.y },
+      '獨立心智圖不得改變主圖排版（原本會佔一個子節點位置，在原圖留下連線殘段）')
+  })
+})
+
+test('獨立心智圖的語意深度與座標防禦（面板與畫布必須一致）', () => {
+  const doc = createDefaultDoc()
+  const independent = createNode('第二張圖')
+  independent.icons = [`${FLOATING_PREFIX}300,300`]
+  const child = createNode('子')
+  independent.children = [child]
+  doc.root.children.push(independent)
+
+  // 樣式面板與畫布共用同一個語意深度：獨立圖 root 是中心主題（0），不是主圖分支（1）
+  const context = findNodeContext(doc.root, independent.id)
+  assert.equal(context.depth, 1, '資料樹深度仍是 1（結構操作用）')
+  assert.equal(context.semanticDepth, 0, '語意深度是 0，否則面板顯示與畫布不一致、選色會 no-op')
+  assert.equal(context.mapRootId, independent.id)
+  assert.equal(findNodeContext(doc.root, child.id).semanticDepth, 1)
+  assert.equal(findNodeContext(doc.root, doc.root.children[0].id).semanticDepth, 1, '主圖分支不受影響')
+
+  // 壞掉的座標 token 不得被當成獨立心智圖（否則整張圖會被丟到 (0,0) 疊在主圖上）
+  for (const bad of ['NaN,50', '10,Infinity', '1e308,1e308', 'abc,def']) {
+    const broken = createNode('壞')
+    broken.icons = [`${FLOATING_PREFIX}${bad}`]
+    assert.equal(getFloatingMeta(broken), null, `${bad} 應被拒絕`)
+  }
+  const ok = createNode('好')
+  ok.icons = [`${FLOATING_PREFIX}-120.5,88`]
+  assert.deepEqual(getFloatingMeta(ok), { x: -120.5, y: 88 })
+})
+
+test('把獨立心智圖掛到一般節點下會清掉座標 token，undo 可完整還原', () => {
+  const doc = createDefaultDoc()
+  const independent = createNode('第二張圖')
+  independent.icons = [`${FLOATING_PREFIX}600,-400`, 'priority:1']
+  doc.root.children.push(independent)
+  const target = doc.root.children[0]
+  const manager = new CommandManager()
+
+  assert.equal(manager.execute(moveNode(doc, independent.id, target.id, 0)), true)
+  assert.equal(getFloatingMeta(independent), null, '掛回樹後不得殘留座標，否則日後移回 root 舊座標會復活')
+  assert.ok(independent.icons.includes('priority:1'), '其他 icon 不受影響')
+
+  manager.undo()
+  assert.deepEqual(getFloatingMeta(independent), { x: 600, y: -400 }, 'undo 要還原座標')
+  assert.ok(independent.icons.includes('priority:1'))
+})
+
+test('演示步驟逐圖分組：獨立心智圖不把主圖 root 一起納入', async () => {
+  const { buildPresentationSteps } = await import('../js/editor/presentation.js')
+  const doc = createDefaultDoc()
+  const independent = createNode('第二張圖')
+  independent.icons = [`${FLOATING_PREFIX}500,500`]
+  const child = createNode('子')
+  independent.children = [child]
+  doc.root.children.push(independent)
+
+  const steps = buildPresentationSteps(doc.root)
+  const mainRootStep = steps[0]
+  assert.deepEqual(mainRootStep.ids, [doc.root.id])
+  const independentSteps = steps.filter(step => step.branchId === independent.id || step.branchId === child.id)
+  assert.equal(independentSteps.length, 2, '獨立圖要有自己的 root step 與分支 step')
+  for (const step of independentSteps) {
+    assert.equal(step.ids.includes(doc.root.id), false, '獨立圖的步驟不得含主圖 root，否則演示會 fit 兩張遠隔的圖')
+  }
+  // 主圖的分支步驟不得把獨立圖算進去
+  const mainBranchStep = steps.find(step => step.branchId === doc.root.children[0].id)
+  assert.equal(mainBranchStep.ids.includes(independent.id), false)
+})
+
+test('概要不得跨圖：獨立心智圖 root 與主圖分支不能組成同一個概要', async () => {
+  const { getSummaryRange } = await import('../js/editor/summary.js')
+  const doc = createDefaultDoc()
+  const independent = createNode('第二張圖')
+  independent.icons = [`${FLOATING_PREFIX}500,500`]
+  doc.root.children.push(independent)
+  const mainBranch = doc.root.children[0]
+
+  assert.equal(getSummaryRange(doc.root, [mainBranch.id, independent.id]), null, '跨圖概要必須被拒絕')
+  // 同一張圖內仍可建立
+  const sameMap = getSummaryRange(doc.root, [doc.root.children[0].id, doc.root.children[2].id])
+  assert.ok(sameMap, '同圖同側相鄰節點仍應可建立概要')
+})
+
+test('buildMapRootLookup 把每個節點歸到自己那張圖，間距縮放才不會跨圖', () => {
+  const doc = createDefaultDoc()
+  const independent = createNode('第二張圖')
+  independent.icons = [`${FLOATING_PREFIX}300,300`]
+  const grandchild = createNode('孫')
+  const child = createNode('子')
+  child.children = [grandchild]
+  independent.children = [child]
+  doc.root.children.push(independent)
+
+  const lookup = buildMapRootLookup(doc.root)
+  assert.equal(lookup.get(doc.root.id), doc.root.id)
+  assert.equal(lookup.get(doc.root.children[0].id), doc.root.id, '主圖分支屬於主圖')
+  assert.equal(lookup.get(independent.id), independent.id, '獨立圖 root 是自己')
+  assert.equal(lookup.get(child.id), independent.id)
+  assert.equal(lookup.get(grandchild.id), independent.id, '整棵子樹都屬於獨立圖')
+})
+
+test('getLiveEdit 讀出進行中文字但不結束 session（週期存檔不得把使用者踢出編輯）', async () => {
+  const { EditController } = await import('../js/editor/edit.js')
+  const controller = Object.create(EditController.prototype)
+  let cleanedUp = false
+  controller.cleanup = () => { cleanedUp = true }
+  assert.equal(controller.getLiveEdit(), null, '沒有 session 時回 null')
+
+  controller.session = {
+    id: 'n1',
+    original: '',
+    finishing: false,
+    textElement: { innerText: '市場策略' }
+  }
+  assert.deepEqual(controller.getLiveEdit(), { id: 'n1', text: '市場策略', richText: null, changed: true })
+  assert.equal(cleanedUp, false, 'getLiveEdit 不得 cleanup')
+  assert.ok(controller.session, 'session 必須保留')
+
+  controller.session.textElement.innerText = ''
+  assert.deepEqual(controller.getLiveEdit(), { id: 'n1', text: '', richText: null, changed: false }, '文字未變時 changed=false')
+
+  // 收尾中的 session 不再回報，避免 commit 過程重複寫入
+  controller.session.finishing = true
+  assert.equal(controller.getLiveEdit(), null)
 })
 
 test('內建主題至少 12 個且包含 ALPHA 指定主題與完整資料欄位', () => {
