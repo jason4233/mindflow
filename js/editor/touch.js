@@ -361,7 +361,7 @@ function isTouchEnvironment() {
 
 function isIgnoredTouchTarget(target) {
   return Boolean(target.closest?.(
-    '.touch-node-actions, .zoom-controls, .text-toolbar, .context-menu, .relation-overlay, .summary-node, .summary-bracket, button, input, select, textarea, [contenteditable="true"], .node-width-handle'
+    '.touch-node-actions, .zoom-controls, .text-toolbar, .context-menu, .relation-overlay, .relation-control, .relation-endpoint, .summary-node, .summary-bracket, .summary-boundary, button, input, select, textarea, [contenteditable="true"], .node-width-handle'
   ))
 }
 

@@ -326,6 +326,8 @@ function appendRelationHandles(group, relation, geometry, ctx) {
 }
 
 function beginControlDrag(event, relation, key, geometry, ctx, group) {
+  // 右鍵是框選／右鍵選單的手勢，不得順便改文件
+  if (event.button !== 0) return
   event.preventDefault()
   event.stopPropagation()
   const pointerId = event.pointerId
@@ -351,6 +353,7 @@ function beginControlDrag(event, relation, key, geometry, ctx, group) {
 }
 
 function beginEndpointDrag(event, relation, key, geometry, ctx, group) {
+  if (event.button !== 0) return
   event.preventDefault()
   event.stopPropagation()
   const pointerId = event.pointerId

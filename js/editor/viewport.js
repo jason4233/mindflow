@@ -78,13 +78,16 @@ export class ViewportController {
   }
 
   handlePointerDown(event) {
+    // 僅處理左鍵：右鍵交給框選/右鍵選單流程，避免干擾。
+    if (event.button !== 0) return
     // 官方操作是直接拖曳空白平移；Ctrl/Meta+拖曳保留給框選。
-    if (event.target.closest?.('.zoom-controls')) return
-    const interactive = event.target.closest?.('.mind-node, button, input, select, textarea, [contenteditable="true"]')
+    if (event.target.closest?.('.zoom-controls, .minimap-panel')) return
+    // overlay 的拖曳把手（概要邊界、關聯線控制點／端點）也算互動元件：這個 listener 是 capture 階段、
+    // 比把手自己的 pointerdown 先跑，把手的 stopPropagation 擋不住它；若在這裡起平移，畫布會跟著指標走、
+    // 指標的世界座標永遠不變，把手就「拖不動」。
+    const interactive = event.target.closest?.('.mind-node, button, input, select, textarea, [contenteditable="true"], .summary-boundary, .relation-control, .relation-endpoint')
     const forcedPan = this.spacePressed
-    const shouldPan = event.button === 0 && (
-      forcedPan || (!event.ctrlKey && !event.metaKey && !interactive)
-    )
+    const shouldPan = forcedPan || (!event.ctrlKey && !event.metaKey && !interactive)
     if (!shouldPan) return
     // 重入守衛：第二個 pointer（觸控雙指）不得覆蓋進行中的拖曳，否則舊的 window listener 永遠拆不掉
     if (this.drag) return

@@ -2,6 +2,7 @@
  * 節點／畫布兩式右鍵選單；只負責選單與 action 分派，不直接修改文件。
  */
 import { runAction } from './actions.js'
+import { consumeContextMenuSuppression } from './selection.js'
 
 const NODE_MENU = [
   { label: '添加上級節點', action: 'insertParent', shortcut: 'Shift+Tab' },
@@ -65,6 +66,8 @@ export function initializeContextMenu() {
   }
 
   const handleContextMenu = event => {
+    // 右鍵框選剛結束：吃掉這個 contextmenu，也擋掉瀏覽器原生選單（放開點可能在畫布外，例如側欄）
+    if (consumeContextMenuSuppression()) { event.preventDefault(); return }
     const canvas = event.target.closest('#canvas')
     if (!canvas) return
     event.preventDefault()

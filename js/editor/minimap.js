@@ -136,7 +136,7 @@ class MinimapController {
   }
 
   startDrag(event) {
-    if (!this.transform) return
+    if (!this.transform || event.button !== 0) return
     // 重入守衛：拖曳進行中不接受第二個 pointer（避免 window listener 孤兒化）
     if (this.drag) return
     event.preventDefault()
@@ -169,7 +169,7 @@ class MinimapController {
   }
 
   centerAt(event) {
-    if (!this.transform) return
+    if (!this.transform || event.button !== 0) return
     event.preventDefault()
     const rect = this.svg.getBoundingClientRect()
     const miniX = (event.clientX - rect.left) * (216 / Math.max(1, rect.width))
