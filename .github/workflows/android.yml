@@ -46,6 +46,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 預設會裝已被 Google 下架的舊 "tools" 套件（2026-09-15 起 sdkmanager 回 Failed to find package 'tools'）；
+          # 只要 platform-tools，其餘套件由下一步明確安裝
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
