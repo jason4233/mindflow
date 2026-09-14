@@ -19,10 +19,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ACTION_BINDINGS } from '../../js/editor/keyboard.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const REPORT_PATH = join(ROOT, 'docs', 'SHORTCUT_MATRIX.md')
 const LOG_DIR = join(ROOT, 'tests', 'e2e')
 const PROJECT_ARG = process.argv.find(arg => arg.startsWith('--project='))?.split('=')[1] || 'all'
 const FILTER_ARG = process.argv.find(arg => arg.startsWith('--filter='))?.slice('--filter='.length) || ''
+// 正式報告只由「全矩陣、全 project」的執行產生；--filter／--project 的部分執行寫到 .partial.md（gitignore），
+// 否則一次過濾執行就會把 repo 裡 200+ 列的紀錄蓋成幾列、甚至蓋成修正前的 FAIL。
+const REPORT_PATH = join(ROOT, 'docs', (FILTER_ARG || PROJECT_ARG !== 'all') ? 'SHORTCUT_MATRIX.partial.md' : 'SHORTCUT_MATRIX.md')
 const HEADLESS = !process.argv.includes('--headed')
 const FIXTURE_ID = 'matrix-doc'
 const FIXTURE_NODE_COUNT = 6
@@ -313,6 +315,284 @@ const MATRIX_CASES = [
     await h.press('Control+Alt+t')
     return h.expect(await h.page.locator('[data-summary-id]').count() >= 1, `summary DOM=${await h.page.locator('[data-summary-id]').count()}`)
   }, { electron: true }),
+  // ═══ 測試先行（2026-09-15 晨睿要求）：先定義使用者情境的過關／不過關，再實作 ═══
+  // 情境：使用者選了同一層的相鄰節點按 Ctrl+Alt+T 建概要。
+  // 過關＝括號沿著「這些節點排列的方向」延伸，並放在遠離父節點的外側；不過關＝方向錯（例如組織圖
+  // 底下水平排列的節點卻畫成直立括號）或放在節點內側／壓到節點。
+  matrix('概要方向：右側同級（心智圖）', '多選', '括號直立、放在節點右外側', async h => {
+    await h.multiSelect('a', 'b')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const bracket = await h.summaryBracketBox()
+    const nodes = await h.unionBox(['a', 'b'])
+    const vertical = bracket.height > bracket.width
+    const outside = bracket.x >= nodes.right - 2
+    return h.expect(vertical && outside, `直立=${vertical}；在右外側=${outside}（括號 x=${Math.round(bracket.x)}，節點右緣=${Math.round(nodes.right)}）`)
+  }, { electron: true }),
+  matrix('概要方向：左側同級（心智圖）', '多選', '括號直立、放在節點左外側（不可壓到節點或跑到右邊）', async h => {
+    await h.multiSelect('c', 'd')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const bracket = await h.summaryBracketBox()
+    const nodes = await h.unionBox(['c', 'd'])
+    const vertical = bracket.height > bracket.width
+    const outsideLeft = bracket.right <= nodes.x + 2
+    return h.expect(vertical && outsideLeft, `直立=${vertical}；在左外側=${outsideLeft}（括號右緣=${Math.round(bracket.right)}，節點左緣=${Math.round(nodes.x)}）`)
+  }, { electron: true }),
+  matrix('概要方向：組織圖', '多選', '子節點水平排列時括號改為橫向、放在節點下方', async h => {
+    await h.resetWithLayout('org')
+    await h.multiSelect('a', 'b')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const bracket = await h.summaryBracketBox()
+    const nodes = await h.unionBox(['a', 'b'])
+    const horizontal = bracket.width > bracket.height
+    const below = bracket.y >= nodes.bottom - 2
+    return h.expect(horizontal && below, `橫向=${horizontal}；在下方=${below}（括號 y=${Math.round(bracket.y)}，節點下緣=${Math.round(nodes.bottom)}）`)
+  }, { electron: true }),
+
+  // 情境：使用者拖曳概要的黃色邊界點，改變涵蓋範圍。直立括號沿 y 拖、橫向括號沿 x 拖。
+  // 過關＝放開後括號涵蓋到目標節點（DOM 上括號 bbox 延伸到該節點）；不過關＝範圍沒變（舊碼只看 y，
+  // 組織圖同級 y 相同 → 拖不動）。
+  matrix('概要邊界拖曳：直立（心智圖）', '多選', '把上邊界往下拖到第二個節點 → 概要只剩它', async h => {
+    await h.multiSelect('a', 'b')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const control = await h.page.locator('#connections-layer .summary-boundary[data-summary-edge="startNodeId"]').boundingBox()
+    const target = await h.unionBox(['b'])
+    await h.page.mouse.move(control.x + control.width / 2, control.y + control.height / 2)
+    await h.page.mouse.down()
+    await h.page.mouse.move(control.x + control.width / 2, (target.y + target.bottom) / 2, { steps: 6 })
+    await h.page.mouse.up()
+    await h.page.waitForTimeout(250)
+    const bracket = await h.summaryBracketBox()
+    const a = await h.unionBox(['a'])
+    const shrunk = bracket.y >= a.bottom - 2 && bracket.bottom >= target.bottom - 2
+    return h.expect(shrunk, `括號 y=${Math.round(bracket.y)}（a 下緣=${Math.round(a.bottom)}）、括號下緣=${Math.round(bracket.bottom)}（b 下緣=${Math.round(target.bottom)}）`)
+  }, { electron: true }),
+  matrix('概要邊界拖曳：橫向（組織圖）', '多選', '把右邊界往右拖到第三個節點 → 概要涵蓋三個', async h => {
+    await h.resetWithLayout('org')
+    await h.multiSelect('a', 'b')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const control = await h.page.locator('#connections-layer .summary-boundary[data-summary-edge="endNodeId"]').boundingBox()
+    const target = await h.unionBox(['c'])
+    await h.page.mouse.move(control.x + control.width / 2, control.y + control.height / 2)
+    await h.page.mouse.down()
+    await h.page.mouse.move((target.x + target.right) / 2, control.y + control.height / 2, { steps: 6 })
+    await h.page.mouse.up()
+    await h.page.waitForTimeout(250)
+    const bracket = await h.summaryBracketBox()
+    const grown = bracket.right >= target.right - 2
+    return h.expect(grown, `括號右緣=${Math.round(bracket.right)}（c 右緣=${Math.round(target.right)}）`)
+  }, { electron: true }),
+
+  // ═══ 2026-09-15 紅隊審查後補的使用者情境（預備輸入） ═══
+  // 情境：選取節點（預備中）誤按 Shift+Enter。過關＝文字不動、不進編輯；不過關＝原文被換行取代（節點被清空）。
+  matrix('Shift+Enter（預備）', '單選', '不清空原文、不進入編輯', async h => {
+    await h.select('a')
+    await h.press('Shift+Enter')
+    await h.page.waitForTimeout(150)
+    const text = await h.nodeText('a')
+    const editing = await h.isEditing('a')
+    return h.expect(text === 'Alpha' && !editing, `text=${JSON.stringify(text)}；editing=${editing}`)
+  }, { electron: true }),
+  // 情境：預備中按 Shift+Space。過關＝與 Space 相同進入編輯且原文保留；不過關＝原文被一個空白取代。
+  matrix('Shift+Space（預備）', '單選', '進入編輯、原文保留', async h => {
+    await h.select('a')
+    await h.press('Shift+Space')
+    await h.page.waitForTimeout(150)
+    const text = await h.nodeText('a')
+    const editing = await h.isEditing('a')
+    return h.expect(editing && text === 'Alpha', `text=${JSON.stringify(text)}；editing=${editing}`)
+  }, { electron: true }),
+  // 情境：打了字按 Esc 取消。過關＝原文還原且節點重新預備（下一個中文字仍能直接組字）；不過關＝選取但未預備。
+  matrix('Esc 取消後重新預備', '單選', '取消編輯後節點仍是預備狀態', async h => {
+    await h.select('a')
+    await h.page.keyboard.type('x')
+    await h.page.waitForTimeout(100)
+    await h.press('Escape')
+    await h.page.waitForTimeout(200)
+    const text = await h.nodeText('a')
+    const armed = await h.isArmed('a')
+    return h.expect(text === 'Alpha' && armed, `text=${JSON.stringify(text)}；armed=${armed}`)
+  }, { electron: true }),
+  // 情境：Space 進編輯、沒改字直接 Enter。過關＝節點重新預備；不過關＝文字沒變就沒有重繪、停在未預備。
+  matrix('Enter 提交未改字後重新預備', '單選', '未變更的提交也要重新預備', async h => {
+    await h.select('a')
+    await h.press('Space')
+    await h.page.waitForTimeout(100)
+    await h.press('Enter')
+    await h.page.waitForTimeout(200)
+    const armed = await h.isArmed('a')
+    return h.expect(armed, `armed=${armed}`)
+  }, { electron: true }),
+  // 情境：用工具列「加下級」按鈕新增節點後直接打字。過關＝新節點進入編輯且文字是打的字；
+  // 不過關＝焦點留在工具列按鈕、打字無效（含中文輸入法）。
+  matrix('工具列加下級後直接打字', '單選', '按鈕新增的節點要能直接輸入', async h => {
+    await h.select('a')
+    await h.page.locator('#add-child-button').click()
+    await h.page.waitForTimeout(200)
+    await h.page.keyboard.type('x')
+    await h.page.waitForTimeout(150)
+    const id = (await h.selected())[0]
+    const text = id ? await h.nodeText(id) : ''
+    return h.expect(Boolean(id) && text === 'x', `選取=${id}；text=${JSON.stringify(text)}`)
+  }, { electron: true }),
+  // 情境：預備中按 End 再打字。過關＝仍是「取代原文」（隱形全選沒被游標鍵改掉）；不過關＝變成 Alphax。
+  matrix('End 鍵不改變預備全選', '單選', '游標鍵不得偷偷改掉全選範圍', async h => {
+    await h.select('a')
+    await h.press('End')
+    await h.page.keyboard.type('x')
+    await h.page.waitForTimeout(150)
+    const text = await h.nodeText('a')
+    return h.expect(text === 'x', `text=${JSON.stringify(text)}`)
+  }, { electron: true }),
+
+  // ═══ 2026-09-15 紅隊審查後補的使用者情境（概要） ═══
+  // 情境：只選一個節點按 Ctrl+Alt+T。過關＝畫出概要；不過關＝toast 拒絕（GitMind 允許單節點概要）。
+  matrix('概要單節點', '單選', '只選一個節點也能建概要', async h => {
+    await h.select('a')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const brackets = await h.page.locator('#connections-layer .summary-bracket').count()
+    return h.expect(brackets === 1, `括號數=${brackets}`)
+  }, { electron: true }),
+  // 情境：組織圖裡 a 有子節點 a1（在 a 正下方），對 a、b 建概要。過關＝括號、標籤、把手都不壓到 a1
+  //（放在整棵子樹底下）；不過關＝括號畫過 a1。
+  matrix('概要不壓子節點（組織圖）', '多選', '括號放在覆蓋節點整棵子樹的外側', async h => {
+    await h.resetWithLayout('org')
+    await h.multiSelect('a', 'b')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const overlaps = await h.page.evaluate(covered => {
+      const rects = [
+        ...document.querySelectorAll('#connections-layer .summary-bracket, #connections-layer .summary-boundary, .summary-node')
+      ].map(el => el.getBoundingClientRect())
+      const others = [...document.querySelectorAll('#nodes-layer .mind-node')]
+        .filter(node => !covered.includes(node.dataset.nodeId))
+        .map(node => ({ id: node.dataset.nodeId, r: node.getBoundingClientRect() }))
+      const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+      return others.filter(other => rects.some(rect => hit(rect, other.r))).map(other => other.id)
+    }, ['a', 'b'])
+    return h.expect(overlaps.length === 0, `壓到的節點=${overlaps.join(',') || '無'}`)
+  }, { electron: true }),
+  // 情境：魚骨圖的 children 陣列順序與畫面相反（a 在最右）。對 a、b 建概要後，拖「畫面最左」的把手再往左到 c。
+  // 過關＝括號往左延伸涵蓋 c；不過關＝把手左右顛倒，範圍縮小或拖不動。
+  matrix('概要邊界拖曳：魚骨圖', '多選', '陣列與畫面反向時把手仍照畫面位置運作', async h => {
+    await h.resetWithLayout('fishbone')
+    await h.multiSelect('a', 'b')
+    await h.press('Control+Alt+t')
+    await h.page.waitForTimeout(200)
+    const boxes = {}
+    for (const edge of ['startNodeId', 'endNodeId']) boxes[edge] = await h.page.locator(`#connections-layer .summary-boundary[data-summary-edge="${edge}"]`).boundingBox()
+    const leftHandle = boxes.startNodeId.x < boxes.endNodeId.x ? boxes.startNodeId : boxes.endNodeId
+    const target = await h.unionBox(['c'])
+    if (!(target.right < leftHandle.x)) throw new MatrixFailure('前提不成立：c 應在左把手的左邊')
+    await h.page.mouse.move(leftHandle.x + leftHandle.width / 2, leftHandle.y + leftHandle.height / 2)
+    await h.page.mouse.down()
+    await h.page.mouse.move((target.x + target.right) / 2, leftHandle.y + leftHandle.height / 2, { steps: 6 })
+    await h.page.mouse.up()
+    await h.page.waitForTimeout(250)
+    const bracket = await h.summaryBracketBox()
+    return h.expect(bracket.x <= target.x + 2, `括號左緣=${Math.round(bracket.x)}（c 左緣=${Math.round(target.x)}）`)
+  }, { electron: true }),
+
+  // ═══ 紅隊審查後補的使用者情境（右鍵框選） ═══
+  // 情境：使用者先在右側面板改了樣式（焦點留在面板的 select），再右鍵圈選節點按 Delete。
+  // 過關＝節點被刪；不過關＝Delete 被當表單鍵吞掉、沒反應。
+  matrix('右鍵框選後快捷鍵仍可用（焦點原在面板）', '單選', '框選會把焦點拉回畫布', async h => {
+    await h.select('b')
+    await h.page.locator('#sidepanel').evaluate(element => element.classList.remove('is-collapsed'))
+    await h.page.waitForTimeout(150)
+    const focused = await h.page.evaluate(() => {
+      const control = [...document.querySelectorAll('#sidepanel select, #sidepanel input:not([type="hidden"])')]
+        .find(element => element.offsetParent !== null && !element.disabled)
+      control?.focus()
+      return document.activeElement?.tagName || ''
+    })
+    if (!['SELECT', 'INPUT'].includes(focused)) throw new MatrixFailure(`前提不成立：面板控制項未取得焦點（${focused}）`)
+    const nodes = await h.unionBox(['a', 'a1'])
+    const start = { x: nodes.x - 28, y: nodes.y - 28 }
+    const end = { x: nodes.right + 28, y: nodes.bottom + 28 }
+    if (!await h.isBlankPoint(start.x, start.y)) throw new MatrixFailure('起點不是空白畫布')
+    await h.page.mouse.move(start.x, start.y)
+    await h.page.mouse.down({ button: 'right' })
+    await h.page.mouse.move(end.x, end.y, { steps: 8 })
+    await h.page.mouse.up({ button: 'right' })
+    await h.page.waitForTimeout(250)
+    const selected = await h.selected()
+    const before = await h.page.locator('#nodes-layer .mind-node').count()
+    await h.press('Delete')
+    await h.page.waitForTimeout(300)
+    const after = await h.page.locator('#nodes-layer .mind-node').count()
+    return h.expect(selected.includes('a') && selected.includes('a1') && after < before, `選取=${selected.join(',')}；節點數 ${before}→${after}`)
+  }, { electron: true }),
+  // 情境：右鍵拖出 40px 又拉回原點放開。這是一次「拖曳」（曾超過門檻），過關＝不彈選單、不平移；
+  // 不過關＝選取先被清掉、選單卻照開（拖曳／單擊兩種語意混在一起）。
+  matrix('右鍵拖出再拉回原點', '單選', '曾超過門檻就算拖曳：不開選單', async h => {
+    await h.select('d')
+    const nodes = await h.unionBox(['a'])
+    const point = { x: nodes.x - 60, y: nodes.y - 60 }
+    if (!await h.isBlankPoint(point.x, point.y)) throw new MatrixFailure('起點不是空白畫布')
+    await h.page.mouse.move(point.x, point.y)
+    await h.page.mouse.down({ button: 'right' })
+    await h.page.mouse.move(point.x + 40, point.y + 40, { steps: 4 })
+    await h.page.mouse.move(point.x + 1, point.y + 1, { steps: 4 })
+    await h.page.mouse.up({ button: 'right' })
+    await h.page.waitForTimeout(250)
+    const menuOpen = await h.contextMenuOpen()
+    return h.expect(!menuOpen, `選單開啟=${menuOpen}`)
+  }, { electron: true }),
+  // 情境：正在編輯 a 的文字時，右鍵圈選 c、d。過關＝編輯結束（文字已提交）、c/d 被選取；
+  // 不過關＝a 仍在編輯、焦點留在文字裡（接著按 Delete 會刪到文字而不是節點）。
+  matrix('編輯中右鍵框選', '單選', '框選會結束進行中的編輯', async h => {
+    await h.node('a').dblclick()
+    await h.page.waitForTimeout(150)
+    if (!await h.isEditing('a')) throw new MatrixFailure('前提不成立：雙擊後未進入編輯')
+    const nodes = await h.unionBox(['c', 'd'])
+    const start = { x: nodes.x - 28, y: nodes.y - 28 }
+    const end = { x: nodes.right + 28, y: nodes.bottom + 28 }
+    if (!await h.isBlankPoint(start.x, start.y)) throw new MatrixFailure('起點不是空白畫布')
+    await h.page.mouse.move(start.x, start.y)
+    await h.page.mouse.down({ button: 'right' })
+    await h.page.mouse.move(end.x, end.y, { steps: 8 })
+    await h.page.mouse.up({ button: 'right' })
+    await h.page.waitForTimeout(250)
+    const editing = await h.isEditing('a')
+    const selected = await h.selected()
+    return h.expect(!editing && selected.includes('c') && selected.includes('d'), `a 編輯中=${editing}；選取=${selected.join(',')}`)
+  }, { electron: true }),
+
+  // 情境：使用者按住滑鼠右鍵在空白處拖出矩形，放開後矩形內的節點被選取，且不彈出右鍵選單、畫布不平移。
+  // 過關＝矩形內節點全選、選單未開、畫布未動；不過關＝沒選到／彈出選單／畫布被平移。
+  matrix('右鍵拖曳圈選', '未選取', '按住右鍵拖出矩形圈選節點，放開不彈選單、畫布不平移', async h => {
+    const nodes = await h.unionBox(['a', 'a1'])
+    const start = { x: nodes.x - 28, y: nodes.y - 28 }
+    const end = { x: nodes.right + 28, y: nodes.bottom + 28 }
+    if (!await h.isBlankPoint(start.x, start.y)) throw new MatrixFailure('起點不是空白畫布')
+    const worldBefore = await h.page.locator('#world').evaluate(el => el.style.transform)
+    await h.page.mouse.move(start.x, start.y)
+    await h.page.mouse.down({ button: 'right' })
+    await h.page.mouse.move(end.x, end.y, { steps: 8 })
+    await h.page.mouse.up({ button: 'right' })
+    await h.page.waitForTimeout(250)
+    const selected = await h.selected()
+    const menuOpen = await h.contextMenuOpen()
+    const worldAfter = await h.page.locator('#world').evaluate(el => el.style.transform)
+    const gotBoth = selected.includes('a') && selected.includes('a1')
+    return h.expect(gotBoth && !menuOpen && worldBefore === worldAfter, `選取=${selected.join(',')}；選單開啟=${menuOpen}；畫布位移=${worldBefore !== worldAfter}`)
+  }, { electron: true }),
+  matrix('右鍵單擊', '未選取', '右鍵按下即放（沒有拖曳）仍打開右鍵選單', async h => {
+    const nodes = await h.unionBox(['a'])
+    const point = { x: nodes.x - 60, y: nodes.y - 60 }
+    if (!await h.isBlankPoint(point.x, point.y)) throw new MatrixFailure('點擊處不是空白畫布')
+    await h.page.mouse.click(point.x, point.y, { button: 'right' })
+    await h.page.waitForTimeout(250)
+    const menuOpen = await h.contextMenuOpen()
+    return h.expect(menuOpen, `選單開啟=${menuOpen}`)
+  }, { electron: true }),
+
   matrix('Alt+P', '單選', '打開圖片 file chooser', async h => {
     await h.select('a')
     await h.page.locator('input[type="file"][accept="image/*"]').evaluate(input => {
@@ -333,6 +613,26 @@ const MATRIX_CASES = [
     const picking = await h.page.locator('#canvas').evaluate(element => element.classList.contains('is-relation-picking'))
     await h.select('b')
     return h.expect(picking && await h.page.locator('[data-relation-id]').count() === 1, `picking=${picking}；relation=${await h.page.locator('[data-relation-id]').count()}`)
+  }, { electron: true }),
+  // 情境：使用者拖曳選中關聯線的黃色控制點來改弧度。過關＝線的形狀改變且畫布沒被平移；
+  // 不過關＝畫布跟著指標跑、線形不變（capture 階段的平移把把手劫走）。
+  matrix('關聯線控制點拖曳', '單選', '拖曳控制點改變弧度，畫布不平移', async h => {
+    await h.select('a')
+    await h.press('F4')
+    await h.select('b')
+    await h.page.waitForTimeout(200)
+    const handle = await h.page.locator('#connections-layer .relation-control[data-handle="cp1"]').boundingBox()
+    if (!handle) throw new MatrixFailure('選中關聯線後沒有控制點')
+    const pathBefore = await h.page.locator('[data-relation-id] path').first().getAttribute('d')
+    const worldBefore = await h.page.locator('#world').evaluate(el => el.style.transform)
+    await h.page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await h.page.mouse.down()
+    await h.page.mouse.move(handle.x + handle.width / 2 + 60, handle.y + handle.height / 2 + 40, { steps: 6 })
+    await h.page.mouse.up()
+    await h.page.waitForTimeout(250)
+    const pathAfter = await h.page.locator('[data-relation-id] path').first().getAttribute('d')
+    const worldAfter = await h.page.locator('#world').evaluate(el => el.style.transform)
+    return h.expect(pathBefore !== pathAfter && worldBefore === worldAfter, `線形改變=${pathBefore !== pathAfter}；畫布位移=${worldBefore !== worldAfter}`)
   }, { electron: true }),
   matrix('Ctrl+Alt+R', '單選', '評論佔位功能提供可見回饋', async h => {
     await h.select('a')
@@ -669,12 +969,30 @@ const IME_MATRIX_CASES = ALPHANUMERIC_BINDINGS.flatMap(binding => {
 IME_MATRIX_CASES.push(matrix(
   '直接輸入 [KeyM]',
   'IME 模式／單選',
-  '以空 seed 進入 contenteditable，保留後續 composition 流',
+  '選取後文字元素已預備輸入（焦點就緒、原文全選），compositionstart 升格為編輯',
   async h => {
     await h.select('a')
+    await h.page.waitForTimeout(50)
+    // 預備：文字元素可輸入且擁有焦點，原文全選（輸入法從第一鍵就能組字並取代原文）
+    const armed = await h.page.evaluate(() => {
+      const text = document.querySelector('#nodes-layer [data-node-id="a"] .mind-node__text')
+      const selection = window.getSelection()
+      return {
+        editable: text?.isContentEditable === true,
+        focused: document.activeElement === text,
+        isEditingClass: text?.closest('.mind-node')?.classList.contains('is-editing') === true,
+        selectedAll: selection?.toString() === text?.innerText
+      }
+    })
     await h.dispatchImeKey({ code: 'KeyM' })
+    // 真實輸入法會接著送 compositionstart；合成一個以驗證升格路徑
+    await h.page.evaluate(() => {
+      const text = document.querySelector('#nodes-layer [data-node-id="a"] .mind-node__text')
+      text.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }))
+    })
     const text = await h.node('a').locator('.mind-node__text').innerText()
-    return h.expect(await h.isEditing('a') && text === '', `editing=${await h.isEditing('a')}；文字=${JSON.stringify(text)}`)
+    return h.expect(armed.editable && armed.focused && !armed.isEditingClass && armed.selectedAll && await h.isEditing('a') && text !== '',
+      `armed=${JSON.stringify(armed)}；editing=${await h.isEditing('a')}；文字=${JSON.stringify(text)}`)
   },
   { targetedSynthetic: true }
 ))
@@ -892,6 +1210,48 @@ function createHarness({ page, baseURL, connectCDP }) {
       return page.keyboard.press(shortcut)
     },
     dispatchImeKey: ({ code, binding = null }) => dispatchSyntheticImeKey(page, { code, binding }),
+    // 以指定佈局重置 fixture（同 reset，但 doc.layout 改為 layout）
+    async resetWithLayout(layout) {
+      await page.goto(`${baseURL}/index.html`, { waitUntil: 'domcontentloaded' })
+      await page.evaluate(({ fixture, id, layoutName }) => {
+        localStorage.clear()
+        const doc = { ...fixture, layout: layoutName }
+        localStorage.setItem('mindflow.docs.index', JSON.stringify({
+          version: 2,
+          docs: [{ id, title: doc.title, createdAt: doc.createdAt, updatedAt: doc.updatedAt, thumbnail: '' }],
+          trash: [],
+          favorites: []
+        }))
+        localStorage.setItem(`mindflow.doc.${id}`, JSON.stringify(doc))
+      }, { fixture: FIXTURE, id: FIXTURE_ID, layoutName: layout })
+      await page.goto(editorURL, { waitUntil: 'domcontentloaded' })
+      await page.locator('#nodes-layer .mind-node').first().waitFor({ state: 'visible' })
+      await page.waitForFunction(expected => document.querySelectorAll('#nodes-layer .mind-node').length === expected, FIXTURE_NODE_COUNT, { timeout: 15000 })
+      await page.locator('#sidepanel').evaluate(element => element.classList.add('is-collapsed'))
+      await page.locator('#canvas').focus()
+    },
+    // 概要括號的螢幕 bbox（SVG path）與其覆蓋節點的 bbox 聯集
+    async summaryBracketBox() {
+      return page.locator('#connections-layer .summary-bracket').first().evaluate(path => {
+        const r = path.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom }
+      })
+    },
+    async unionBox(ids) {
+      const boxes = []
+      for (const id of ids) boxes.push(await page.locator(`#nodes-layer [data-node-id="${id}"]`).boundingBox())
+      return {
+        x: Math.min(...boxes.map(b => b.x)), y: Math.min(...boxes.map(b => b.y)),
+        right: Math.max(...boxes.map(b => b.x + b.width)), bottom: Math.max(...boxes.map(b => b.y + b.height))
+      }
+    },
+    async isBlankPoint(x, y) {
+      return page.evaluate(p => {
+        const el = document.elementFromPoint(p.x, p.y)
+        return ['SECTION#canvas', 'DIV#world', 'DIV#nodes-layer', 'svg#connections-layer'].includes(el ? `${el.tagName}#${el.id}` : '')
+      }, { x, y })
+    },
+    contextMenuOpen: () => page.locator('.context-menu').evaluate(menu => !menu.hidden && getComputedStyle(menu).display !== 'none').catch(() => false),
     // 在畫布左上角一塊確定空白的位置雙擊：先斷言該點的 elementFromPoint 真的是基礎層，
     // 免得版面改動後測試在節點上雙擊卻仍然「通過」。
     async dblclickBlankCanvas() {
@@ -921,7 +1281,11 @@ function createHarness({ page, baseURL, connectCDP }) {
       await page.locator(`#nodes-layer [data-node-id="${id}"]`).dblclick()
       await page.locator(`#nodes-layer [data-node-id="${id}"] .mind-node__text[contenteditable="true"]`).waitFor()
     },
-    isEditing: id => page.locator(`#nodes-layer [data-node-id="${id}"] .mind-node__text`).getAttribute('contenteditable').then(value => value === 'true'),
+    // 「編輯中」以 is-editing class 為準：選取節點會先進入「預備輸入」（contenteditable=true 但非編輯，
+    // 讓輸入法從第一鍵就能組字），只看 contenteditable 會把預備狀態誤判成編輯。
+    isEditing: id => page.locator(`#nodes-layer [data-node-id="${id}"]`).evaluate(node => node.classList.contains('is-editing')),
+    isArmed: id => page.locator(`#nodes-layer [data-node-id="${id}"]`).evaluate(node => node.classList.contains('is-armed')),
+    nodeText: id => page.locator(`#nodes-layer [data-node-id="${id}"] .mind-node__text`).evaluate(text => text.innerText.replace(/​/gu, '')),
     async focusPanel() {
       await page.locator('[data-style-input="borderStyle"]').focus()
     },

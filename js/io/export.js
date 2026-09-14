@@ -4,6 +4,7 @@
 import { getLayoutBounds, layout } from '../editor/layout.js'
 import { buildMapContext, buildMapRootLookup, collectMapRoots, getFloatingMeta, serializeDoc, walkNodes } from '../editor/model.js'
 import { getConnectionPath } from '../editor/render.js'
+import { summaryGeometry } from '../editor/summary-geometry.js'
 import { getLineAppearance, getNodeAppearance, getTheme } from '../editor/themes.js'
 
 const DEFAULT_MARGIN = 80
@@ -455,20 +456,27 @@ function svgSummaries(summaries, nodes, positions, layoutName) {
     if (!geometry) continue
     const text = safeString(summary.text) || '概要'
     const labelWidth = Math.max(62, Math.min(180, estimateTextWidth(text, 12) + 20))
-    const labelTop = geometry.middle - SUMMARY_LABEL_HEIGHT / 2
+    // 標籤矩形依括號所在側對齊錨點（與 css/features.css 的 .summary-node[data-summary-side] 同一套規則）：
+    // 右側＝左緣貼錨點、左側＝右緣貼錨點、下方＝上緣貼錨點且水平置中、上方＝下緣貼錨點且水平置中
+    const labelLeft = geometry.side === 'right' ? geometry.labelX
+      : geometry.side === 'left' ? geometry.labelX - labelWidth
+        : geometry.labelX - labelWidth / 2
+    const labelTop = geometry.side === 'bottom' ? geometry.labelY
+      : geometry.side === 'top' ? geometry.labelY - SUMMARY_LABEL_HEIGHT
+        : geometry.labelY - SUMMARY_LABEL_HEIGHT / 2
     // 尊重使用者自訂樣式（與畫面端 dnd.js decorateSummaryStyles 同一套對映）
     const summaryStyle = summary.style || {}
     const strokeColor = safeString(summaryStyle.lineColor) || '#f17e2e'
     const dash = ({ dotted: '2 7', dashed: '9 7', 'dash-dot': '10 5 2 5', 'long-dash': '16 8' })[summaryStyle.lineStyle] || ''
     const labelFill = safeString(summaryStyle.fill) || '#fff7ed'
     pieces.push(`<path d="${geometry.path}" stroke="${escapeXml(strokeColor)}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"${dash ? ` stroke-dasharray="${dash}"` : ''} fill="none"/>`)
-    pieces.push(`<rect x="${formatNumber(geometry.labelX)}" y="${formatNumber(labelTop)}" width="${formatNumber(labelWidth)}" height="${SUMMARY_LABEL_HEIGHT}" rx="9" fill="${escapeXml(labelFill)}" stroke="#f2b487" stroke-width="1"/>`)
-    pieces.push(`<text x="${formatNumber(geometry.labelX + 10)}" y="${formatNumber(geometry.middle)}" dominant-baseline="central" font-family="${OVERLAY_FONT_FAMILY}" font-size="12" font-weight="600" fill="#7c3b11">${escapeXml(text)}</text>`)
+    pieces.push(`<rect x="${formatNumber(labelLeft)}" y="${formatNumber(labelTop)}" width="${formatNumber(labelWidth)}" height="${SUMMARY_LABEL_HEIGHT}" rx="9" fill="${escapeXml(labelFill)}" stroke="#f2b487" stroke-width="1"/>`)
+    pieces.push(`<text x="${formatNumber(labelLeft + 10)}" y="${formatNumber(labelTop + SUMMARY_LABEL_HEIGHT / 2)}" dominant-baseline="central" font-family="${OVERLAY_FONT_FAMILY}" font-size="12" font-weight="600" fill="#7c3b11">${escapeXml(text)}</text>`)
     boxes.push({
-      minX: geometry.x,
-      minY: Math.min(geometry.top, labelTop),
-      maxX: geometry.labelX + labelWidth,
-      maxY: Math.max(geometry.bottom, labelTop + SUMMARY_LABEL_HEIGHT)
+      minX: Math.min(geometry.bounds.minX, labelLeft),
+      minY: Math.min(geometry.bounds.minY, labelTop),
+      maxX: Math.max(geometry.bounds.maxX, labelLeft + labelWidth),
+      maxY: Math.max(geometry.bounds.maxY, labelTop + SUMMARY_LABEL_HEIGHT)
     })
   }
   return { pieces, boxes }
@@ -682,67 +690,6 @@ function cubicPoint(p0, p1, p2, p3, t) {
   const c = 3 * (1 - t) * t ** 2
   const d = t ** 3
   return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y }
-}
-
-/*
- * 以下四個概要幾何函數複製自 js/editor/summary.js（皆為純函數、無 DOM 依賴），
- * 讓 io 層不必相依編輯器 overlay 模組；那邊改幾何時，這裡要同步改。
- */
-function summaryGeometry(summary, parent, positions, layoutName = 'mindmap-both') {
-  const covered = getSummaryNodes(summary, parent, layoutName).map(child => positions.get(child.id)).filter(Boolean)
-  if (covered.length === 0) return null
-  const top = Math.min(...covered.map(position => position.y)) - 5
-  const bottom = Math.max(...covered.map(position => position.y + position.h)) + 5
-  const x = Math.max(...covered.map(position => position.x + position.w)) + 24
-  const middle = (top + bottom) / 2
-  const depth = Math.max(12, Math.min(24, (bottom - top) * 0.16))
-  return {
-    top,
-    bottom,
-    middle,
-    x,
-    labelX: x + 32,
-    path: `M ${x + depth} ${top} C ${x + 5} ${top}, ${x + 8} ${middle - depth}, ${x} ${middle} C ${x + 8} ${middle + depth}, ${x + 5} ${bottom}, ${x + depth} ${bottom}`
-  }
-}
-
-function getSummaryNodes(summary, parent, layoutName = 'mindmap-both') {
-  if (!summary || !parent) return []
-  const anchors = normalizeSummaryAnchors(summary, parent, layoutName)
-  if (!anchors) return []
-  const startNode = parent.children.find(node => node.id === anchors.startNodeId)
-  if (!startNode) return []
-  const siblings = getVisualSiblings(parent, startNode, layoutName)
-  const start = siblings.findIndex(node => node.id === anchors.startNodeId)
-  const end = siblings.findIndex(node => node.id === anchors.endNodeId)
-  return start >= 0 && end >= start ? siblings.slice(start, end + 1) : []
-}
-
-function normalizeSummaryAnchors(summary, parent, layoutName = 'mindmap-both') {
-  let startNodeId = summary.startNodeId
-  let endNodeId = summary.endNodeId
-  // 舊文件仍可讀取 index；一旦更新便遷移為穩定 nodeId 錨點。
-  if (!startNodeId && Number.isFinite(Number(summary.startIndex))) {
-    startNodeId = parent.children[Math.max(0, Math.min(parent.children.length - 1, Number(summary.startIndex)))]?.id
-  }
-  if (!endNodeId && Number.isFinite(Number(summary.endIndex))) {
-    endNodeId = parent.children[Math.max(0, Math.min(parent.children.length - 1, Number(summary.endIndex)))]?.id
-  }
-  const startNode = parent.children.find(node => node.id === startNodeId)
-  const endNode = parent.children.find(node => node.id === endNodeId)
-  if (!startNode || !endNode) return null
-  const siblings = getVisualSiblings(parent, startNode, layoutName)
-  const start = siblings.findIndex(node => node.id === startNode.id)
-  const end = siblings.findIndex(node => node.id === endNode.id)
-  return start >= 0 && end >= start ? { startNodeId, endNodeId } : null
-}
-
-function getVisualSiblings(parent, anchor, layoutName = 'mindmap-both') {
-  // 只有雙向心智圖會把 children 分到兩側；其他佈局的視覺順序就是 children 陣列順序。
-  if ((layoutName === 'mindmap-both' || layoutName === 'mindmap') && (anchor?.side === 'left' || anchor?.side === 'right')) {
-    return parent.children.filter(node => node.side === anchor.side)
-  }
-  return parent.children.slice()
 }
 
 function expandBounds(bounds, boxes) {

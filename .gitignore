@@ -5,3 +5,6 @@ desktop/dist/
 .playwright-mcp/
 .playwright-cli/
 .playwright-mcp/
+
+# 部分執行（--filter／--project）的矩陣報告，正式報告只由全矩陣產生
+docs/SHORTCUT_MATRIX.partial.md

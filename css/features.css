@@ -75,8 +75,13 @@
   box-shadow: 0 3px 10px rgb(92 45 13 / 12%);
   font: 600 12px/1.25 "Segoe UI", "Noto Sans TC", sans-serif;
   cursor: pointer;
+  /* left/top 是標籤錨點（括號外側、主軸置中）；依括號所在側決定往哪個方向長出去 */
   transform: translateY(-50%);
 }
+
+.summary-node[data-summary-side="left"] { transform: translate(-100%, -50%); }
+.summary-node[data-summary-side="bottom"] { transform: translate(-50%, 0); }
+.summary-node[data-summary-side="top"] { transform: translate(-50%, -100%); }
 
 .summary-node.is-selected { outline: 2px solid #fde047; outline-offset: 2px; }
 

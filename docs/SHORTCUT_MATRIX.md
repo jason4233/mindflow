@@ -1,20 +1,20 @@
 # MindFlow 快捷鍵與文字工具列 E2E 矩陣
 
-> 產生時間：2026年9月6日 下午4:36:30  
-> 總結果：**214/214 PASS**
+> 產生時間：2026年9月15日 清晨6:36:55  
+> 總結果：**254/254 PASS**
 
 ## 原有矩陣
 
 > 驅動：Playwright 真實 keyboard/mouse；color input 使用 CDP `Input.dispatchMouseEvent` 真實 pointer 路徑。
 
-> 結果：**114/114 PASS**
+> 結果：**154/154 PASS**
 
 | 執行環境 | 快捷鍵／控制 | 狀態 | 預期 | 實測 | PASS/FAIL |
 |---|---|---|---|---|---|
-| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_136423354f616c15 | PASS
+| Chromium | Tab | 單選 | 新增 1 個下級節點並選中新節點 | 節點=7；選取=node_6s6l1q2a0m063q1f | PASS
 | Chromium | Tab | 面板焦點 | 只移動面板焦點，不新增節點 | 節點 6→6 | PASS
 | Chromium | Enter | 單選 | 新增 1 個同級節點並選中新節點 | 節點=7 | PASS
-| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_2x695d4a4a192a5g"] | PASS
+| Chromium | Shift+Tab | 單選 | 在目前節點上方插入新父節點 | a 子節點=["node_2u241t5l5y5u0m3u"] | PASS
 | Chromium | Ctrl+/ | 單選 | 收合有子節點的分支，再按一次展開 | 收合 class=collapse-control is-collapsed；節點 5→6 | PASS
 | Chromium | Delete | 單選 | 刪除節點及整個子樹 | 節點=4；a1=false | PASS
 | Chromium | Delete | 多選 | 刪除所有選取節點及其子樹 | 節點=3 | PASS
@@ -60,9 +60,29 @@
 | Chromium | Ctrl+Alt+M | 未選取 | 不開 drawer 並提示先選取節點 | open=false；toast=請先選取節點 | PASS
 | Chromium | Ctrl+Alt+M | 面板焦點 | 保留面板輸入操作，不誤開備註 | drawer open=false | PASS
 | Chromium | Ctrl+Alt+T | 多選 | 對連續同級節點建立概要 | summary DOM=1 | PASS
+| Chromium | 概要方向：右側同級（心智圖） | 多選 | 括號直立、放在節點右外側 | 直立=true；在右外側=true（括號 x=970，節點右緣=946） | PASS
+| Chromium | 概要方向：左側同級（心智圖） | 多選 | 括號直立、放在節點左外側（不可壓到節點或跑到右邊） | 直立=true；在左外側=true（括號右緣=470，節點左緣=494） | PASS
+| Chromium | 概要方向：組織圖 | 多選 | 子節點水平排列時括號改為橫向、放在節點下方 | 橫向=true；在下方=true（括號 y=604，節點下緣=507） | PASS
+| Chromium | 概要邊界拖曳：直立（心智圖） | 多選 | 把上邊界往下拖到第二個節點 → 概要只剩它 | 括號 y=488（a 下緣=467）、括號下緣=535（b 下緣=530） | PASS
+| Chromium | 概要邊界拖曳：橫向（組織圖） | 多選 | 把右邊界往右拖到第三個節點 → 概要涵蓋三個 | 括號右緣=812（c 右緣=807） | PASS
+| Chromium | Shift+Enter（預備） | 單選 | 不清空原文、不進入編輯 | text="Alpha"；editing=false | PASS
+| Chromium | Shift+Space（預備） | 單選 | 進入編輯、原文保留 | text="Alpha"；editing=true | PASS
+| Chromium | Esc 取消後重新預備 | 單選 | 取消編輯後節點仍是預備狀態 | text="Alpha"；armed=true | PASS
+| Chromium | Enter 提交未改字後重新預備 | 單選 | 未變更的提交也要重新預備 | armed=true | PASS
+| Chromium | 工具列加下級後直接打字 | 單選 | 按鈕新增的節點要能直接輸入 | 選取=node_3e6f241l130t202m；text="x" | PASS
+| Chromium | End 鍵不改變預備全選 | 單選 | 游標鍵不得偷偷改掉全選範圍 | text="x" | PASS
+| Chromium | 概要單節點 | 單選 | 只選一個節點也能建概要 | 括號數=1 | PASS
+| Chromium | 概要不壓子節點（組織圖） | 多選 | 括號放在覆蓋節點整棵子樹的外側 | 壓到的節點=無 | PASS
+| Chromium | 概要邊界拖曳：魚骨圖 | 多選 | 陣列與畫面反向時把手仍照畫面位置運作 | 括號左緣=492（c 左緣=497） | PASS
+| Chromium | 右鍵框選後快捷鍵仍可用（焦點原在面板） | 單選 | 框選會把焦點拉回畫布 | 選取=a,a1,b；節點數 6→3 | PASS
+| Chromium | 右鍵拖出再拉回原點 | 單選 | 曾超過門檻就算拖曳：不開選單 | 選單開啟=false | PASS
+| Chromium | 編輯中右鍵框選 | 單選 | 框選會結束進行中的編輯 | a 編輯中=false；選取=c,d | PASS
+| Chromium | 右鍵拖曳圈選 | 未選取 | 按住右鍵拖出矩形圈選節點，放開不彈選單、畫布不平移 | 選取=a,a1,b；選單開啟=false；畫布位移=false | PASS
+| Chromium | 右鍵單擊 | 未選取 | 右鍵按下即放（沒有拖曳）仍打開右鍵選單 | 選單開啟=true | PASS
 | Chromium | Alt+P | 單選 | 打開圖片 file chooser | file input click=true；filechooser=true | PASS
 | Chromium | Alt+I | 單選 | 打開右側圖示分頁 | panel={"collapsed":false,"tab":"icon"} | PASS
 | Chromium | F4 | 單選 | 進入關聯線選點模式，點目標後建立線 | picking=true；relation=1 | PASS
+| Chromium | 關聯線控制點拖曳 | 單選 | 拖曳控制點改變弧度，畫布不平移 | 線形改變=true；畫布位移=false | PASS
 | Chromium | Ctrl+Alt+R | 單選 | 評論佔位功能提供可見回饋 | toast=此功能即將推出 | PASS
 | Chromium | Ctrl+0 | 畫布 | 把縮放重設為 100% | zoom=100% | PASS
 | Chromium | Ctrl+滾輪 | 畫布 | 真實 wheel 事件改變縮放 | zoom 100%→143% | PASS
@@ -111,8 +131,28 @@
 | Electron | Ctrl+Alt+K | 單選 | 開啟連結輸入 dialog | 連結 dialog 未開啟 | PASS
 | Electron | Ctrl+Alt+M | 單選 | 備註 drawer 已掛載並開啟、textarea 取得焦點 | {"mounted":true,"open":true,"focused":true} | PASS
 | Electron | Ctrl+Alt+T | 多選 | 對連續同級節點建立概要 | summary DOM=1 | PASS
+| Electron | 概要方向：右側同級（心智圖） | 多選 | 括號直立、放在節點右外側 | 直立=true；在右外側=true（括號 x=884，節點右緣=860） | PASS
+| Electron | 概要方向：左側同級（心智圖） | 多選 | 括號直立、放在節點左外側（不可壓到節點或跑到右邊） | 直立=true；在左外側=true（括號右緣=384，節點左緣=408） | PASS
+| Electron | 概要方向：組織圖 | 多選 | 子節點水平排列時括號改為橫向、放在節點下方 | 橫向=true；在下方=true（括號 y=506，節點下緣=409） | PASS
+| Electron | 概要邊界拖曳：直立（心智圖） | 多選 | 把上邊界往下拖到第二個節點 → 概要只剩它 | 括號 y=391（a 下緣=370）、括號下緣=438（b 下緣=433） | PASS
+| Electron | 概要邊界拖曳：橫向（組織圖） | 多選 | 把右邊界往右拖到第三個節點 → 概要涵蓋三個 | 括號右緣=725（c 右緣=720） | PASS
+| Electron | Shift+Enter（預備） | 單選 | 不清空原文、不進入編輯 | text="Alpha"；editing=false | PASS
+| Electron | Shift+Space（預備） | 單選 | 進入編輯、原文保留 | text="Alpha"；editing=true | PASS
+| Electron | Esc 取消後重新預備 | 單選 | 取消編輯後節點仍是預備狀態 | text="Alpha"；armed=true | PASS
+| Electron | Enter 提交未改字後重新預備 | 單選 | 未變更的提交也要重新預備 | armed=true | PASS
+| Electron | 工具列加下級後直接打字 | 單選 | 按鈕新增的節點要能直接輸入 | 選取=node_6p696w4d4u620t2c；text="x" | PASS
+| Electron | End 鍵不改變預備全選 | 單選 | 游標鍵不得偷偷改掉全選範圍 | text="x" | PASS
+| Electron | 概要單節點 | 單選 | 只選一個節點也能建概要 | 括號數=1 | PASS
+| Electron | 概要不壓子節點（組織圖） | 多選 | 括號放在覆蓋節點整棵子樹的外側 | 壓到的節點=無 | PASS
+| Electron | 概要邊界拖曳：魚骨圖 | 多選 | 陣列與畫面反向時把手仍照畫面位置運作 | 括號左緣=405（c 左緣=410） | PASS
+| Electron | 右鍵框選後快捷鍵仍可用（焦點原在面板） | 單選 | 框選會把焦點拉回畫布 | 選取=a,a1,b；節點數 6→3 | PASS
+| Electron | 右鍵拖出再拉回原點 | 單選 | 曾超過門檻就算拖曳：不開選單 | 選單開啟=false | PASS
+| Electron | 編輯中右鍵框選 | 單選 | 框選會結束進行中的編輯 | a 編輯中=false；選取=c,d | PASS
+| Electron | 右鍵拖曳圈選 | 未選取 | 按住右鍵拖出矩形圈選節點，放開不彈選單、畫布不平移 | 選取=a,a1,b；選單開啟=false；畫布位移=false | PASS
+| Electron | 右鍵單擊 | 未選取 | 右鍵按下即放（沒有拖曳）仍打開右鍵選單 | 選單開啟=true | PASS
 | Electron | Alt+P | 單選 | 打開圖片 file chooser | file input click=true；filechooser=true | PASS
 | Electron | F4 | 單選 | 進入關聯線選點模式，點目標後建立線 | picking=true；relation=1 | PASS
+| Electron | 關聯線控制點拖曳 | 單選 | 拖曳控制點改變弧度，畫布不平移 | 線形改變=true；畫布位移=false | PASS
 | Electron | Ctrl+Alt+R | 單選 | 評論佔位功能提供可見回饋 | toast=此功能即將推出 | PASS
 | Electron | 雙擊空白畫布 | 畫布 | 建立懸浮節點並保持在編輯狀態 | 節點 6→7；editing=1；floating=1 | PASS
 | Electron | 雙擊空白畫布 → 輸入 | 畫布 | 輸入中停頓超過存檔週期仍留在編輯狀態且文字完整 | 停頓後 editing=1；已存檔=true | PASS
@@ -180,7 +220,7 @@
 | Chromium | Ctrl+F [KeyF] | IME 模式／畫布 | 打開尋找與取代面板並聚焦搜尋框 | {"open":true,"focused":true} | PASS
 | Chromium | Shift+Alt+H [KeyH] | IME 模式／畫布 | 切換歷史版本 drawer | history hidden=null | PASS
 | Chromium | Shift+Alt+F [KeyF] | IME 模式／畫布 | 新增並選取懸浮節點 | 節點=7；floating=1 | PASS
-| Chromium | 直接輸入 [KeyM] | IME 模式／單選 | 以空 seed 進入 contenteditable，保留後續 composition 流 | editing=true；文字="" | PASS
+| Chromium | 直接輸入 [KeyM] | IME 模式／單選 | 選取後文字元素已預備輸入（焦點就緒、原文全選），compositionstart 升格為編輯 | armed={"editable":true,"focused":true,"isEditingClass":false,"selectedAll":true}；editing=true；文字="Alpha" | PASS
 | Electron | Ctrl+Alt+C / Ctrl+Alt+V [KeyC] | IME 模式／單選 | 把來源節點樣式貼到目標節點 | B shape=diamond | PASS
 | Electron | Ctrl+Alt+C / Ctrl+Alt+V [KeyV] | IME 模式／單選 | 把來源節點樣式貼到目標節點 | B shape=diamond | PASS
 | Electron | Ctrl+Alt+K [KeyK] | IME 模式／單選 | 開啟連結輸入 dialog | 連結 dialog 未開啟 | PASS
