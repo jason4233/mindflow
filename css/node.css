@@ -114,3 +114,14 @@
 @media (prefers-reduced-motion: reduce) {
   .collapse-control { transition-duration: 0ms; }
 }
+
+/* 預備輸入（armed）：文字元素已可輸入、原文全選，但視覺上維持「選取」而非「編輯」 */
+.mind-node.is-armed .mind-node__text {
+  caret-color: transparent;
+  outline: none;
+}
+.mind-node.is-armed .mind-node__text::selection,
+.mind-node.is-armed .mind-node__text *::selection {
+  background: transparent;
+  color: inherit;
+}

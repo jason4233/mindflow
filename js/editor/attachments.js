@@ -650,6 +650,7 @@ export function calculateImageResize(original, delta, corner = 'se') {
 }
 
 function beginImageResize(event, ctx, nodeId, original, wrapper, corner = 'se') {
+  if (event.button !== 0) return
   event.preventDefault()
   event.stopPropagation()
   const pointerId = event.pointerId
@@ -706,6 +707,8 @@ function ensureFeatureStyles() {
 
 function isEditableTarget(target) {
   if (!(target instanceof HTMLElement)) return false
+  // 預備輸入（is-armed）的節點文字雖是 contenteditable，語意仍是「選取」：Ctrl+V 仍貼節點／圖片／連結
+  if (target.closest('.mind-node.is-armed') && !target.closest('.mind-node.is-editing')) return false
   if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(target.tagName)) return true
   // Chromium 在非文字焦點下可能把 native paste 的 target 指向 canvas 內最後一次文字選取
   // 所在的 button（例如概要標籤）；這種情況仍應貼到目前節點。畫布外按鈕則保持原生行為。

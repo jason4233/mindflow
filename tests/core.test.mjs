@@ -883,6 +883,52 @@ test('孤兒 keyup 救援：系統全域熱鍵吞掉 keydown 時，Ctrl+Alt+M �
   assert.equal(calls.length, 7, '編輯中不得派發 insertNote')
 })
 
+test('預備輸入（armed）的節點文字：快捷鍵照常派發、一般字元交給瀏覽器原生輸入', () => {
+  const calls = []
+  const armedTarget = { tagName: 'DIV', isContentEditable: true, closest: () => null }
+  let started = []
+  const controller = new KeyboardController({
+    doc: createDefaultDoc(), manager: new CommandManager(),
+    selection: { primaryId: 'x', getSelectedIds: () => ['x'] },
+    viewport: {},
+    edit: {
+      isEditing: false,
+      isArmedTarget: target => target === armedTarget,
+      start: (id, seed) => { started.push([id, seed]); return true }
+    },
+    save: () => true, getPositions: () => new Map()
+  })
+  // controller 建構時會註冊真正的 insertChild，stub 必須在其後覆蓋
+  registerAction('insertChild', () => { calls.push('insertChild'); return true })
+  const makeEvent = props => ({
+    key: '', code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, target: armedTarget,
+    defaultPrevented: false, preventDefault() { this.defaultPrevented = true }, ...props
+  })
+
+  // Tab 落在預備元素上：不是表單焦點，insertChild 要派發
+  const tab = makeEvent({ key: 'Tab', code: 'Tab' })
+  controller.handleKeydown(tab)
+  assert.deepEqual(calls, ['insertChild'], '預備元素上的快捷鍵必須照常派發')
+  assert.equal(tab.defaultPrevented, true)
+
+  // 一般字元：不得 preventDefault、不得再以該字元種字（瀏覽器原生插入會取代全選原文）
+  const letter = makeEvent({ key: 's', code: 'KeyS' })
+  controller.handleKeydown(letter)
+  assert.equal(letter.defaultPrevented, false, '不得攔截原生輸入，否則輸入法組字會被取消')
+  assert.deepEqual(started, [], '不得再用英文字母當種子（這正是「第一個字變英文」的根因）')
+
+  // 輸入法第一鍵（Process）同樣交給原生組字
+  const process = makeEvent({ key: 'Process', code: 'KeyS' })
+  controller.handleKeydown(process)
+  assert.equal(process.defaultPrevented, false)
+  assert.deepEqual(started, [])
+
+  // 對照：非預備的一般 contenteditable（真正的表單）仍是 formMode，不派發 insertChild
+  const form = makeEvent({ key: 'Tab', code: 'Tab', target: { tagName: 'INPUT', isContentEditable: false, closest: () => null } })
+  controller.handleKeydown(form)
+  assert.deepEqual(calls, ['insertChild'], '真正的表單焦點不得派發節點快捷鍵')
+})
+
 test('孤兒 keyup 救援的排除規則：只救已武裝的 Ctrl／Alt 和弦，Win／AltGr／單鍵／paste 一律不救', () => {
   const up = props => ({ key: '', code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...props })
   const armed = new Set(['control', 'alt'])

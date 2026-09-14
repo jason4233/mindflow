@@ -124,9 +124,43 @@ const edit = new EditController({
   nodesLayer: elements.nodesLayer,
   onCommit: (id, text) => manager.execute(updateText(doc, id, text)),
   // 編輯中每次輸入都排一次快照存檔（有 max-wait，連續輸入不會被無限延後）
-  onLiveChange: () => scheduleLiveSave()
+  onLiveChange: () => scheduleLiveSave(),
+  // 編輯結束（含 Esc 取消、沒改字的 Enter）後重新預備：這兩條路徑沒有 render，不會經過 selectionchange
+  onSessionEnd: () => syncArmedInput()
 })
 edit.bindEvents()
+
+// 預備輸入（armed）接線：節點被選取且沒有在編輯時，讓它的文字元素先取得焦點，
+// 中文輸入法才能從第一個鍵就組字。規則：
+// - 指標按下時先解除（dnd 以 isContentEditable 判斷是否可拖，且 mousedown 預設動作會搶焦點），
+//   指標放開（click 已派發）後再重新預備。
+// - 焦點若在面板／對話框等其他控制項上，不搶焦點（否則使用者點色票時游標會跳回節點）。
+// - 觸控裝置不預備：聚焦 contenteditable 會彈出軟鍵盤。
+const COARSE_POINTER = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+let pointerHeldInCanvas = false
+function focusIsFree() {
+  const active = document.activeElement
+  // 工具列按鈕（加下級、加同級…）按完焦點會留在按鈕上，但使用者下一步就是打字：視為可搶
+  return !active || active === document.body || active === elements.canvas || elements.nodesLayer.contains(active)
+    || Boolean(active.closest?.('.toolbar-capsule'))
+}
+function syncArmedInput() {
+  if (COARSE_POINTER || pointerHeldInCanvas || edit.isEditing) return
+  const id = selection?.primaryId
+  if (!id || selection.ids.size !== 1 || !focusIsFree()) { edit.disarm(); return }
+  edit.arm(id)
+}
+window.addEventListener('mindflow:selectionchange', syncArmedInput)
+elements.canvas.addEventListener('pointerdown', () => { pointerHeldInCanvas = true; edit.disarm() }, true)
+window.addEventListener('pointerup', () => {
+  if (!pointerHeldInCanvas) return
+  pointerHeldInCanvas = false
+  // click 在 pointerup 之後同步派發；延到下一個 task 再預備，避免 mousedown/click 預設動作搶走焦點
+  window.setTimeout(syncArmedInput, 0)
+})
+window.addEventListener('pointercancel', () => { pointerHeldInCanvas = false })
+// 對話框／面板關閉後焦點回到畫布時，把單選節點重新預備（否則下一個字走回舊的 keydown 種字路徑）
+elements.canvas.addEventListener('focus', () => window.setTimeout(syncArmedInput, 0))
 
 const keyboard = new KeyboardController({
   doc,

@@ -16,12 +16,13 @@ export function shouldCommitBeforeGlobalAction(action) {
 }
 
 export class EditController {
-  constructor({ nodesLayer, onCommit, onLiveChange = null }) {
+  constructor({ nodesLayer, onCommit, onLiveChange = null, onSessionEnd = null }) {
     this.nodesLayer = nodesLayer
     this.onCommit = onCommit
     // 輸入時通知外層排存檔：改成「存檔不結束編輯」之後，
     // 若沒有這條通知，使用者可以一直打字但只有第一次快照被存下來。
     this.onLiveChange = onLiveChange
+    this.onSessionEnd = onSessionEnd
     this.session = null
     this.toolbar = document.querySelector('#text-toolbar')
     this.bindToolbar()
@@ -36,8 +37,125 @@ export class EditController {
     })
   }
 
+  // 預備輸入：節點一被選取就把它的文字元素變成可輸入（焦點就緒、原文全選、游標與反白透明），
+  // 這樣中文輸入法從**第一個鍵**就能組字。之前焦點停在不可編輯的畫布，第一個鍵會以普通英文
+  // 字母送達（瀏覽器不會把它交給輸入法），app 再拿那個字母當種子 → 第一個字變英文。
+  // 第一個真正的輸入（compositionstart／beforeinput）才升格成正式 session；快捷鍵仍照常派發。
+  arm(id) {
+    if (this.session) return false
+    if (this.armed?.id === id && this.armed.textElement.isConnected) return true
+    this.disarm()
+    const nodeElement = this.nodesLayer.querySelector(`[data-node-id="${CSS.escape(id)}"]`)
+    const textElement = nodeElement?.querySelector('.mind-node__text')
+    if (!textElement) return false
+    const original = textElement.textContent === '\u200b' ? '' : textElement.innerText
+    const armed = { id, nodeElement, textElement, original, originalHtml: textElement.innerHTML }
+    armed.compositionStart = () => this.promoteArmed()
+    armed.beforeInput = event => this.handleArmedBeforeInput(event)
+    armed.blur = () => queueMicrotask(() => {
+      if (this.armed === armed && document.activeElement !== textElement) this.disarm()
+    })
+    this.armed = armed
+    nodeElement.classList.add('is-armed')
+    textElement.contentEditable = 'true'
+    textElement.spellcheck = false
+    textElement.addEventListener('compositionstart', armed.compositionStart)
+    textElement.addEventListener('beforeinput', armed.beforeInput)
+    textElement.addEventListener('blur', armed.blur)
+    textElement.focus({ preventScroll: true })
+    // 全選：第一個輸入（含輸入法組字）直接取代原文＝官方「選中後直接輸入會清空原文」語意
+    placeCaret(textElement, true)
+    return true
+  }
+
+  disarm() {
+    const armed = this.armed
+    if (!armed) return false
+    this.armed = null
+    armed.textElement.removeEventListener('compositionstart', armed.compositionStart)
+    armed.textElement.removeEventListener('beforeinput', armed.beforeInput)
+    armed.textElement.removeEventListener('blur', armed.blur)
+    armed.nodeElement.classList.remove('is-armed')
+    // 沒升格就結束：把 DOM 還原成非編輯（元素可能已被重繪拔掉，操作是安全的）
+    armed.textElement.contentEditable = 'false'
+    if (document.activeElement === armed.textElement) armed.textElement.blur()
+    return true
+  }
+
+  isArmedTarget(target) {
+    return Boolean(this.armed && target instanceof Node && this.armed.textElement.contains(target))
+  }
+
+  handleArmedBeforeInput(event) {
+    const type = event.inputType || ''
+    // 貼上／拖放／刪除／undo／換行／格式 在「選取」語意下都不是打字：維持既有的節點級行為，不進入編輯
+    // （Shift+Enter 若放行會以換行取代全選的原文＝清空節點；Ctrl+B/I/U 在選取狀態原本就是 no-op）
+    if (/^(insertFromPaste|insertFromDrop|delete|history|insertLineBreak|insertParagraph|format)/u.test(type)) {
+      event.preventDefault()
+      return
+    }
+    // 空白鍵（含 Shift+Space）＝「進入編輯、游標放尾端」，不能拿一個空白取代原文
+    if (type === 'insertText' && event.data === ' ') {
+      event.preventDefault()
+      this.promoteArmed()
+      if (this.session) placeCaret(this.session.textElement, false)
+      return
+    }
+    this.promoteArmed()
+  }
+
+  // 預備 → 正式 session：不動 DOM、不動焦點、不動全選範圍，瀏覽器接著把輸入插進去取代原文。
+  promoteArmed() {
+    const armed = this.armed
+    if (!armed) return false
+    this.armed = null
+    armed.textElement.removeEventListener('compositionstart', armed.compositionStart)
+    armed.textElement.removeEventListener('beforeinput', armed.beforeInput)
+    armed.textElement.removeEventListener('blur', armed.blur)
+    armed.nodeElement.classList.remove('is-armed')
+    this.session = {
+      id: armed.id,
+      nodeElement: armed.nodeElement,
+      textElement: armed.textElement,
+      original: armed.original,
+      originalHtml: armed.originalHtml,
+      finishing: false,
+      lastRange: null,
+      pendingStyle: {},
+      pendingMetadata: {}
+    }
+    armed.nodeElement.classList.add('is-editing')
+    this.captureRange()
+    this.showToolbar(armed.nodeElement)
+    this.attachSessionListeners()
+    return true
+  }
+
+  attachSessionListeners() {
+    const { textElement } = this.session
+    const keydown = event => this.handleEditingKeydown(event)
+    const blur = event => {
+      if (this.toolbar?.contains(event.relatedTarget)) return
+      queueMicrotask(() => {
+        if (this.session && !this.toolbar?.contains(document.activeElement)) this.commit()
+      })
+    }
+    const selectionChange = () => this.captureRange()
+    const liveChange = () => { if (typeof this.onLiveChange === 'function') this.onLiveChange() }
+    this.session.keydown = keydown
+    this.session.blur = blur
+    this.session.selectionChange = selectionChange
+    this.session.liveChange = liveChange
+    textElement.addEventListener('keydown', keydown)
+    textElement.addEventListener('blur', blur)
+    textElement.addEventListener('input', liveChange)
+    textElement.addEventListener('compositionend', liveChange)
+    document.addEventListener('selectionchange', selectionChange)
+  }
+
   start(id, initialText = null) {
     if (this.session) this.commit()
+    this.disarm()
     const nodeElement = this.nodesLayer.querySelector(`[data-node-id="${CSS.escape(id)}"]`)
     const textElement = nodeElement?.querySelector('.mind-node__text')
     if (!textElement) return false
@@ -62,25 +180,7 @@ export class EditController {
     placeCaret(textElement, initialText === null)
     this.captureRange()
     this.showToolbar(nodeElement)
-
-    const keydown = event => this.handleEditingKeydown(event)
-    const blur = event => {
-      if (this.toolbar?.contains(event.relatedTarget)) return
-      queueMicrotask(() => {
-        if (this.session && !this.toolbar?.contains(document.activeElement)) this.commit()
-      })
-    }
-    const selectionChange = () => this.captureRange()
-    const liveChange = () => { if (typeof this.onLiveChange === 'function') this.onLiveChange() }
-    this.session.keydown = keydown
-    this.session.blur = blur
-    this.session.selectionChange = selectionChange
-    this.session.liveChange = liveChange
-    textElement.addEventListener('keydown', keydown)
-    textElement.addEventListener('blur', blur)
-    textElement.addEventListener('input', liveChange)
-    textElement.addEventListener('compositionend', liveChange)
-    document.addEventListener('selectionchange', selectionChange)
+    this.attachSessionListeners()
     return true
   }
 
@@ -172,6 +272,9 @@ export class EditController {
     session.nodeElement.classList.remove('is-editing')
     if (this.toolbar) this.toolbar.hidden = true
     this.session = null
+    // 編輯結束（提交或取消）都通知外層：文字沒變時不會有 render／selectionchange，
+    // 若不通知，節點會停在「選取但未預備」，下一個字又走回舊的 keydown 種字路徑（第一個字變英文）。
+    if (typeof this.onSessionEnd === 'function') queueMicrotask(() => this.onSessionEnd())
   }
 
   bindToolbar() {
@@ -297,6 +400,10 @@ export class EditController {
 
   get isEditing() {
     return Boolean(this.session)
+  }
+
+  get isArmed() {
+    return Boolean(this.armed)
   }
 }
 

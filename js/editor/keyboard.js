@@ -191,7 +191,7 @@ export class KeyboardController {
     }
     if (!binding) return
     if (event.defaultPrevented || event.isComposing) return
-    const formMode = this.edit.isEditing || isFormTarget(event.target)
+    const formMode = this.edit.isEditing || (isFormTarget(event.target) && !this.edit.isArmedTarget?.(event.target))
     if (formMode && !FORM_GLOBAL_ACTIONS.has(binding.action)) return
     if (!hasAction(binding.action)) return
     // 不 preventDefault：keyup 沒有需要抑制的瀏覽器預設行為，而 Electron 只會收到頁面未處理的
@@ -212,7 +212,9 @@ export class KeyboardController {
   }
 
   handleKeydown(event) {
-    const formMode = this.edit.isEditing || isFormTarget(event.target)
+    // 預備輸入中的節點文字是 contenteditable，但語意上仍是「選取狀態」：快捷鍵照常派發。
+    const armedTarget = Boolean(this.edit.isArmedTarget?.(event.target))
+    const formMode = this.edit.isEditing || (isFormTarget(event.target) && !armedTarget)
     // 純大綱模式沒有 map 導覽語意；保留方向鍵給大綱本身，避免改到隱藏畫布的 selection。
     if (this.selection.canvas?.hidden && event.key.startsWith('Arrow')) return
     if (dispatchGlobalShortcut(event, { formMode })) { this.pendingImeChord = null; return }
@@ -229,6 +231,16 @@ export class KeyboardController {
       return
     }
     if (formMode) return
+    // 預備輸入中：一般字元與輸入法組字由瀏覽器原生插入（全選範圍會被取代），
+    // 第一個輸入才由 EditController 升格成正式編輯；這裡不得 preventDefault、不得再種字。
+    if (armedTarget) {
+      // 但「選取」語意下游標鍵不得偷偷改掉隱形的全選範圍（Home/End/PageUp/PageDown、帶修飾鍵的方向鍵），
+      // 否則之後打字會變成插在原文前後而不是取代原文
+      const cursorKey = /^(Home|End|PageUp|PageDown)$/u.test(event.key)
+        || (event.key.startsWith('Arrow') && (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey))
+      if (cursorKey) event.preventDefault()
+      return
+    }
 
     const hasCommandModifier = event.ctrlKey || event.metaKey || event.altKey
     const isImeCompositionKey = event.key === 'Process'
