@@ -799,6 +799,41 @@ const MATRIX_CASES = [
     const editing = await h.page.locator('#nodes-layer [data-node-id="a"] .mind-node__text[contenteditable="true"]').count()
     return h.expect(await h.countNodes() === before && editing === 1, `節點 ${before}→${await h.countNodes()}；editing=${editing}`)
   }, { electron: true }),
+  // 空白處 pointerdown 會被畫布平移 preventDefault，焦點不會離開編輯中的節點；以前點空白什麼都不會發生
+  matrix('點擊空白畫布', '編輯中', '完成編輯並取消選取；之後打字不改節點，雙擊才再進入編輯', async h => {
+    await h.edit('a')
+    await h.page.keyboard.type('市場')
+    await h.clickBlankCanvas()
+    const editingAfterClick = await h.isEditing('a')
+    const selectedAfterClick = await h.selected()
+    const textAfterClick = await h.nodeText('a')
+    await h.page.keyboard.type('Q')
+    const textAfterTyping = await h.nodeText('a')
+    await h.edit('a')
+    const reedit = await h.isEditing('a')
+    return h.expect(!editingAfterClick && selectedAfterClick.length === 0 && textAfterClick === '市場' && textAfterTyping === '市場' && reedit,
+      `editing=${editingAfterClick}；選取=${selectedAfterClick}；文字=${textAfterClick}→${textAfterTyping}；雙擊再編輯=${reedit}`)
+  }, { electron: true }),
+  matrix('點擊空白畫布', '單選', '取消選取', async h => {
+    await h.select('a')
+    await h.clickBlankCanvas()
+    return h.expect((await h.selected()).length === 0 && !await h.isArmed('a'), `選取=${await h.selected()}；armed=${await h.isArmed('a')}`)
+  }, { electron: true }),
+  matrix('拖曳空白畫布', '編輯中', '平移畫布，編輯與選取都保留', async h => {
+    await h.edit('a')
+    await h.page.keyboard.type('市場')
+    const point = await h.blankCanvasPoint()
+    const before = await h.node('a').boundingBox()
+    await h.page.mouse.move(point.x, point.y)
+    await h.page.mouse.down()
+    await h.page.mouse.move(point.x + 60, point.y + 40, { steps: 6 })
+    await h.page.mouse.up()
+    const after = await h.node('a').boundingBox()
+    await h.page.keyboard.type('策略')
+    const panned = Math.abs(after.x - before.x - 60) < 2 && Math.abs(after.y - before.y - 40) < 2
+    return h.expect(panned && await h.isEditing('a') && (await h.selected())[0] === 'a' && await h.nodeText('a') === '市場策略',
+      `平移=${panned}；editing=${await h.isEditing('a')}；選取=${await h.selected()}；文字=${await h.nodeText('a')}`)
+  }, { electron: true }),
 
   ...[
     ['↑', 'ArrowUp', 'b', axisCheck('y', -1)],
@@ -1254,7 +1289,7 @@ function createHarness({ page, baseURL, connectCDP }) {
     contextMenuOpen: () => page.locator('.context-menu').evaluate(menu => !menu.hidden && getComputedStyle(menu).display !== 'none').catch(() => false),
     // 在畫布左上角一塊確定空白的位置雙擊：先斷言該點的 elementFromPoint 真的是基礎層，
     // 免得版面改動後測試在節點上雙擊卻仍然「通過」。
-    async dblclickBlankCanvas() {
+    async blankCanvasPoint() {
       const box = await page.locator('#canvas').boundingBox()
       const point = { x: box.x + 160, y: box.y + 120 }
       const target = await page.evaluate(p => {
@@ -1262,9 +1297,17 @@ function createHarness({ page, baseURL, connectCDP }) {
         return el ? `${el.tagName}#${el.id}` : 'null'
       }, point)
       if (!['SECTION#canvas', 'DIV#world', 'DIV#nodes-layer', 'svg#connections-layer'].includes(target)) {
-        throw new MatrixFailure(`雙擊點不是空白基礎層：${target}`)
+        throw new MatrixFailure(`點擊點不是空白基礎層：${target}`)
       }
+      return point
+    },
+    async dblclickBlankCanvas() {
+      const point = await this.blankCanvasPoint()
       await page.mouse.dblclick(point.x, point.y)
+    },
+    async clickBlankCanvas() {
+      const point = await this.blankCanvasPoint()
+      await page.mouse.click(point.x, point.y)
     },
     node: id => page.locator(`#nodes-layer [data-node-id="${id}"]`),
     hasNode: id => page.locator(`#nodes-layer [data-node-id="${id}"]`).count().then(count => count > 0),
