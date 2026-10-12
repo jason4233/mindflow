@@ -271,6 +271,11 @@ function findNode(root, id) {
 }
 
 async function loadPlaywright() {
+  try {
+    return await import('playwright')
+  } catch {
+    // 與快捷鍵矩陣相同：沒裝在 node_modules 時再退回 Playwright CLI 的 npx cache。
+  }
   const cacheRoot = join(process.env.LOCALAPPDATA || '', 'npm-cache', '_npx')
   let candidates = findCachedPlaywright(cacheRoot)
   if (candidates.length === 0) {
@@ -293,10 +298,11 @@ function findCachedPlaywright(cacheRoot) {
 
 function findSystemChromium() {
   const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
-  ]
+  ].filter(Boolean)
   const executable = candidates.find(existsSync)
   if (!executable) throw new Error('找不到 Chrome / Edge executable')
   return executable

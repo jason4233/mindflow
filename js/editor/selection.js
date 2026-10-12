@@ -135,6 +135,9 @@ export class SelectionManager {
         ? { x: event.clientX, y: event.clientY, pointerType: event.pointerType, onBlank: this.isBlankTarget(event.target) }
         : null
     }, true)
+    // touch.js 在第二下點按的 pointerup 裡就派發合成的 dblclick（建立懸浮節點並進入編輯），原生 click 隨後才到；
+    // 這一下不能再算空白單擊，否則剛建立的節點會立刻被結束編輯、取消選取。滑鼠的原生 dblclick 在兩個 click 之後才來，不受影響。
+    this.canvas.addEventListener('dblclick', () => { this.blankPress = null }, true)
     this.canvas.addEventListener('click', event => {
       const press = this.blankPress
       this.blankPress = null
