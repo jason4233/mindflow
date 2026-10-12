@@ -819,6 +819,17 @@ const MATRIX_CASES = [
     await h.clickBlankCanvas()
     return h.expect((await h.selected()).length === 0 && !await h.isArmed('a'), `選取=${await h.selected()}；armed=${await h.isArmed('a')}`)
   }, { electron: true }),
+  matrix('點擊空白畫布', '關聯線選取中', '取消關聯線選取（控制點一併消失）', async h => {
+    await h.select('a')
+    await h.press('F4')
+    await h.select('b')
+    await h.page.waitForTimeout(200)
+    const before = await h.page.locator('.relation-overlay.is-selected').count()
+    await h.clickBlankCanvas()
+    const after = await h.page.locator('.relation-overlay.is-selected').count()
+    const handles = await h.page.locator('#connections-layer .relation-control').count()
+    return h.expect(before === 1 && after === 0 && handles === 0, `選取中關聯線 ${before}→${after}；控制點=${handles}`)
+  }, { electron: true }),
   matrix('拖曳空白畫布', '編輯中', '平移畫布，編輯與選取都保留', async h => {
     await h.edit('a')
     await h.page.keyboard.type('市場')

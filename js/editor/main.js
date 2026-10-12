@@ -162,6 +162,11 @@ function finishEditingFromBlankClick() {
   // 先清選取再 commit：commit 會重繪並觸發 selectionchange，若節點仍被選取就會重新預備、把焦點搶回文字元素
   selection.clear()
   if (edit.isEditing) edit.commit()
+  // 選取中的關聯線／概要也一併取消：它們的選取狀態不在 SelectionManager 裡，selection.clear() 管不到
+  if (featureContext.featureState?.selectedOverlay) {
+    featureContext.featureState.selectedOverlay = null
+    renderAll()
+  }
 }
 window.addEventListener('mindflow:selectionchange', syncArmedInput)
 elements.canvas.addEventListener('pointerdown', () => { pointerHeldInCanvas = true; edit.disarm() }, true)
