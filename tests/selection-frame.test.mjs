@@ -7,6 +7,7 @@ import {
   getSelectionFrameRect,
   isRectInSelectionFrame,
   hasFrameDragExceeded,
+  isBlankCanvasClick,
   shouldStartSelectionFrame,
   suppressNextContextMenu
 } from '../js/editor/selection.js'
@@ -83,4 +84,37 @@ test('框選命中節點', () => {
   const outside = isRectInSelectionFrame({ x: 100, y: 100, w: 10, h: 10 }, frame)
   assert.equal(inside, true)
   assert.equal(outside, false)
+})
+
+// ── 2026-10-12：節點打完字後點旁邊空白處＝完成編輯並取消選取；拖曳空白（平移）不算 ──
+const blankPress = { x: 100, y: 100, pointerType: 'mouse', onBlank: true }
+
+test('空白處左鍵單擊算取消選取', () => {
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: blankPress, x: 102, y: 101 }), true)
+})
+
+test('拖曳空白平移畫布不算單擊', () => {
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: blankPress, x: 160, y: 140 }), false)
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: blankPress, x: 104, y: 104 }), false, '滑鼠超過 4px 就是拖曳')
+})
+
+test('觸控點按容忍手指抖動，但滑動仍不算', () => {
+  const touchPress = { ...blankPress, pointerType: 'touch' }
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: touchPress, x: 106, y: 105 }), true, '8px 內仍是點按')
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: touchPress, x: 110, y: 108 }), false)
+})
+
+test('按下或放開不在空白處都不算', () => {
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: false, press: blankPress, x: 100, y: 100 }), false, '放開在節點／控制項上')
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: { ...blankPress, onBlank: false }, x: 100, y: 100 }), false, '從節點按下（拖曳節點）')
+  assert.equal(isBlankCanvasClick({ button: 0, onBlank: true, press: null, x: 100, y: 100 }), false, '沒有記到按下點')
+})
+
+test('Ctrl/Meta+點擊（框選）、手形工具、非左鍵、已被攔下的 click 都不取消選取', () => {
+  const base = { button: 0, onBlank: true, press: blankPress, x: 100, y: 100 }
+  assert.equal(isBlankCanvasClick({ ...base, ctrlKey: true }), false)
+  assert.equal(isBlankCanvasClick({ ...base, metaKey: true }), false)
+  assert.equal(isBlankCanvasClick({ ...base, isPanMode: true }), false)
+  assert.equal(isBlankCanvasClick({ ...base, button: 1 }), false)
+  assert.equal(isBlankCanvasClick({ ...base, defaultPrevented: true }), false)
 })

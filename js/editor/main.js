@@ -117,7 +117,10 @@ selection = new SelectionManager({
   getDoc: () => doc,
   getPositions: () => positions,
   viewport,
-  isPanMode: () => viewport.spacePressed
+  isPanMode: () => viewport.spacePressed,
+  world: elements.world,
+  svgLayer: elements.svgLayer,
+  onBlankClick: () => finishEditingFromBlankClick()
 })
 
 const edit = new EditController({
@@ -149,6 +152,16 @@ function syncArmedInput() {
   const id = selection?.primaryId
   if (!id || selection.ids.size !== 1 || !focusIsFree()) { edit.disarm(); return }
   edit.arm(id)
+}
+// 在空白處單擊＝完成編輯並取消選取，要再編輯就雙擊節點。
+// 不能只靠 blur：viewport 為了平移會在空白處的 pointerdown 上 preventDefault，焦點根本不會離開編輯中的節點。
+function finishEditingFromBlankClick() {
+  // 先把焦點交回畫布再 commit：離開焦點時瀏覽器會先把輸入法組字中的文字寫進 DOM，commit 才讀得到；
+  // 之後快捷鍵（Ctrl+Z 等）也照常由畫布接收
+  if (document.activeElement !== elements.canvas) elements.canvas.focus({ preventScroll: true })
+  // 先清選取再 commit：commit 會重繪並觸發 selectionchange，若節點仍被選取就會重新預備、把焦點搶回文字元素
+  selection.clear()
+  if (edit.isEditing) edit.commit()
 }
 window.addEventListener('mindflow:selectionchange', syncArmedInput)
 elements.canvas.addEventListener('pointerdown', () => { pointerHeldInCanvas = true; edit.disarm() }, true)

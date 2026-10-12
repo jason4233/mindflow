@@ -4,6 +4,8 @@
 import { visibleNodeIds } from './model.js'
 
 const FRAME_DRAG_THRESHOLD = 4
+// 觸控點按的位移容忍與 touch.js 的 DEFAULT_TAP_DISTANCE 一致：手指點按天生會抖幾個像素
+const TOUCH_TAP_SLOP = 10
 // 右鍵框選後要吃掉緊接著的 contextmenu（Windows 在右鍵放開時才送）。用布林、不用時間窗：
 // 門檻一超過就設（拖曳中先放右鍵也吃得到）、contextmenu 消費一次即清、下一次按下時清掉殘留。
 let contextMenuSuppressed = false
@@ -36,6 +38,24 @@ export function hasFrameDragExceeded(start, current, threshold = FRAME_DRAG_THRE
   return Math.hypot(current.x - start.x, current.y - start.y) >= threshold
 }
 
+// 空白處「單擊」才算取消選取：按下與放開都在空白、幾乎沒移動。
+// 拖曳空白是平移畫布，平移完不能把選取（或進行中的編輯）丟掉；Ctrl/Meta+點擊屬於框選。
+export function isBlankCanvasClick({
+  button,
+  ctrlKey = false,
+  metaKey = false,
+  isPanMode = false,
+  defaultPrevented = false,
+  onBlank = false,
+  press = null,
+  x,
+  y
+}) {
+  if (button !== 0 || ctrlKey || metaKey || isPanMode || defaultPrevented || !onBlank || !press?.onBlank) return false
+  const threshold = press.pointerType === 'touch' ? TOUCH_TAP_SLOP : FRAME_DRAG_THRESHOLD
+  return !hasFrameDragExceeded(press, { x, y }, threshold)
+}
+
 export function getSelectionFrameRect(start, end) {
   return {
     left: Math.min(start.x, end.x),
@@ -64,7 +84,18 @@ export function clearContextMenuSuppression() {
 }
 
 export class SelectionManager {
-  constructor({ canvas, nodesLayer, selectionRectangle, getDoc, getPositions, viewport = null, isPanMode = () => false }) {
+  constructor({
+    canvas,
+    nodesLayer,
+    selectionRectangle,
+    getDoc,
+    getPositions,
+    viewport = null,
+    isPanMode = () => false,
+    world = null,
+    svgLayer = null,
+    onBlankClick = null
+  }) {
     this.canvas = canvas
     this.nodesLayer = nodesLayer
     this.selectionRectangle = selectionRectangle
@@ -72,6 +103,10 @@ export class SelectionManager {
     this.getPositions = getPositions
     this.viewport = viewport
     this.isPanMode = isPanMode
+    // 與 floating.js 雙擊空白建立懸浮節點同一份 allowlist：節點、關聯線、概要與畫布 UI 都是這幾層的子元素
+    this.blankTargets = [canvas, world, nodesLayer, svgLayer].filter(Boolean)
+    this.onBlankClick = onBlankClick
+    this.blankPress = null
     this.ids = new Set()
     this.primaryId = null
     this.frame = null
@@ -93,6 +128,31 @@ export class SelectionManager {
       else this.set([id])
     })
 
+    // 空白處單擊＝取消選取（外層可先結束進行中的編輯）。按下點記在 window capture：
+    // 觸控在空白處的按下會被 touch.js 在 window capture 攔下，canvas 自己收不到 pointerdown。
+    window.addEventListener('pointerdown', event => {
+      this.blankPress = event.isPrimary
+        ? { x: event.clientX, y: event.clientY, pointerType: event.pointerType, onBlank: this.isBlankTarget(event.target) }
+        : null
+    }, true)
+    this.canvas.addEventListener('click', event => {
+      const press = this.blankPress
+      this.blankPress = null
+      if (!isBlankCanvasClick({
+        button: event.button,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        isPanMode: this.isPanMode(),
+        defaultPrevented: event.defaultPrevented,
+        onBlank: this.isBlankTarget(event.target),
+        press,
+        x: event.clientX,
+        y: event.clientY
+      })) return
+      if (typeof this.onBlankClick === 'function') this.onBlankClick()
+      else this.clear()
+    })
+
     this.canvas.addEventListener('pointerdown', event => {
       // 新的一次按下：清掉上一次框選殘留的選單抑制（框選進行中的和弦按鍵除外）
       if (!this.frame) clearContextMenuSuppression()
@@ -108,6 +168,10 @@ export class SelectionManager {
       })) return
       this.startFrame(event)
     })
+  }
+
+  isBlankTarget(target) {
+    return this.blankTargets.includes(target)
   }
 
   handleCommandSelection(event) {
