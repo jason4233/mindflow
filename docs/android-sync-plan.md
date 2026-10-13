@@ -147,7 +147,7 @@ Node { id:'node_<16碼>', text, richText(HTML|null), children[](順序有意義)
 
 - **可行性已被證明**：現有網頁 UI 不改一行就跑在 Capacitor 裡，建置只是「複製檔案＋改寫 CSP」，CI 已能產出可安裝 APK。
 - **不需要打包器也能用外掛**：Capacitor 會在原生端產生 `window.Capacitor.Plugins.<名稱>` 代理，現有的 Preferences 已經這樣用（`js/sync-mobile.mjs`）。所以「零 npm runtime 依賴、零打包器」的原則可以維持：網頁程式只透過全域代理呼叫，npm 套件只存在於 `mobile/` 的原生建置端。
-- **所有缺口都有官方或成熟的外掛**：`@capacitor/app`（返回鍵、前景/背景、深層連結）、`@capacitor/filesystem` + `@capacitor/share`（匯出）、`@capacitor/keyboard`、`@capacitor/network`、`@capacitor/status-bar`、安全儲存（社群外掛，走 Android Keystore）。
+- **所有缺口都有官方或成熟的外掛**：`@capacitor/app`（返回鍵、前景/背景、深層連結）、`@capacitor/filesystem` + `@capacitor/share`（匯出）、`@capacitor/keyboard`、`@capacitor/network`、`@capacitor/status-bar`、安全儲存（社群外掛，走 Android Keystore）、QR 掃描（社群外掛 `@capacitor-mlkit/barcode-scanning`；需要手機有 Google Play 服務，沒有的話用手動貼上）。
 - **替代方案都更差**：PWA/TWA 會失去原生儲存與外掛、而且背景限制更多；React Native／Flutter 要重寫整個以 DOM 為基礎的編輯器（數月工作量）。
 
 **結論：不換技術，採「Capacitor 升級＋補齊」。**
@@ -454,7 +454,7 @@ flowchart LR
 
 | 里程碑 | 目標 | 主要交付 | 驗收條件（摘要） | 需要你做的事 |
 |---|---|---|---|---|
-| **M1** 手機可日用、資料不因更新或關閉而遺失 | 補安全網＋平台升級，不動同步架構 | Capacitor 8／targetSdk 36／minSdk 24／JDK 21／edge-to-edge（一次升級，之後外掛都直接裝 v8 版）；固定 release 金鑰＋versionCode 自動遞增；返回鍵；進背景立即存檔與推送；手機每 2 分鐘輪替檔案備份＋匯出備份；同步權杖改安全儲存；**版本閘門先上線**（`schemaVersion` > 1 就拒絕同步）；**App 內檢查新版**（讀 `latest` release，有新版就提示並開下載頁）；CI 另外保存**帶版號的 APK**（`MindFlow-<versionCode>.apk`，每個里程碑打 `v*` tag），才有舊版可裝回；電腦顯示 QR、手機掃描帶入 PAT（Google ML Kit 條碼外掛，在手機上辨識、免費，也保留手動貼上）；修 1.3 的高風險 bug（同步競爭、覆蓋不留副本、`fetch` 快取、手機重試／網路恢復監聽、gamma 版面覆寫） | 新 APK 覆蓋安裝後資料仍在；殺掉 App 後最後修改仍在；備份可還原；餵 v2 測試資料時確實拒絕同步；新增測試全綠 | 實機安裝一次：換金鑰＋升級平台合併成**唯一一次需要解除安裝**，事前先同步或匯出（6.1 R4）；照驗收清單試用約 30 分鐘 |
+| **M1** 手機可日用、資料不因更新或關閉而遺失 | 補安全網＋平台升級，不動同步架構 | Capacitor 8／targetSdk 36／minSdk 24／JDK 21／edge-to-edge（一次升級，之後外掛都直接裝 v8 版）；固定 release 金鑰＋versionCode 自動遞增；返回鍵；進背景立即存檔與推送；手機每 2 分鐘輪替檔案備份＋匯出備份；同步權杖改安全儲存；**版本閘門先上線**（`schemaVersion` > 1 就拒絕同步）；**App 內檢查新版**（讀 `latest` release，有新版就提示並開下載頁）；CI 另外保存**帶版號的 APK**（`MindFlow-<versionCode>.apk`，每個里程碑打 `v*` tag；`android.yml` 目前只在推到 main 時觸發，要加上 `v*` tag 觸發），才有舊版可裝回；電腦顯示 QR、手機掃描帶入 PAT（Google ML Kit 條碼外掛，在手機上辨識、免費，也保留手動貼上）；修 1.3 的高風險 bug（同步競爭、覆蓋不留副本、`fetch` 快取、手機重試／網路恢復監聽、gamma 版面覆寫） | 新 APK 覆蓋安裝後資料仍在；殺掉 App 後最後修改仍在；備份可還原；餵 v2 測試資料時確實拒絕同步；掃第二個 QR 後手機能同步（不手打 PAT）；release 裡有 `MindFlow-<versionCode>.apk`；裝舊版時 App 內提示有新版；新增測試全綠 | 實機安裝一次：換金鑰＋升級平台合併成**唯一一次需要解除安裝**，事前先同步或匯出（6.1 R4）；照驗收清單試用約 30 分鐘 |
 | **M2a** 同步引擎 v2：統一實作與資料格式 | 打地基，仍走 GitHub 傳輸 | `js/sync/` 統一引擎＋傳輸介面＋GitHub 傳輸；桌面引擎移到 renderer；`schemaVersion 2`＋HLC；同步層圖片抽出＋資產快取（含大小上限）；base 存 IndexedDB；GitHub 推拉節奏改成 3.8 的加速版 | 既有同步測試改寫後全綠；桌面與手機用同一份引擎互通；圖片往返後內容完全相同；**發版前確認兩台都已是 M1 以後的版本** | 無 |
 | **M2b** 節點級合併＋就地套用 | 衝突處理升級 | 節點級三方合併（含欄位群組、摺疊狀態規則）＋衝突紀錄 UI＋退回副本；編輯器就地套用（含懸浮圖、關聯線、概要、版面狀態）；模糊測試 | 雙裝置 E2E：不同節點同時改 → 自動合併、零副本；同欄位衝突 → 輸方進衝突紀錄；刪除對上修改 → 不丟資料；開著的文件不重載就更新；模糊測試數萬組不變式全過 | 可選：試用合併效果 |
 | **M3** 即時傳輸＋帳號登入＋離線佇列 | 接上 Firebase，達成秒級同步 | `FirebaseTransport`（Auth REST、SSE 訂閱 `meta`、ETag 條件寫入、資產）；**首次搬家**：把電腦上全部文件與圖片匯入 Firebase（可重跑、會比對）；安全規則檔＋規則測試（模擬器需要 Java，開發環境已有）；設定頁登入、QR 配對（含選用的手機備援 PAT）；待上傳佇列與重連；三處 CSP 更新；GitHub 降為定期封存與備援 | 兩台前景時 95% 的情況下 ≤ 3 秒且不重載；首次搬家後兩邊文件數與內容雜湊一致；飛航模式各自編輯後恢復 → 自動合併；權杖過期自動換發；Firebase 停用時電腦自動退回 GitHub；全部先在**本機模擬器**驗證 | 最後建立免費 Firebase 專案（15–30 分鐘，有圖文步驟，不需信用卡）並在兩台登入 |
@@ -471,6 +471,7 @@ flowchart LR
 - GitHub 保有全部歷史，M3 之後仍會定期封存。
 - 任何一版出問題，都能 (1) 裝回上一版，(2) 從 GitHub 封存或本機備份還原文件。
 - **手機降版的注意事項**：Android 不允許用較低的 versionCode 覆蓋安裝，直接「裝回舊 APK」等於要先解除安裝（會清空手機資料，6.1 R4）。所以手機回滾的做法是發一個「回滾版」：舊程式碼、配上更高的 versionCode，直接覆蓋安裝就好。真的要解除安裝時，先確認資料已同步或匯出。
+- **電腦降版**：電腦的自動更新是依 `latest` release 的版號判斷，所以電腦端也用同樣做法：發一個版號更高的回滾版；或手動執行保留的舊安裝檔。
 - 版本閘門確保回滾後，舊版不會反過來破壞新格式：舊版會拒絕同步，只能在本機使用，直到升回新版。
 
 **每階段共通的品質門檻**：
