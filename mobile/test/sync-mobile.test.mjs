@@ -243,6 +243,30 @@ test('a Keystore key lost after restore (secure get returns null) just asks for 
   await api.dispose()
 })
 
+test('pairing into a different repo or branch resets the sync base so the first sync only merges', async () => {
+  const preferences = new MemoryPreferences()
+  preferences.values.set(MOBILE_SYNC_CONFIG_KEY, JSON.stringify({ enabled: false, repo: 'chenrui/old-data', branch: 'main' }))
+  preferences.values.set('mindflow.sync.mobile.state', JSON.stringify({
+    lastSyncedCommitSha: 'abc123',
+    baseManifest: { schemaVersion: 1, docs: { a: { updatedAt: '2026-01-01T00:00:00.000Z' } }, favorites: [], tombstones: {} },
+    perDoc: { a: '2026-01-01T00:00:00.000Z' },
+    machineId: 'android-keep-me'
+  }))
+  const api = disabledApi({ preferences, secureStorage: new FakeSecureStorage() })
+  assert.deepEqual(await api.setConfig({ repo: 'chenrui/old-data', token: 'github_pat_same_repo_token' }), { ok: true })
+  assert.equal(JSON.parse(preferences.values.get('mindflow.sync.mobile.state')).lastSyncedCommitSha, 'abc123', '同一個 repo 換權杖不重設')
+
+  assert.deepEqual(await api.setConfig({ repo: 'chenrui/new-data', branch: 'sync' }), { ok: true })
+  const state = JSON.parse(preferences.values.get('mindflow.sync.mobile.state'))
+  assert.equal(state.lastSyncedCommitSha, null)
+  assert.equal(state.baseManifest, null)
+  assert.equal(state.machineId, 'android-keep-me', '裝置 id 保留')
+  assert.equal(JSON.parse(preferences.values.get(MOBILE_SYNC_CONFIG_KEY)).branch, 'sync')
+
+  assert.equal((await api.setConfig({ branch: '../evil' })).ok, false)
+  await api.dispose()
+})
+
 test('mobile lifecycle pulls on startup and visibility, while local saves collapse into one debounced push', async () => {
   const documentRef = new FakeDocument()
   const timers = createTimers()

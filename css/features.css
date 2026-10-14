@@ -815,6 +815,21 @@ body.is-focus-mode .canvas { cursor: default; }
 }
 .feature-dialog .sync-settings-actions .is-primary { border-color: #f17e2e; color: #fff; background: #f17e2e; }
 
+/* 電腦顯示／手機掃描配對 QR */
+.sync-pairing-row { display: grid; gap: 6px; justify-items: start; }
+.sync-pairing-row[hidden],
+.sync-pairing-row button[hidden] { display: none; }
+.feature-dialog .sync-pairing-row button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  color: #9a4c17;
+  background: #fff8f1;
+  font-weight: 650;
+  cursor: pointer;
+}
+
 /* 手機 App：首頁的新版提示 */
 .update-banner {
   display: flex;

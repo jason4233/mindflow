@@ -31,6 +31,7 @@ import {
   getDecryptedToken,
   loadSyncSettings
 } from './sync-settings.mjs'
+import { registerPairingIpc } from './pairing-window.mjs'
 import { initUpdater } from './updater.mjs'
 import { bringWindowToFront } from './window-focus.mjs'
 
@@ -58,6 +59,7 @@ let backupTimer = null
 const storageQueue = createStorageQueue()
 let syncEngine = null
 let syncIpcRegistration = null
+let pairingIpcRegistration = null
 let allowWindowClose = false
 let closeInProgress = false
 
@@ -268,6 +270,16 @@ async function launch() {
     webContents: mainWindow.webContents,
     userDataPath
   })
+  // 配對 QR 在 main process 讀出並解密 PAT、直接畫在獨立視窗；renderer 只會收到 { ok }。
+  pairingIpcRegistration = registerPairingIpc({
+    ipcMain,
+    BrowserWindow,
+    getParent: () => mainWindow,
+    getPairing: () => {
+      const settings = loadSyncSettings(userDataPath)
+      return { repo: settings.repo, branch: settings.branch, token: getDecryptedToken(settings) || '' }
+    }
+  })
   bindCloseFlush(mainWindow, userDataPath, syncEngine)
   mainWindow.on('focus', () => syncEngine?.handleFocus())
   mainWindow.once('closed', () => {
@@ -275,6 +287,8 @@ async function launch() {
     backupTimer = null
     syncIpcRegistration?.dispose()
     syncIpcRegistration = null
+    pairingIpcRegistration?.dispose()
+    pairingIpcRegistration = null
     void syncEngine?.dispose()
     syncEngine = null
     mainWindow = null

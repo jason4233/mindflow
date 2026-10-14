@@ -7,7 +7,8 @@ const CHANNELS = Object.freeze({
   setConfig: 'mindflow-sync:set-config',
   syncNow: 'mindflow-sync:sync-now',
   getStatus: 'mindflow-sync:get-status',
-  statusChanged: 'mindflow-sync:status-changed'
+  statusChanged: 'mindflow-sync:status-changed',
+  showPairingQr: 'mindflow-sync:show-pairing-qr'
 })
 
 const STATUS_STATES = new Set(['disabled', 'idle', 'syncing', 'offline', 'error'])
@@ -63,6 +64,11 @@ const mindflowSync = Object.freeze({
 
   async getStatus() {
     return publicStatus(await ipcRenderer.invoke(CHANNELS.getStatus))
+  },
+
+  // 只回 { ok, error }：含 PAT 的 QR 由 main process 畫在獨立視窗，renderer 永遠拿不到內容。
+  async showPairingQr() {
+    return actionResult(await ipcRenderer.invoke(CHANNELS.showPairingQr))
   },
 
   onStatus(callback) {

@@ -2,6 +2,7 @@
  * 同步設定對話框裡「只有手機 App 才有」的區塊：手機備份（匯出、從自動備份還原、從檔案還原）。
  */
 import { backupDocuments, consumeRestoredNotice, formatBackupStamp, parseBackupPayload } from './mobile-backup.mjs'
+import { PairingError, decodePairingPayload } from './pairing.mjs'
 
 /** 剛從手機備份自動還原並重新載入時，提示一次。 */
 export function showRestoredNoticeIfNeeded({ windowRef = globalThis.window, documentRef = globalThis.document } = {}) {
@@ -196,4 +197,37 @@ export function mountMobileUpdateSection(container, {
     }
   })
   return section
+}
+
+/**
+ * 用 ML Kit（Google Code Scanner，不需要相機權限）掃描電腦上的配對 QR。
+ * 回傳 { status: 'ok', pairing } | { status: 'cancelled' } | { status: 'installing' }；
+ * 內容不是配對碼時丟出 PairingError（訊息不含 PAT）。
+ */
+export async function scanPairingCode({ scanner } = {}) {
+  if (!scanner || typeof scanner.scan !== 'function') {
+    throw new PairingError('這版 App 不支援掃描 QR。請手動輸入 PAT，或更新到最新版 App。')
+  }
+  if (typeof scanner.isSupported === 'function') {
+    const { supported } = await scanner.isSupported()
+    if (supported === false) throw new PairingError('這支手機不支援掃描 QR，請手動輸入 PAT。')
+  }
+  if (typeof scanner.isGoogleBarcodeScannerModuleAvailable === 'function') {
+    const { available } = await scanner.isGoogleBarcodeScannerModuleAvailable()
+    if (available === false) {
+      // 第一次使用要由 Google Play 服務下載掃描元件；下載在背景進行，完成後再掃一次。
+      try { await scanner.installGoogleBarcodeScannerModule?.() } catch { /* 已在下載中 */ }
+      return { status: 'installing' }
+    }
+  }
+  let barcodes
+  try {
+    ({ barcodes } = await scanner.scan({ formats: ['QR_CODE'] }))
+  } catch (error) {
+    if (/cancel/iu.test(String(error?.message || error))) return { status: 'cancelled' }
+    throw new PairingError('掃描失敗，請再試一次，或手動輸入 PAT。')
+  }
+  const raw = barcodes?.[0]?.rawValue ?? barcodes?.[0]?.displayValue
+  if (typeof raw !== 'string' || !raw) return { status: 'cancelled' }
+  return { status: 'ok', pairing: decodePairingPayload(raw) }
 }

@@ -182,3 +182,42 @@ test('getCapacitorPlugin only returns plugins the native side really has', () =>
   assert.equal(getCapacitorPlugin('Filesystem', ['writeFile'], windowRef), null)
   assert.equal(getCapacitorPlugin('App', ['addListener'], {}), null)
 })
+
+test('scanPairingCode: unsupported device, first-time module download, cancel, foreign QR, success', async () => {
+  const { scanPairingCode } = await import('../js/mobile-settings.mjs')
+  const { encodePairingPayload } = await import('../js/pairing.mjs')
+  const token = 'TEST-ONLY-NOT-A-REAL-TOKEN-scan-0123456789'
+  const payload = encodePairingPayload({ repo: 'chenrui/mindflow-data', branch: 'sync', token })
+  const scanner = overrides => ({
+    isSupported: async () => ({ supported: true }),
+    isGoogleBarcodeScannerModuleAvailable: async () => ({ available: true }),
+    installGoogleBarcodeScannerModule: async () => {},
+    scan: async options => {
+      assert.deepEqual(options, { formats: ['QR_CODE'] })
+      return { barcodes: [{ rawValue: payload }] }
+    },
+    ...overrides
+  })
+
+  await assert.rejects(scanPairingCode({ scanner: null }), { name: 'PairingError' })
+  await assert.rejects(scanPairingCode({ scanner: scanner({ isSupported: async () => ({ supported: false }) }) }), { name: 'PairingError' })
+
+  let installs = 0
+  assert.deepEqual(await scanPairingCode({ scanner: scanner({
+    isGoogleBarcodeScannerModuleAvailable: async () => ({ available: false }),
+    installGoogleBarcodeScannerModule: async () => { installs += 1 },
+    scan: async () => assert.fail('元件還沒下載好不能開掃描')
+  }) }), { status: 'installing' })
+  assert.equal(installs, 1)
+
+  assert.deepEqual(await scanPairingCode({ scanner: scanner({ scan: async () => { throw new Error('scan canceled.') } }) }), { status: 'cancelled' })
+  assert.deepEqual(await scanPairingCode({ scanner: scanner({ scan: async () => ({ barcodes: [] }) }) }), { status: 'cancelled' })
+  await assert.rejects(
+    scanPairingCode({ scanner: scanner({ scan: async () => ({ barcodes: [{ rawValue: 'https://example.com' }] }) }) }),
+    error => error.name === 'PairingError' && !error.message.includes(token)
+  )
+  assert.deepEqual(await scanPairingCode({ scanner: scanner() }), {
+    status: 'ok',
+    pairing: { repo: 'chenrui/mindflow-data', branch: 'sync', token }
+  })
+})

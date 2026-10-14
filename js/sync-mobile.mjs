@@ -1082,16 +1082,27 @@ export function createMobileSyncApi({
       const next = normalizeConfig({
         enabled: Object.hasOwn(patch, 'enabled') ? patch.enabled : config.enabled,
         repo: Object.hasOwn(patch, 'repo') ? patch.repo : config.repo,
-        branch: config.branch
+        branch: Object.hasOwn(patch, 'branch') ? patch.branch : config.branch
       }, suppliedToken)
       if (next.repo && !/^[^/\s]+\/[^/\s]+$/u.test(next.repo)) {
         return { ok: false, error: 'Repo must use owner/name format' }
+      }
+      if (!/^[A-Za-z0-9._/-]{1,100}$/u.test(next.branch) || next.branch.includes('..')) {
+        return { ok: false, error: 'Branch name is invalid' }
       }
       if (next.enabled && (!next.repo || !next.token)) {
         return { ok: false, error: 'Enabled sync requires a repository and token' }
       }
       try {
+        // 換到別的 repo／分支：舊 repo 的 base 不能拿來跟新 repo 比（會誤判刪除），改當首次同步只做聯集。
+        const targetChanged = Boolean(config.repo) && (next.repo !== config.repo || next.branch !== config.branch)
+        // 進行中的同步結束時會寫回舊 repo 的狀態；先等它結束再重設，免得被蓋回去。
+        if (targetChanged) await runningSync?.catch(() => {})
         await preferenceStore.saveConfig(next, { tokenChanged: Object.hasOwn(patch, 'token') })
+        if (targetChanged) {
+          state = normalizeState(null, state.machineId)
+          await preferenceStore.saveState(state)
+        }
         config = { ...next, apiBase }
         if (!isEnabled()) {
           lifecycle?.stop()

@@ -33,6 +33,8 @@
       "backup-rules.mjs",
       "backup-store.mjs",
       "legacy-storage.mjs",
+      "pairing-window.mjs",
+      "pairing.mjs",
       "protocol.mjs",
       "qr-encode.mjs",
       "sync-engine.mjs",
@@ -76,6 +78,10 @@
       {
         "from": "../js/backup-rules.mjs",
         "to": "js/backup-rules.mjs"
+      },
+      {
+        "from": "../js/pairing.mjs",
+        "to": "js/pairing.mjs"
       }
     ],
     "win": {

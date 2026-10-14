@@ -7,7 +7,8 @@ import {
 } from './sync-mobile.mjs'
 import { getCapacitorPlugin } from './capacitor-plugins.mjs'
 import { startMobileBackups } from './mobile-backup.mjs'
-import { mountMobileBackupSection, mountMobileUpdateSection, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
+import { mountMobileBackupSection, mountMobileUpdateSection, scanPairingCode, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
+import { decodePairingPayload, isPairingPayload } from './pairing.mjs'
 import { startUpdateCheck } from './mobile-update.mjs'
 import { importDocumentCopy } from './store.js'
 
@@ -98,6 +99,12 @@ function createSyncSettingsController() {
   const feedback = dialog.querySelector('[data-sync-feedback]')
   const syncNowButton = dialog.querySelector('[data-sync-now]')
   const saveButton = dialog.querySelector('[data-sync-save]')
+  const pairingRow = dialog.querySelector('[data-sync-pairing]')
+  const pairButton = dialog.querySelector('[data-sync-pair]')
+  const scanButton = dialog.querySelector('[data-sync-scan]')
+  const pairingHint = dialog.querySelector('[data-sync-pairing-hint]')
+  const canShowPairing = environment.kind === 'electron' && typeof api?.showPairingQr === 'function'
+  const canScanPairing = environment.kind === 'capacitor' && Boolean(api)
   const sidebarViews = new Set()
   let config = { enabled: false, repo: '', hasToken: false }
   let status = { state: syncAvailable ? 'disabled' : 'error', lastSyncAt: null, lastError: null, docCount: 0 }
@@ -126,6 +133,14 @@ function createSyncSettingsController() {
     void saveConfig()
   })
   syncNowButton.addEventListener('click', () => { void syncNow() })
+  pairingRow.hidden = !(canShowPairing || canScanPairing)
+  pairButton.hidden = !canShowPairing
+  scanButton.hidden = !canScanPairing
+  pairingHint.textContent = canShowPairing
+    ? '在獨立視窗顯示含 PAT 的 QR，手機掃描後就不必手打 PAT；請在私下掃描。'
+    : canScanPairing ? '在電腦版「同步設定」按「在手機上配對」，再用這個按鈕掃描。' : ''
+  pairButton.addEventListener('click', () => { void showPairingQr() })
+  scanButton.addEventListener('click', () => { void scanPairing() })
 
   if (api) {
     try {
@@ -191,9 +206,68 @@ function createSyncSettingsController() {
     return view
   }
 
+  async function showPairingQr() {
+    if (!canShowPairing || busy) return
+    clearFeedback()
+    try {
+      const result = await api.showPairingQr()
+      if (result?.ok) showFeedback('已在新視窗顯示配對 QR，請用手機的 MindFlow 掃描（2 分鐘後自動關閉）。', 'success')
+      else showFeedback(result?.error || '無法顯示配對 QR。', 'error')
+    } catch {
+      showFeedback(`無法顯示配對 QR，請確認${clientLabel}仍在執行。`, 'error')
+    }
+  }
+
+  async function scanPairing() {
+    if (!canScanPairing || busy) return
+    clearFeedback()
+    try {
+      const result = await scanPairingCode({ scanner: getCapacitorPlugin('BarcodeScanner', ['scan']) })
+      if (result.status === 'installing') {
+        showFeedback('第一次使用要先下載掃描元件（由 Google Play 服務提供），約幾秒到一分鐘。完成後再按一次「掃描」。', 'warning')
+      } else if (result.status === 'ok') {
+        await applyPairing(result.pairing)
+      }
+    } catch (error) {
+      showFeedback(error?.name === 'PairingError' ? error.message : '掃描失敗，請再試一次，或手動輸入 PAT。', 'error')
+    }
+  }
+
+  // 配對碼直接交給同步 API 存進安全儲存，PAT 不經過輸入框。
+  async function applyPairing(pairing) {
+    setBusy(true, '配對中…')
+    try {
+      const result = await api.setConfig({ enabled: true, repo: pairing.repo, branch: pairing.branch, token: pairing.token })
+      if (!result?.ok) {
+        showFeedback(redactToken(result?.error, pairing.token) || '配對失敗，請在電腦上重新顯示 QR 後再試。', 'error')
+        return
+      }
+      config = normalizeConfig(await api.getConfig())
+      status = normalizeStatus(await api.getStatus())
+      showFeedback(`配對完成，已開始與 ${pairing.repo} 同步。`, 'success')
+    } catch {
+      showFeedback('配對失敗，請再試一次。', 'error')
+    } finally {
+      tokenInput.value = ''
+      setBusy(false)
+      renderState()
+    }
+  }
+
   async function saveConfig() {
     if (!api || busy) return
     clearFeedback()
+    const pasted = tokenInput.value.trim()
+    if (environment.kind === 'capacitor' && isPairingPayload(pasted)) {
+      // 手機上把配對碼貼進 PAT 欄也可以：與掃描相同的處理。
+      tokenInput.value = ''
+      try {
+        await applyPairing(decodePairingPayload(pasted))
+      } catch (error) {
+        showFeedback(error?.name === 'PairingError' ? error.message : '配對碼無法辨識。', 'error')
+      }
+      return
+    }
     const enabled = enabledInput.checked
     const repo = repoInput.value.trim()
     const token = tokenInput.value.trim()
@@ -268,6 +342,8 @@ function createSyncSettingsController() {
     repoInput.disabled = nextBusy
     tokenInput.disabled = nextBusy
     saveButton.disabled = nextBusy
+    pairButton.disabled = nextBusy
+    scanButton.disabled = nextBusy
     saveButton.textContent = nextBusy && label ? label : '儲存設定'
   }
 
@@ -295,6 +371,7 @@ function createSyncSettingsController() {
       guide.hidden = Boolean(config.hasToken && config.repo)
     }
     syncNowButton.disabled = !syncAvailable || busy || !config.enabled || !config.repo || !config.hasToken || status.state === 'syncing'
+    pairButton.disabled = busy || !config.repo || !config.hasToken
     sidebarViews.forEach(renderSidebarView)
   }
 
@@ -365,6 +442,11 @@ function createDialog() {
           <input id="sync-token" type="password" autocomplete="off" spellcheck="false" data-sync-token>
           <small class="sync-field-hint" data-sync-token-hint></small>
         </label>
+        <div class="sync-pairing-row" data-sync-pairing hidden>
+          <button type="button" data-sync-pair hidden>在手機上配對（顯示 QR）</button>
+          <button type="button" data-sync-scan hidden>掃描電腦上的配對 QR</button>
+          <small class="sync-field-hint" data-sync-pairing-hint></small>
+        </div>
         <section class="sync-status-card" role="status" aria-live="polite">
           <span class="sync-status-dot" data-sync-status-dot aria-hidden="true"></span>
           <span><strong data-sync-status-label>同步未啟用</strong><small data-sync-status-detail>尚未執行同步</small></span>
