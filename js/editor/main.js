@@ -3,7 +3,8 @@
  */
 import { DOC_KEY_PREFIX, createDocument, loadDocument, preserveConflictCopy, recoverDocument, saveDocument } from '../store.js'
 import { strings } from '../strings.js'
-import { protectSyncAppliedReload } from '../settings.js'
+import { getMobileSyncApi, protectSyncAppliedReload } from '../settings.js'
+import { initializeMobileApp } from '../mobile-app.mjs'
 import { createMeasureFn, render } from './render.js'
 import { layout } from './layout.js'
 import { CommandManager, moveNode, toggleCollapse, updateDocumentTitle, updateText } from './commands.js'
@@ -474,6 +475,17 @@ function bindZoomControls() {
 }
 
 window.addEventListener('beforeunload', () => saveNow(true))
+// Android：返回鍵先結束文字編輯、再回首頁；App 進背景時立即存檔並推送同步（不等 45 秒）
+initializeMobileApp({
+  page: 'editor',
+  saveNow: () => saveNow(true),
+  getSyncApi: getMobileSyncApi,
+  onBack() {
+    if (!edit.isEditing) return false
+    edit.commit()
+    return true
+  }
+})
 window.addEventListener('mindflow:sync-applied', event => {
   if (!syncEventAffectsDocument(event, doc.id)) return
   window.clearTimeout(syncReloadTimer)

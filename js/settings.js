@@ -409,6 +409,11 @@ if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis
   resolveSyncEnvironment(globalThis.window)
 }
 
+/** 手機版的同步 API（尚未設定或不在原生 App 裡時為 null）；返回鍵／進背景時用來立即推送。 */
+export function getMobileSyncApi() {
+  return mobileSyncApi
+}
+
 function normalizeConfig(value) {
   return {
     enabled: Boolean(value?.enabled),
