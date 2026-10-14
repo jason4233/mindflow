@@ -15,7 +15,7 @@ test('web and desktop import one shared sync-plan implementation', () => {
     import * as desktop from ${JSON.stringify(desktopUrl)}
     assert.equal(desktop.computeSyncPlan, shared.computeSyncPlan)
     assert.deepEqual(shared.emptyManifest(), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       docs: {},
       favorites: [],
       tombstones: {},

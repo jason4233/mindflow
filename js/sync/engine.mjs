@@ -26,6 +26,8 @@ export const DEFAULT_CADENCE = Object.freeze({
 const REF_CONFLICT_ATTEMPTS = 3
 const LOCAL_CHANGE_ATTEMPTS = 3
 const DIAGNOSTIC_LIMIT = 30
+// 因本機剛有修改而要求的同步：撞上正在跑的一輪時，結束後要再跑一次（那一輪的快照可能早於修改）。
+const LOCAL_CHANGE_REASONS = new Set(['local-change', 'hidden-change', 'hidden', 'flush', 'back-button', 'app-pause', 'pagehide', 'exit', 'window-close', 'config'])
 const STATUS_STATES = new Set(['disabled', 'idle', 'syncing', 'offline', 'error'])
 const STATE_KEY = 'state'
 const CLOCK_KEY = 'clock'
@@ -57,7 +59,7 @@ function randomMachineId(prefix) {
 }
 
 function emptySyncState() {
-  return { lastSyncedCommitSha: null, baseManifest: null, perDoc: {}, pending: {}, etag: null, lastSyncAt: null }
+  return { lastSyncedCommitSha: null, baseManifest: null, perDoc: {}, pending: {}, etag: null, lastSyncAt: null, storeEpoch: null }
 }
 
 function normalizeSyncState(value) {
@@ -69,7 +71,8 @@ function normalizeSyncState(value) {
     perDoc: isObject(source.perDoc) ? source.perDoc : {},
     pending: isObject(source.pending) ? source.pending : {},
     etag: typeof source.etag === 'string' ? source.etag : null,
-    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null
+    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null,
+    storeEpoch: typeof source.storeEpoch === 'string' ? source.storeEpoch : null
   }
 }
 
@@ -123,6 +126,8 @@ export function createSyncEngine({
   let retryDelayMs = timing.retryInitialMs
   let lastFocusPullAt = -Infinity
   let warning = null
+  let rerunRequested = false
+  let reconfiguring = Promise.resolve()
 
   const assetCache = Object.freeze({
     get: sha => kv.get(`${ASSET_PREFIX}${sha}`),
@@ -424,24 +429,39 @@ export function createSyncEngine({
 
     async setConfig(patch = {}) {
       await ready
-      const previous = config
-      const result = await platform.saveConfig(patch)
-      if (!result?.ok) return { ok: false, error: result?.error || '設定儲存失敗' }
-      config = await platform.loadConfig()
-      // 換到別的 repo／分支：舊 base 不能拿來跟新 repo 比，改當首次同步（只做聯集）。
-      if (previous.repo && (previous.repo !== config.repo || (previous.branch || 'main') !== (config.branch || 'main'))) {
+      // 設定變更期間不開始新的同步（計時器觸發的同步會用舊 repo 跑、把舊 base 寫回來）。
+      let finish
+      const previousReconfigure = reconfiguring
+      reconfiguring = new Promise(resolve => { finish = resolve })
+      await previousReconfigure
+      try {
         await runningSync?.catch(() => {})
-        syncState = emptySyncState()
-        await kv.set(STATE_KEY, syncState)
+        const previous = config
+        const result = await platform.saveConfig(patch)
+        if (!result?.ok) return { ok: false, error: result?.error || '設定儲存失敗' }
+        config = await platform.loadConfig()
+        const targetChanged = Boolean(previous.repo) && (previous.repo !== config.repo || (previous.branch || 'main') !== (config.branch || 'main'))
+        // 換到別的 repo／分支：舊 base 不能拿來跟新 repo 比，改當首次同步（只做聯集）。
+        if (targetChanged) {
+          syncState = emptySyncState()
+          await kv.set(STATE_KEY, syncState)
+        }
+        finish()
+        if (!isEnabled()) {
+          stopLifecycle()
+          setStatus({ state: 'disabled', lastError: null, warning: null })
+        } else {
+          setStatus({ state: 'idle', lastError: null })
+          if (autoStart) {
+            // 已在運作時 start() 不會再同步：配對或換 repo／權杖後要立刻同步，而不是等下一次輪詢。
+            if (started && (targetChanged || Object.hasOwn(patch, 'token'))) await api.syncNow({ reason: 'config' })
+            else await api.start()
+          }
+        }
+        return { ok: true }
+      } finally {
+        finish()
       }
-      if (!isEnabled()) {
-        stopLifecycle()
-        setStatus({ state: 'disabled', lastError: null, warning: null })
-      } else {
-        setStatus({ state: 'idle', lastError: null })
-        if (autoStart) await api.start()
-      }
-      return { ok: true }
     },
 
     async syncNow(options = {}) {
@@ -450,7 +470,12 @@ export function createSyncEngine({
         setStatus({ state: 'disabled', lastError: null })
         return { ok: false, error: 'Sync is disabled' }
       }
-      if (runningSync) return runningSync
+      await reconfiguring
+      if (disposed || !isEnabled()) return { ok: false, error: 'Sync is disabled' }
+      if (runningSync) {
+        if (LOCAL_CHANGE_REASONS.has(options?.reason)) rerunRequested = true
+        return runningSync
+      }
       const reason = typeof options?.reason === 'string' ? options.reason : 'manual'
       const startedAt = monotonic()
       cancelRetry()
@@ -465,7 +490,12 @@ export function createSyncEngine({
           recordDiagnostic({ reason, ok: false, durationMs: monotonic() - startedAt, error: message })
           return { ok: false, error: message }
         })
-        .finally(() => { runningSync = null })
+        .finally(() => {
+          runningSync = null
+          const rerun = rerunRequested && !disposed && isEnabled()
+          rerunRequested = false
+          if (rerun) void api.syncNow({ reason: 'rerun' })
+        })
       return runningSync
     },
 

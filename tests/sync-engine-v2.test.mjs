@@ -629,3 +629,186 @@ test('a public repository syncs but shows a warning', async () => {
     await env.close()
   }
 })
+
+// ── M1 審查發現的回歸測試（移植到 v2 引擎） ──
+
+function memoryFilesystem() {
+  const files = new Map()
+  const missing = () => Object.assign(new Error('File does not exist.'), { code: 'OS-PLUG-FILE-0008' })
+  return {
+    files,
+    async writeFile({ path, data }) { files.set(path, data) },
+    async readFile({ path }) { if (!files.has(path)) throw missing(); return { data: files.get(path) } },
+    async stat({ path }) { if (!files.has(path)) throw missing(); return {} },
+    async copy({ from, to }) { files.set(to, files.get(from)) }
+  }
+}
+
+test('M1 BLOCKER 1：從較舊的備份自動還原後，留著的 base 不會讓雲端文件被刪或回退', async () => {
+  const { createMobileBackupStore } = await import('../js/mobile-backup.mjs')
+  const env = await createEnv()
+  const filesystem = memoryFilesystem()
+  try {
+    env.androidStorage.putDoc(makeDoc('A', 'A v1', '2026-10-14T09:00:00.000Z'))
+    await env.android.syncNow()
+    await createMobileBackupStore({ filesystem, storage: env.androidStorage, importCopy: () => ({}) }).writeBackup()
+    env.androidStorage.putDoc({ ...env.androidStorage.doc('A'), title: 'A v2（較新）', updatedAt: '2026-10-14T10:00:00.000Z' })
+    env.androidStorage.putDoc(makeDoc('B', 'B 備份之後才建立', '2026-10-14T10:00:00.000Z'))
+    await env.android.syncNow()
+
+    env.androidStorage.clear()
+    assert.equal(await createMobileBackupStore({ filesystem, storage: env.androidStorage, importCopy: () => ({}) }).restoreLatestIfEmpty(), true)
+    assert.deepEqual(await env.android.syncNow(), { ok: true })
+    const manifest = JSON.parse(await env.remoteFile('manifest.json'))
+    assert.deepEqual(manifest.tombstones, {})
+    assert.ok((await env.remotePaths()).includes('docs/B.json'))
+    assert.equal(JSON.parse(await env.remoteFile('docs/A.json')).title, 'A v2（較新）')
+  } finally {
+    await env.close()
+  }
+})
+
+test('M1 BLOCKER 2：資料遺失後、第一次同步前先新建文件，也不會把雲端其他文件刪掉', async () => {
+  const env = await createEnv()
+  try {
+    env.androidStorage.putDoc(makeDoc('A', 'A', '2026-10-14T09:00:00.000Z'))
+    env.androidStorage.putDoc(makeDoc('B', 'B', '2026-10-14T09:00:00.000Z'))
+    await env.android.syncNow()
+    env.androidStorage.clear()
+    env.androidStorage.setItem('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+    env.androidStorage.putDoc(makeDoc('C', '遺失後新建的', '2026-10-14T11:00:00.000Z'))
+    assert.deepEqual(await env.android.syncNow(), { ok: true })
+    const manifest = JSON.parse(await env.remoteFile('manifest.json'))
+    assert.deepEqual(manifest.tombstones, {})
+    assert.deepEqual(Object.keys(manifest.docs).sort(), ['A', 'B', 'C'])
+    assert.deepEqual(env.androidStorage.titles(), ['A', 'B', '遺失後新建的'])
+  } finally {
+    await env.close()
+  }
+})
+
+test('M1 MEDIUM 4：同步進行中又有本機修改要推送時，這一輪結束後再跑一次', async () => {
+  let gate = null
+  const env = await createEnv({
+    async fetchFn(url, init = {}) {
+      if (gate && String(url).includes('/git/ref/')) { const wait = gate; gate = null; await wait }
+      return fetch(url, init)
+    }
+  })
+  try {
+    env.androidStorage.putDoc(makeDoc('A', 'A v1', '2026-10-14T09:00:00.000Z'))
+    await env.android.syncNow()
+    let release
+    gate = new Promise(resolve => { release = resolve })
+    const running = env.android.syncNow({ reason: 'poll' })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    env.androidStorage.putDoc({ ...env.androidStorage.doc('A'), title: 'A v2 背景存檔', updatedAt: '2026-10-14T10:00:00.000Z' })
+    const joined = env.android.syncNow({ reason: 'hidden-change' })
+    release()
+    await running
+    await joined
+    for (let i = 0; i < 40 && JSON.parse(await env.remoteFile('docs/A.json')).title !== 'A v2 背景存檔'; i += 1) await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(JSON.parse(await env.remoteFile('docs/A.json')).title, 'A v2 背景存檔')
+  } finally {
+    await env.close()
+  }
+})
+
+test('M1 LOW 8：同步已在運作時重新配對（換 PAT）會立刻同步', async () => {
+  const server = await startFakeGitHubServer({ owner: 'chenrui', repo: 'mindflow-data', branch: 'main' })
+  const engine = createSyncEngine({
+    platform: createMobilePlatform({ preferences: new MemoryPreferences(), secureStorage: new MemorySecureStorage(), fetchFn: fetch, apiBase: server.apiBase }),
+    storage: new MemoryStorage(),
+    kv: createMemoryKv(),
+    documentRef: null,
+    windowRef: null,
+    observeLocalChanges: () => () => {},
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+    setIntervalFn: () => 0,
+    clearIntervalFn: () => {},
+    autoStart: true
+  })
+  try {
+    assert.deepEqual(await engine.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token: TOKEN }), { ok: true })
+    const before = server.requests.length
+    assert.deepEqual(await engine.setConfig({ token: `${TOKEN}-second` }), { ok: true })
+    assert.ok(server.requests.slice(before).some(request => request.path.includes('/git/ref/')))
+  } finally {
+    await engine.dispose()
+    await server.close()
+  }
+})
+
+test('network failures retry with backoff (30 s doubling to 5 min); auth failures do not retry; status never shows the token', async () => {
+  const timers = []
+  const make = fetchFn => createSyncEngine({
+    platform: createMobilePlatform({ preferences: new MemoryPreferences(), secureStorage: new MemorySecureStorage(), fetchFn }),
+    storage: new MemoryStorage(),
+    kv: createMemoryKv(),
+    documentRef: null,
+    windowRef: null,
+    observeLocalChanges: () => () => {},
+    setTimeoutFn: (callback, delay) => { timers.push({ callback, delay, live: true }); return timers.length },
+    clearTimeoutFn: id => { if (timers[id - 1]) timers[id - 1].live = false },
+    setIntervalFn: () => 0,
+    clearIntervalFn: () => {},
+    autoStart: true
+  })
+  const offline = make(async () => { throw new Error(`socket hang up ${TOKEN}`) })
+  assert.deepEqual(await offline.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token: TOKEN }), { ok: true })
+  assert.equal((await offline.getStatus()).state, 'offline')
+  assert.equal(JSON.stringify(await offline.getStatus()).includes(TOKEN), false)
+  const delays = []
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    const live = timers.filter(timer => timer.live)
+    assert.equal(live.length, 1, '同一時間最多一個重試計時器')
+    delays.push(live[0].delay)
+    live[0].live = false
+    await live[0].callback()
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  assert.deepEqual(delays, [30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 300_000])
+  assert.ok((await offline.getDiagnostics()).some(entry => entry.reason === 'retry' && !entry.ok))
+  await offline.dispose()
+  assert.equal(timers.filter(timer => timer.live).length, 0, 'dispose 取消重試')
+
+  timers.length = 0
+  const unauthorized = make(async () => new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 }))
+  await unauthorized.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token: TOKEN })
+  assert.equal((await unauthorized.getStatus()).state, 'error')
+  assert.equal(timers.filter(timer => timer.live).length, 0, '權杖錯誤不重試')
+  await unauthorized.dispose()
+})
+
+test('online event and returning to the foreground pull immediately; launching in the background does not poll', async () => {
+  const env = await createEnv()
+  const documentRef = new EventTarget()
+  documentRef.visibilityState = 'hidden'
+  const windowRef = new EventTarget()
+  const intervals = []
+  const phone = createSyncEngine({
+    platform: createMobilePlatform({ preferences: new MemoryPreferences(), secureStorage: new MemorySecureStorage(), fetchFn: fetch, apiBase: env.server.apiBase }),
+    storage: new MemoryStorage(),
+    kv: createMemoryKv(),
+    documentRef,
+    windowRef,
+    observeLocalChanges: () => () => {},
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+    setIntervalFn: callback => { intervals.push(callback); return intervals.length },
+    clearIntervalFn: () => {},
+    autoStart: true
+  })
+  try {
+    await phone.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token: TOKEN })
+    assert.equal(intervals.length, 0, '在背景啟動不輪詢')
+    const before = env.server.requests.length
+    windowRef.dispatchEvent(new Event('online'))
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.ok(env.server.requests.slice(before).some(request => request.path.includes('/git/ref/')), '恢復網路立刻拉')
+  } finally {
+    await phone.dispose()
+    await env.close()
+  }
+})

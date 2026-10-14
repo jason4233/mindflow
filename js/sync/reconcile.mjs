@@ -4,6 +4,7 @@
  * 電腦與手機共用；傳輸由呼叫端注入（GitHubTransport，M3 起也有 FirebaseTransport）。
  */
 import {
+  STORE_EPOCH_KEY,
   SyncLocalChangedError,
   assertSupportedManifest,
   buildConflictCopy,
@@ -11,6 +12,8 @@ import {
   computeLocalWrites,
   computeSyncPlan,
   emptyManifest,
+  newStoreEpoch,
+  trustedBase,
   writeExpectations
 } from '../sync-plan.mjs'
 import { CLOUD_DOC_SCHEMA_VERSION, cloudDocAssets, decodeCloudDoc, encodeCloudDoc } from './doc-codec.mjs'
@@ -96,16 +99,17 @@ export async function reconcileOnce({
   assertSupportedManifest(remoteManifest)
   const remoteVersion = Number.isInteger(remoteManifest.schemaVersion) ? remoteManifest.schemaVersion : 1
 
-  const base = state.lastSyncedCommitSha && state.baseManifest
-    ? { manifest: state.baseManifest, perDoc: state.perDoc || {} }
-    : null
+  // base 只在本機儲存區識別碼相符時可信（M1 審查 BLOCKER：備份還原、資料遺失後不能拿舊 base 比對）。
+  const base = trustedBase(state, entries)
 
   // 本機每個版本的 HLC：沒改過就沿用 base 的；改過就在第一次看到時蓋章。
   // pending 是引擎持有的同一個物件：這一輪失敗或重試時章仍保留，否則重算時時鐘已看過較新的遠端時間戳，
   // 較早的本機修改會被蓋成較新的章。
   if (!state.pending || typeof state.pending !== 'object') state.pending = {}
   const pending = state.pending
-  for (const [id, meta] of Object.entries(localState.docs)) {
+  // base 不可信（首次同步、資料遺失或從備份還原）時不蓋章：本機的版本不一定是新修改
+  // （例如從備份還原回來的舊版），衝突時兩邊改比 updatedAt（與 v1 相同），推送時才補章。
+  for (const [id, meta] of (base ? Object.entries(localState.docs) : [])) {
     const baseStamp = base?.perDoc?.[id]
     const baseMeta = base?.manifest?.docs?.[id]
     if (base && meta.updatedAt === baseStamp) {
@@ -225,6 +229,8 @@ export async function reconcileOnce({
       if (key !== INDEX_KEY && key.endsWith(`.${id}`)) removeKeys.add(key)
     }
   }
+  const storeEpoch = typeof entries[STORE_EPOCH_KEY] === 'string' && entries[STORE_EPOCH_KEY] ? entries[STORE_EPOCH_KEY] : newStoreEpoch()
+  if (entries[STORE_EPOCH_KEY] !== storeEpoch) setKeys[STORE_EPOCH_KEY] = storeEpoch
   const writes = { setKeys, removeKeys: [...removeKeys] }
   const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
     Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
@@ -326,7 +332,8 @@ export async function reconcileOnce({
       perDoc: plan.nextPerDoc,
       pending,
       etag: head.etag,
-      lastSyncAt: syncNow.toISOString()
+      lastSyncAt: syncNow.toISOString(),
+      storeEpoch
     },
     quarantinedIds: plan.quarantinedIds
   }

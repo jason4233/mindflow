@@ -1,11 +1,10 @@
 /** GitHub 私有 repo 同步設定 UI；Electron、Capacitor 與純 web 共用同一套畫面。 */
 
-import {
-  createMobileSyncApi,
-  getCapacitorPreferences,
-  isNativeCapacitor
-} from './sync-mobile.mjs'
-import { getCapacitorPlugin } from './capacitor-plugins.mjs'
+import { getCapacitorPlugin, getCapacitorPreferences, isNativeCapacitor } from './capacitor-plugins.mjs'
+import { createSyncEngine } from './sync/engine.mjs'
+import { openSyncKv } from './sync/kv.mjs'
+import { createDesktopPlatform } from './sync/platform-desktop.mjs'
+import { createMobilePlatform } from './sync/platform-mobile.mjs'
 import { startMobileBackups } from './mobile-backup.mjs'
 import { mountMobileBackupSection, mountMobileUpdateSection, scanPairingCode, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
 import { decodePairingPayload, isPairingPayload } from './pairing.mjs'
@@ -22,7 +21,7 @@ const STATUS_COPY = {
 
 const boundTriggers = new WeakSet()
 let controller = null
-let mobileSyncApi = null
+let syncEngine = null
 let mobileBackups = null
 let mobileUpdates = null
 
@@ -103,7 +102,9 @@ function createSyncSettingsController() {
   const pairButton = dialog.querySelector('[data-sync-pair]')
   const scanButton = dialog.querySelector('[data-sync-scan]')
   const pairingHint = dialog.querySelector('[data-sync-pairing-hint]')
-  const canShowPairing = environment.kind === 'electron' && typeof api?.showPairingQr === 'function'
+  // 配對 QR 由 main process 顯示（含 PAT）；同步引擎本身拿不到 PAT，所以直接呼叫 preload 的橋。
+  const pairingBridge = environment.kind === 'electron' ? globalThis.window?.mindflowSync : null
+  const canShowPairing = Boolean(api) && typeof pairingBridge?.showPairingQr === 'function'
   const canScanPairing = environment.kind === 'capacitor' && Boolean(api)
   const sidebarViews = new Set()
   let config = { enabled: false, repo: '', hasToken: false }
@@ -210,7 +211,7 @@ function createSyncSettingsController() {
     if (!canShowPairing || busy) return
     clearFeedback()
     try {
-      const result = await api.showPairingQr()
+      const result = await pairingBridge.showPairingQr()
       if (result?.ok) showFeedback('已在新視窗顯示配對 QR，請用手機的 MindFlow 掃描（2 分鐘後自動關閉）。', 'success')
       else showFeedback(result?.error || '無法顯示配對 QR。', 'error')
     } catch {
@@ -478,42 +479,66 @@ export function detectSyncEnvironment(windowRef = globalThis.window) {
   return 'web'
 }
 
+function createEngineFor(platform, windowRef, startGate) {
+  return createSyncEngine({
+    platform,
+    storage: windowRef.localStorage,
+    // base、HLC、圖片快取放 IndexedDB；開不起來時退回 localStorage（不進備份的前綴）。
+    kv: openSyncKv({ indexedDB: windowRef.indexedDB, storage: windowRef.localStorage }),
+    documentRef: windowRef.document,
+    windowRef,
+    startGate
+  })
+}
+
 function resolveSyncEnvironment(windowRef = globalThis.window) {
   const kind = detectSyncEnvironment(windowRef)
-  if (kind === 'electron') return { kind, api: validSyncApi(windowRef.mindflowSync) }
+  if (kind === 'electron') {
+    const bridge = windowRef.mindflowSync
+    if (!syncEngine && typeof bridge?.githubRequest === 'function' && windowRef?.localStorage) {
+      // 同步引擎在 renderer 執行；權杖留在 main process（請求由它代理）。
+      // 舊資料遷移與備份還原完成前不開始同步。
+      syncEngine = createEngineFor(createDesktopPlatform(bridge), windowRef, bridge.waitForStartup?.())
+    }
+    return { kind, api: validSyncApi(syncEngine) }
+  }
   if (kind === 'capacitor') {
-    if (!mobileSyncApi) {
+    if (!syncEngine) {
       const preferences = getCapacitorPreferences(windowRef)
       if (preferences && windowRef?.localStorage) {
-        mobileSyncApi = createMobileSyncApi({
+        const platform = createMobilePlatform({
           preferences,
           secureStorage: getCapacitorPlugin('MindflowSecureStorage', ['get', 'set', 'remove'], windowRef),
-          storage: windowRef.localStorage,
-          fetchFn: windowRef.fetch?.bind(windowRef) || globalThis.fetch,
-          documentRef: windowRef.document,
-          windowRef,
-          // 儲存區整個不見時要先從手機備份還原，同步才開始；否則第一次同步看到的是空的本機。
-          startGate: mobileBackups?.ready
+          fetchFn: windowRef.fetch?.bind(windowRef) || globalThis.fetch
         })
+        // 儲存區整個不見時要先從手機備份還原，同步才開始；否則第一次同步看到的是空的本機。
+        syncEngine = createEngineFor(platform, windowRef, mobileBackups?.ready)
       }
     }
-    return { kind, api: validSyncApi(mobileSyncApi) }
+    return { kind, api: validSyncApi(syncEngine) }
   }
   return { kind: 'web', api: null }
 }
 
 // settings.js 也由 editor 入口匯入；在 UI 尚未開啟前先啟動，才能保證 app 開啟即 pull。
-if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis.window) === 'capacitor') {
-  mobileBackups = startMobileBackups({ windowRef: globalThis.window, importCopy: importDocumentCopy })
-  void mobileBackups?.ready.then(() => showRestoredNoticeIfNeeded())
-  resolveSyncEnvironment(globalThis.window)
-  // 首頁才有放提示的位置；編輯器裡只更新節流紀錄。
-  mobileUpdates = startUpdateCheck({ windowRef: globalThis.window })
+if (typeof globalThis.window !== 'undefined') {
+  const kind = detectSyncEnvironment(globalThis.window)
+  if (kind === 'capacitor') {
+    mobileBackups = startMobileBackups({ windowRef: globalThis.window, importCopy: importDocumentCopy })
+    void mobileBackups?.ready.then(() => showRestoredNoticeIfNeeded())
+    resolveSyncEnvironment(globalThis.window)
+    // 首頁才有放提示的位置；編輯器裡只更新節流紀錄。
+    mobileUpdates = startUpdateCheck({ windowRef: globalThis.window })
+  } else if (kind === 'electron') {
+    resolveSyncEnvironment(globalThis.window)
+    // 電腦版關窗前 main process 會呼叫：把等待中的修改立刻推上去。
+    globalThis.window.__mindflowSyncFlush = () => syncEngine?.flush('window-close') ?? null
+  }
 }
 
-/** 手機版的同步 API（尚未設定或不在原生 App 裡時為 null）；返回鍵／進背景時用來立即推送。 */
+/** 同步引擎（純網頁版為 null）；返回鍵／進背景時用來立即推送。 */
 export function getMobileSyncApi() {
-  return mobileSyncApi
+  return syncEngine
 }
 
 function normalizeConfig(value) {

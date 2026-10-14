@@ -20,7 +20,6 @@ import {
   emptyManifest,
   writeExpectations
 } from '../sync-plan.mjs'
-import { ensureRepo, getRef } from '../sync-github.mjs'
 import { loadSyncSettings } from '../sync-settings.mjs'
 import * as syncSettingsUi from '../../js/settings.js'
 
@@ -90,9 +89,9 @@ function planFor(local, remoteManifest, base = null, overrides = {}) {
 }
 
 test('emptyManifest returns the frozen schema shape', () => {
-  assert.equal(MANIFEST_SCHEMA_VERSION, 1)
+  assert.equal(MANIFEST_SCHEMA_VERSION, 2)
   assert.deepEqual(emptyManifest(), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     docs: {},
     favorites: [],
     tombstones: {},
@@ -106,7 +105,7 @@ test('emptyManifest does not share mutable collections across calls', () => {
   first.favorites.push('a')
   first.tombstones.a = T1
   assert.deepEqual(emptyManifest(), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     docs: {},
     favorites: [],
     tombstones: {},
@@ -617,63 +616,6 @@ test('the equal-millisecond losing machine pulls the stable winner on its follow
   assert.equal(JSON.parse(writes.setKeys['mindflow.doc.x']).title, 'V2-B')
 })
 
-test('ensureRepo rejects a repository created under the wrong owner', async t => {
-  const originalFetch = globalThis.fetch
-  t.after(() => { globalThis.fetch = originalFetch })
-  let requestCount = 0
-  globalThis.fetch = async () => {
-    requestCount += 1
-    if (requestCount === 1) return new Response('{}', { status: 404 })
-    return Response.json({ full_name: 'token-user/mindmaps', private: true, permissions: { push: true } })
-  }
-
-  await assert.rejects(
-    ensureRepo({ token: 'secret', repo: 'some-org/mindmaps', branch: 'main' }),
-    /some-org\/mindmaps|owner|擁有者|PAT/u
-  )
-})
-
-test('ensureRepo auto-initializes a new repo and wraps hidden existing repos with PAT guidance', async t => {
-  const originalFetch = globalThis.fetch
-  t.after(() => { globalThis.fetch = originalFetch })
-  const requestBodies = []
-  let mode = 'create'
-  globalThis.fetch = async (_url, init = {}) => {
-    if ((init.method || 'GET') === 'GET') return new Response('{}', { status: 404 })
-    requestBodies.push(JSON.parse(init.body))
-    if (mode === 'hidden') return Response.json({ message: 'name already exists on this account' }, { status: 422 })
-    return Response.json({
-      full_name: 'owner/mindmaps',
-      private: true,
-      permissions: { push: true }
-    })
-  }
-
-  await ensureRepo({ token: 'secret', repo: 'owner/mindmaps', branch: 'sync-main' })
-  assert.deepEqual(requestBodies[0], {
-    name: 'mindmaps',
-    private: true,
-    auto_init: true,
-    default_branch: 'sync-main'
-  })
-
-  mode = 'hidden'
-  await assert.rejects(
-    ensureRepo({ token: 'secret', repo: 'owner/mindmaps', branch: 'main' }),
-    /PAT|fine-grained|授權/u
-  )
-})
-
-test('getRef explains how to recover an already-existing empty repository', async t => {
-  const originalFetch = globalThis.fetch
-  t.after(() => { globalThis.fetch = originalFetch })
-  globalThis.fetch = async () => Response.json({ message: 'Git Repository is empty.' }, { status: 409 })
-  await assert.rejects(
-    getRef({ token: 'secret', repo: 'owner/mindmaps', branch: 'main' }),
-    /建立第一個 commit|加入初始 commit|刪除.*重新建立/ui
-  )
-})
-
 test('a corrupt settings file is preserved and surfaced instead of silently disabling sync', () => {
   const userDataPath = mkdtempSync(join(tmpdir(), 'mindflow-sync-settings-'))
   try {
@@ -820,23 +762,26 @@ test('computeLocalWrites fails closed when a required pulled blob is missing', (
 
 // ── M1 版本閘門：較新格式（schemaVersion 2）一律停止同步，避免舊版白名單把新欄位刪掉 ──
 test('版本閘門：本版支援的格式通過，沒有版本號的舊資料也通過', () => {
-  assert.equal(MANIFEST_SCHEMA_VERSION, 1)
-  assert.equal(SUPPORTED_DOC_SCHEMA_VERSION, 1)
+  assert.equal(MANIFEST_SCHEMA_VERSION, 2)
+  assert.equal(SUPPORTED_DOC_SCHEMA_VERSION, 2)
   assert.doesNotThrow(() => assertSupportedManifest(emptyManifest()))
   assert.doesNotThrow(() => assertSupportedManifest({ docs: {} }))
   assert.doesNotThrow(() => assertSupportedManifest(null))
   assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', title: 'A' }), 'a'))
   assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion: 1 }), 'a'))
+  assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion: 2 }), 'a'))
+  assert.doesNotThrow(() => assertSupportedManifest({ schemaVersion: 1, docs: {} }), 'M1 寫的 v1 仍可讀（推送時升級）')
   assert.doesNotThrow(() => assertSupportedDocument('not json', 'a'), '損壞 blob 由既有的損壞檢查處理，不是版本問題')
 })
 
 test('版本閘門：較新或看不懂的版本號一律拒絕', () => {
-  for (const schemaVersion of [2, 99, '2', 1.5, 0, -1]) {
+  for (const schemaVersion of [3, 99, '2', 2.5, 0, -1]) {
     assert.throws(() => assertSupportedManifest({ schemaVersion, docs: {} }), SyncSchemaError, `manifest ${schemaVersion}`)
     assert.throws(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion }), 'a'), SyncSchemaError, `doc ${schemaVersion}`)
   }
   try {
-    assertSupportedDocument(JSON.stringify({ id: 'x', schemaVersion: 2 }), 'x')
+    assertSupportedDocument(JSON.stringify({ id: 'x', schemaVersion: 3 }), 'x')
+    assert.fail('v3 文件必須被拒絕')
   } catch (error) {
     assert.equal(error.code, 'SCHEMA_TOO_NEW')
     assert.equal(error.kind, 'document')
@@ -845,28 +790,28 @@ test('版本閘門：較新或看不懂的版本號一律拒絕', () => {
   }
 })
 
-test('版本閘門：computeSyncPlan 碰到 v2 manifest 直接中止，不產生任何計畫', () => {
+test('版本閘門：computeSyncPlan 碰到 v3 manifest 直接中止，不產生任何計畫', () => {
   assert.throws(() => computeSyncPlan({
     local: buildLocalState({}),
-    remoteManifest: { ...emptyManifest(), schemaVersion: 2 },
+    remoteManifest: { ...emptyManifest(), schemaVersion: 3 },
     base: null,
     machineId: 'm',
     now: T0
   }), SyncSchemaError)
 })
 
-test('版本閘門：computeLocalWrites 拉到 v2 文件就中止，不寫任何 key', () => {
+test('版本閘門：computeLocalWrites 拉到 v3 文件就中止，不寫任何 key', () => {
   const plan = {
     pullDocs: ['future'],
     purgeLocal: [],
     nextManifest: { ...emptyManifest(), docs: { future: { title: 'F', createdAt: T0, updatedAt: T1, state: 'active' } } }
   }
-  const pulledBlobs = { future: JSON.stringify({ id: 'future', title: 'F', schemaVersion: 2, conflicts: [] }) }
+  const pulledBlobs = { future: JSON.stringify({ id: 'future', title: 'F', schemaVersion: 3, conflicts: [] }) }
   assert.throws(() => computeLocalWrites({ plan, pulledBlobs, localState: buildLocalState({}) }), SyncSchemaError)
 })
 
 test('版本閘門：較新格式的文件不能被做成衝突副本（會被本機白名單默默降版）', () => {
-  assert.throws(() => buildConflictCopy(JSON.stringify({ id: 'a', title: 'A', schemaVersion: 2 }), 'pc', T0), SyncSchemaError)
+  assert.throws(() => buildConflictCopy(JSON.stringify({ id: 'a', title: 'A', schemaVersion: 3 }), 'pc', T0), SyncSchemaError)
 })
 
 // ── M1 同步競爭：套用前比對快照 ──
@@ -911,4 +856,16 @@ test('M1 審查：base 只在本機儲存區識別碼相符時可信（遺失、
   assert.equal(trustedBase(state, { [STORE_EPOCH_KEY]: 'other' }), null)
   assert.equal(trustedBase({ ...state, storeEpoch: null }, { [STORE_EPOCH_KEY]: 'epoch-1' }), null, '舊版沒有識別碼的 base 先當首次同步一次')
   assert.equal(trustedBase({ ...state, lastSyncedCommitSha: null }, { [STORE_EPOCH_KEY]: 'epoch-1' }), null)
+})
+
+test('M2a：內容衝突兩邊都有 HLC 時比 HLC，不比牆鐘 updatedAt', () => {
+  const base = syncedBase({ a: meta('a', T1) })
+  const local = localState({ a: { ...meta('a', T3), hlc: '0000000001000-0000-pc' } })
+  const remote = manifest({ a: { ...meta('a', T2), hlc: '0000000002000-0000-phone' } })
+  const result = planFor(local, remote, base)
+  assert.deepEqual(result.conflicts, [{ id: 'a', winner: 'remote', loserCopyFrom: 'local' }], '本機 updatedAt 較晚，但 HLC 較早 → 遠端勝')
+  assert.equal(result.nextManifest.docs.a.hlc, '0000000002000-0000-phone')
+  // 只有一邊有 HLC（v1 資料）時退回比 updatedAt
+  const legacy = planFor(local, manifest({ a: meta('a', T2) }), base)
+  assert.equal(legacy.conflicts[0].winner, 'local')
 })

@@ -1,510 +1,147 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { getCapacitorPreferences } from '../../js/capacitor-plugins.mjs'
 import { detectSyncEnvironment } from '../../js/settings.js'
+import { createSyncEngine } from '../../js/sync/engine.mjs'
+import { createMemoryKv } from '../../js/sync/kv.mjs'
 import {
   MOBILE_SYNC_CONFIG_KEY,
+  MOBILE_SYNC_STATE_KEY,
   MOBILE_SYNC_TOKEN_KEY,
-  MOBILE_SYNC_RETRY_INITIAL_MS,
-  MOBILE_SYNC_RETRY_MAX_MS,
-  createMobileSyncApi,
-  createMobileSyncLifecycle,
-  getCapacitorPreferences
-} from '../../js/sync-mobile.mjs'
+  createMobilePlatform
+} from '../../js/sync/platform-mobile.mjs'
 
 class MemoryPreferences {
-  constructor() {
+  constructor() { this.values = new Map() }
+  async get({ key }) { return { value: this.values.get(key) ?? null } }
+  async set({ key, value }) { this.values.set(key, String(value)) }
+  async remove({ key }) { this.values.delete(key) }
+}
+
+class FakeSecureStorage {
+  constructor({ available = true, failSet = false, failRemove = false } = {}) {
     this.values = new Map()
+    this.available = available
+    this.failSet = failSet
+    this.failRemove = failRemove
   }
-
-  async get({ key }) {
-    return { value: this.values.get(key) ?? null }
-  }
-
-  async set({ key, value }) {
-    this.values.set(key, String(value))
-  }
-
-  async remove({ key }) {
-    this.values.delete(key)
-  }
+  async isAvailable() { return { available: this.available } }
+  async get({ key }) { return { value: this.values.get(key) ?? null } }
+  async set({ key, value }) { if (this.failSet) throw new Error('UNAVAILABLE'); this.values.set(key, String(value)) }
+  async remove({ key }) { if (this.failRemove) throw new Error('UNAVAILABLE'); this.values.delete(key) }
 }
 
 class MemoryStorage {
-  constructor(entries = {}) {
-    this.values = new Map(Object.entries(entries))
-  }
-
-  get length() {
-    return this.values.size
-  }
-
-  key(index) {
-    return [...this.values.keys()][index] ?? null
-  }
-
-  getItem(key) {
-    return this.values.get(String(key)) ?? null
-  }
-
-  setItem(key, value) {
-    this.values.set(String(key), String(value))
-  }
-
-  removeItem(key) {
-    this.values.delete(String(key))
-  }
-
-  clear() {
-    this.values.clear()
-  }
-
-  snapshot() {
-    return Object.fromEntries(this.values)
-  }
+  constructor() { this.values = new Map() }
+  get length() { return this.values.size }
+  key(index) { return [...this.values.keys()][index] ?? null }
+  getItem(key) { return this.values.get(String(key)) ?? null }
+  setItem(key, value) { this.values.set(String(key), String(value)) }
+  removeItem(key) { this.values.delete(String(key)) }
+  snapshot() { return Object.fromEntries(this.values) }
 }
 
-class FakeDocument extends EventTarget {
-  visibilityState = 'visible'
-}
-
-function createTimers() {
-  let nextId = 0
-  const pending = new Map()
-  const delays = new Map()
-  return {
-    setTimeout(callback, delay) {
-      const id = ++nextId
-      pending.set(id, callback)
-      delays.set(id, delay)
-      return id
-    },
-    delays() {
-      return [...pending.keys()].map(id => delays.get(id))
-    },
-    clearTimeout(id) {
-      pending.delete(id)
-    },
-    async runAll() {
-      const callbacks = [...pending.values()]
-      pending.clear()
-      for (const callback of callbacks) await callback()
-    },
-    get size() {
-      return pending.size
-    }
-  }
+function engineFor({ preferences = new MemoryPreferences(), secureStorage = null, storage = new MemoryStorage(), kv = createMemoryKv() } = {}) {
+  const engine = createSyncEngine({
+    platform: createMobilePlatform({ preferences, secureStorage, fetchFn: async () => { throw new Error('disabled sync must not fetch') } }),
+    storage,
+    kv,
+    autoStart: false,
+    documentRef: null,
+    windowRef: null,
+    observeLocalChanges: () => () => {}
+  })
+  return { engine, preferences, secureStorage, storage, kv }
 }
 
 test('settings environment routing prefers Electron, enables native Capacitor, and disables plain web', () => {
-  const electronApi = { getConfig() {} }
-  assert.equal(detectSyncEnvironment({
-    mindflowSync: electronApi,
-    Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android' }
-  }), 'electron')
-  assert.equal(detectSyncEnvironment({
-    Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android' }
-  }), 'capacitor')
-  assert.equal(detectSyncEnvironment({
-    Capacitor: { isNativePlatform: () => false, getPlatform: () => 'web' }
-  }), 'web')
+  assert.equal(detectSyncEnvironment({ mindflowSync: { getConfig() {} }, Capacitor: { isNativePlatform: () => true } }), 'electron')
+  assert.equal(detectSyncEnvironment({ Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android' } }), 'capacitor')
+  assert.equal(detectSyncEnvironment({ Capacitor: { isNativePlatform: () => false, getPlatform: () => 'web' } }), 'web')
   assert.equal(detectSyncEnvironment({}), 'web')
 })
 
 test('native Capacitor registers Preferences without requiring a bundled bare-module import', () => {
   const preferences = new MemoryPreferences()
   const registrations = []
-  const windowRef = {
-    Capacitor: {
-      isNativePlatform: () => true,
-      getPlatform: () => 'android',
-      registerPlugin(name) {
-        registrations.push(name)
-        return preferences
-      }
-    }
-  }
-
+  const windowRef = { Capacitor: { isNativePlatform: () => true, registerPlugin(name) { registrations.push(name); return preferences } } }
   assert.equal(getCapacitorPreferences(windowRef), preferences)
   assert.deepEqual(registrations, ['Preferences'])
 })
 
-class FakeSecureStorage {
-  constructor({ available = true, failSet = false } = {}) {
-    this.values = new Map()
-    this.available = available
-    this.failSet = failSet
-  }
-
-  async isAvailable() {
-    return { available: this.available }
-  }
-
-  async get({ key }) {
-    return { value: this.values.get(key) ?? null }
-  }
-
-  async set({ key, value }) {
-    if (this.failSet) throw new Error('UNAVAILABLE')
-    this.values.set(key, String(value))
-  }
-
-  async remove({ key }) {
-    this.values.delete(key)
-  }
-}
-
-function disabledApi(options) {
-  return createMobileSyncApi({
-    storage: new MemoryStorage(),
-    autoStart: false,
-    fetchFn: async () => { throw new Error('disabled sync must not fetch') },
-    ...options
-  })
-}
-
-test('mobile config keeps the PAT only in the Keystore-backed secure storage and exposes hasToken instead', async () => {
-  const preferences = new MemoryPreferences()
-  const secureStorage = new FakeSecureStorage()
-  const storage = new MemoryStorage()
-  const api = disabledApi({ preferences, secureStorage, storage })
+test('the PAT lives only in the Keystore-backed secure storage; getConfig exposes hasToken and where it is', async () => {
+  const env = engineFor({ secureStorage: new FakeSecureStorage() })
   const token = 'github_pat_mobile_secret'
-
-  assert.deepEqual(await api.setConfig({ enabled: false, repo: 'chenrui/mindflow-data', token }), { ok: true })
-  assert.deepEqual(await api.getConfig(), {
-    enabled: false,
-    repo: 'chenrui/mindflow-data',
-    hasToken: true,
-    tokenStorage: 'secure'
-  })
-  assert.equal(secureStorage.values.get(MOBILE_SYNC_TOKEN_KEY), token)
-  assert.equal(preferences.values.has(MOBILE_SYNC_TOKEN_KEY), false, 'Preferences 不留明文')
-  assert.equal(JSON.stringify([...preferences.values.values()]).includes(token), false)
-  assert.equal(JSON.stringify(storage.snapshot()).includes(token), false)
-  assert.equal(JSON.stringify(await api.getConfig()).includes(token), false)
-
-  // 清除權杖也要從安全儲存移除
-  assert.deepEqual(await api.setConfig({ enabled: false, token: '' }), { ok: true })
-  assert.equal(secureStorage.values.has(MOBILE_SYNC_TOKEN_KEY), false)
-  assert.equal((await api.getConfig()).hasToken, false)
-  await api.dispose()
+  assert.deepEqual(await env.engine.setConfig({ enabled: false, repo: 'chenrui/mindflow-data', token }), { ok: true })
+  assert.deepEqual(await env.engine.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'secure' })
+  assert.equal(env.secureStorage.values.get(MOBILE_SYNC_TOKEN_KEY), token)
+  assert.equal(env.preferences.values.has(MOBILE_SYNC_TOKEN_KEY), false)
+  assert.equal(JSON.stringify([...env.preferences.values.values()]).includes(token), false)
+  assert.equal(JSON.stringify(env.storage.snapshot()).includes(token), false)
+  assert.equal(JSON.stringify(env.kv.snapshot()).includes(token), false)
+  assert.deepEqual(await env.engine.setConfig({ token: '' }), { ok: true })
+  assert.equal(env.secureStorage.values.has(MOBILE_SYNC_TOKEN_KEY), false)
+  await env.engine.dispose()
 })
 
-test('a plaintext PAT left in Preferences by an older app is moved into secure storage and deleted', async () => {
+test('a plaintext PAT left by an older app is moved into secure storage and deleted', async () => {
   const preferences = new MemoryPreferences()
-  const token = 'github_pat_legacy_plaintext'
-  preferences.values.set(MOBILE_SYNC_TOKEN_KEY, token)
+  preferences.values.set(MOBILE_SYNC_TOKEN_KEY, 'github_pat_legacy_plaintext')
   preferences.values.set(MOBILE_SYNC_CONFIG_KEY, JSON.stringify({ enabled: false, repo: 'chenrui/mindflow-data' }))
-  const secureStorage = new FakeSecureStorage()
-  const api = disabledApi({ preferences, secureStorage })
-
-  assert.deepEqual(await api.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'secure' })
-  assert.equal(secureStorage.values.get(MOBILE_SYNC_TOKEN_KEY), token)
+  const env = engineFor({ preferences, secureStorage: new FakeSecureStorage() })
+  assert.deepEqual(await env.engine.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'secure' })
+  assert.equal(env.secureStorage.values.get(MOBILE_SYNC_TOKEN_KEY), 'github_pat_legacy_plaintext')
   assert.equal(preferences.values.has(MOBILE_SYNC_TOKEN_KEY), false)
-  await api.dispose()
+  await env.engine.dispose()
 })
 
-test('if secure storage cannot be written, the plaintext PAT is kept so sync keeps working', async () => {
+test('if secure storage cannot be written the plaintext PAT is kept, and a stale secure value is cleared', async () => {
   const preferences = new MemoryPreferences()
-  const token = 'github_pat_keep_me'
-  preferences.values.set(MOBILE_SYNC_TOKEN_KEY, token)
+  preferences.values.set(MOBILE_SYNC_TOKEN_KEY, 'github_pat_keep_me')
   const secureStorage = new FakeSecureStorage({ failSet: true })
-  const api = disabledApi({ preferences, secureStorage })
-  const config = await api.getConfig()
+  secureStorage.values.set('unrelated', 'x')
+  const env = engineFor({ preferences, secureStorage })
+  const config = await env.engine.getConfig()
   assert.equal(config.hasToken, true)
   assert.equal(config.tokenStorage, 'preferences')
-  assert.equal(preferences.values.get(MOBILE_SYNC_TOKEN_KEY), token)
-
-  assert.deepEqual(await api.setConfig({ token: 'github_pat_new_one' }), { ok: true })
+  assert.deepEqual(await env.engine.setConfig({ token: 'github_pat_new_one' }), { ok: true })
   assert.equal(preferences.values.get(MOBILE_SYNC_TOKEN_KEY), 'github_pat_new_one', '新輸入的 PAT 不能因安全儲存失敗而消失')
-  await api.dispose()
+  await env.engine.dispose()
 })
 
 test('without the secure storage plugin (older APK) the PAT stays in Preferences, never in localStorage or getConfig', async () => {
-  const preferences = new MemoryPreferences()
-  const storage = new MemoryStorage()
-  const api = disabledApi({ preferences, storage })
-  const token = 'github_pat_mobile_secret'
-  assert.deepEqual(await api.setConfig({ enabled: false, repo: 'chenrui/mindflow-data', token }), { ok: true })
-  assert.deepEqual(await api.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'preferences' })
-  assert.equal(preferences.values.get(MOBILE_SYNC_TOKEN_KEY), token)
-  assert.equal(preferences.values.get(MOBILE_SYNC_CONFIG_KEY)?.includes(token), false)
-  assert.equal(JSON.stringify(storage.snapshot()).includes(token), false)
-  await api.dispose()
+  const env = engineFor()
+  assert.deepEqual(await env.engine.setConfig({ enabled: false, repo: 'chenrui/mindflow-data', token: 'github_pat_no_plugin' }), { ok: true })
+  assert.deepEqual(await env.engine.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'preferences' })
+  assert.equal(env.preferences.values.get(MOBILE_SYNC_TOKEN_KEY), 'github_pat_no_plugin')
+  assert.equal(env.preferences.values.get(MOBILE_SYNC_CONFIG_KEY)?.includes('github_pat_no_plugin'), false)
+  await env.engine.dispose()
 })
 
 test('a Keystore key lost after restore (secure get returns null) just asks for the PAT again', async () => {
   const preferences = new MemoryPreferences()
   preferences.values.set(MOBILE_SYNC_CONFIG_KEY, JSON.stringify({ enabled: true, repo: 'chenrui/mindflow-data' }))
-  const api = disabledApi({ preferences, secureStorage: new FakeSecureStorage() })
-  const config = await api.getConfig()
+  const env = engineFor({ preferences, secureStorage: new FakeSecureStorage() })
+  const config = await env.engine.getConfig()
   assert.equal(config.hasToken, false)
   assert.equal(config.tokenStorage, 'secure')
-  await api.dispose()
+  assert.equal((await env.engine.getStatus()).state, 'disabled', '沒有 PAT 就不同步')
+  await env.engine.dispose()
 })
 
-test('pairing into a different repo or branch resets the sync base so the first sync only merges', async () => {
+test('invalid repo or branch names are rejected before anything is saved', async () => {
+  const env = engineFor({ secureStorage: new FakeSecureStorage() })
+  assert.equal((await env.engine.setConfig({ repo: 'no-slash' })).ok, false)
+  assert.equal((await env.engine.setConfig({ repo: 'a/b', branch: '../evil' })).ok, false)
+  assert.equal((await env.engine.setConfig({ enabled: true, repo: 'a/b' })).ok, false, '啟用需要 PAT')
+  assert.equal(env.preferences.values.has(MOBILE_SYNC_CONFIG_KEY), false)
+  await env.engine.dispose()
+})
+
+test('the M1 sync base in Preferences is offered for migration and the M1 state key is untouched', async () => {
   const preferences = new MemoryPreferences()
-  preferences.values.set(MOBILE_SYNC_CONFIG_KEY, JSON.stringify({ enabled: false, repo: 'chenrui/old-data', branch: 'main' }))
-  preferences.values.set('mindflow.sync.mobile.state', JSON.stringify({
-    lastSyncedCommitSha: 'abc123',
-    baseManifest: { schemaVersion: 1, docs: { a: { updatedAt: '2026-01-01T00:00:00.000Z' } }, favorites: [], tombstones: {} },
-    perDoc: { a: '2026-01-01T00:00:00.000Z' },
-    machineId: 'android-keep-me'
-  }))
-  const api = disabledApi({ preferences, secureStorage: new FakeSecureStorage() })
-  assert.deepEqual(await api.setConfig({ repo: 'chenrui/old-data', token: 'github_pat_same_repo_token' }), { ok: true })
-  assert.equal(JSON.parse(preferences.values.get('mindflow.sync.mobile.state')).lastSyncedCommitSha, 'abc123', '同一個 repo 換權杖不重設')
-
-  assert.deepEqual(await api.setConfig({ repo: 'chenrui/new-data', branch: 'sync' }), { ok: true })
-  const state = JSON.parse(preferences.values.get('mindflow.sync.mobile.state'))
-  assert.equal(state.lastSyncedCommitSha, null)
-  assert.equal(state.baseManifest, null)
-  assert.equal(state.machineId, 'android-keep-me', '裝置 id 保留')
-  assert.equal(JSON.parse(preferences.values.get(MOBILE_SYNC_CONFIG_KEY)).branch, 'sync')
-
-  assert.equal((await api.setConfig({ branch: '../evil' })).ok, false)
-  await api.dispose()
-})
-
-test('mobile lifecycle pulls on startup and visibility, while local saves collapse into one debounced push', async () => {
-  const documentRef = new FakeDocument()
-  const timers = createTimers()
-  const reasons = []
-  let notifyLocalSave
-  const lifecycle = createMobileSyncLifecycle({
-    syncNow: async ({ reason }) => { reasons.push(reason) },
-    documentRef,
-    debounceMs: 45_000,
-    setTimeoutFn: callback => timers.setTimeout(callback),
-    clearTimeoutFn: id => timers.clearTimeout(id),
-    observeLocalChanges(callback) {
-      notifyLocalSave = callback
-      return () => { notifyLocalSave = null }
-    }
-  })
-
-  await lifecycle.start()
-  assert.deepEqual(reasons, ['startup'])
-
-  notifyLocalSave()
-  notifyLocalSave()
-  assert.equal(timers.size, 1)
-  await timers.runAll()
-  assert.deepEqual(reasons, ['startup', 'local-change'])
-
-  documentRef.visibilityState = 'hidden'
-  documentRef.dispatchEvent(new Event('visibilitychange'))
-  await Promise.resolve()
-  assert.deepEqual(reasons, ['startup', 'local-change'])
-
-  documentRef.visibilityState = 'visible'
-  documentRef.dispatchEvent(new Event('visibilitychange'))
-  await Promise.resolve()
-  assert.deepEqual(reasons, ['startup', 'local-change', 'visibility'])
-
-  lifecycle.stop()
-  assert.equal(notifyLocalSave, null)
-})
-
-function createIntervals() {
-  let nextId = 0
-  const active = new Map()
-  return {
-    setInterval(callback, delay) {
-      const id = ++nextId
-      active.set(id, { callback, delay })
-      return id
-    },
-    clearInterval(id) {
-      active.delete(id)
-    },
-    async tick() {
-      for (const { callback } of [...active.values()]) await callback()
-    },
-    get size() {
-      return active.size
-    },
-    get delays() {
-      return [...active.values()].map(item => item.delay)
-    }
-  }
-}
-
-function createLifecycleHarness({ pollRemote } = {}) {
-  const documentRef = new FakeDocument()
-  const windowRef = new EventTarget()
-  const timers = createTimers()
-  const intervals = createIntervals()
-  const reasons = []
-  let notifyLocalSave
-  const lifecycle = createMobileSyncLifecycle({
-    syncNow: async ({ reason }) => { reasons.push(reason) },
-    pollRemote,
-    documentRef,
-    windowRef,
-    debounceMs: 45_000,
-    pullIntervalMs: 300_000,
-    setTimeoutFn: (callback, delay) => timers.setTimeout(callback, delay),
-    clearTimeoutFn: id => timers.clearTimeout(id),
-    setIntervalFn: (callback, delay) => intervals.setInterval(callback, delay),
-    clearIntervalFn: id => intervals.clearInterval(id),
-    observeLocalChanges(callback) {
-      notifyLocalSave = callback
-      return () => { notifyLocalSave = null }
-    }
-  })
-  return {
-    documentRef,
-    windowRef,
-    timers,
-    intervals,
-    reasons,
-    lifecycle,
-    save: () => notifyLocalSave(),
-    setVisibility(state) {
-      documentRef.visibilityState = state
-      documentRef.dispatchEvent(new Event('visibilitychange'))
-    }
-  }
-}
-
-test('mobile lifecycle syncs as soon as the network comes back', async () => {
-  const harness = createLifecycleHarness()
-  await harness.lifecycle.start()
-  harness.windowRef.dispatchEvent(new Event('online'))
-  await Promise.resolve()
-  assert.deepEqual(harness.reasons, ['startup', 'online'])
-  harness.lifecycle.stop()
-  harness.windowRef.dispatchEvent(new Event('online'))
-  await Promise.resolve()
-  assert.deepEqual(harness.reasons, ['startup', 'online'], 'stop() 後不再監聽網路恢復')
-})
-
-test('mobile lifecycle polls the remote only while the app is in the foreground', async () => {
-  let polls = 0
-  const harness = createLifecycleHarness({ pollRemote: async () => { polls += 1 } })
-  await harness.lifecycle.start()
-  assert.deepEqual(harness.intervals.delays, [300_000])
-  await harness.intervals.tick()
-  assert.equal(polls, 1)
-  assert.deepEqual(harness.reasons, ['startup'], '輪詢走 pollRemote（先比 ETag），不直接跑完整同步')
-
-  harness.setVisibility('hidden')
-  assert.equal(harness.intervals.size, 0, '進背景停止輪詢')
-  harness.setVisibility('visible')
-  await Promise.resolve()
-  assert.equal(harness.intervals.size, 1, '回前景恢復輪詢')
-  assert.deepEqual(harness.reasons, ['startup', 'visibility'])
-
-  harness.lifecycle.stop()
-  assert.equal(harness.intervals.size, 0)
-})
-
-test('mobile lifecycle starts without polling when launched in the background', async () => {
-  const harness = createLifecycleHarness()
-  harness.documentRef.visibilityState = 'hidden'
-  await harness.lifecycle.start()
-  assert.equal(harness.intervals.size, 0)
-  harness.lifecycle.stop()
-})
-
-test('going to the background pushes a pending local save immediately instead of waiting 45 seconds', async () => {
-  const harness = createLifecycleHarness()
-  await harness.lifecycle.start()
-  harness.save()
-  assert.equal(harness.timers.size, 1)
-  harness.setVisibility('hidden')
-  await Promise.resolve()
-  assert.equal(harness.timers.size, 0, '背景 flush 會取消 debounce timer')
-  assert.deepEqual(harness.reasons, ['startup', 'hidden'])
-  harness.lifecycle.stop()
-})
-
-test('a save that happens while the app is already hidden is pushed right away', async () => {
-  const harness = createLifecycleHarness()
-  await harness.lifecycle.start()
-  harness.setVisibility('hidden')
-  harness.save()
-  await Promise.resolve()
-  assert.equal(harness.timers.size, 0)
-  assert.deepEqual(harness.reasons, ['startup', 'hidden-change'])
-  harness.lifecycle.stop()
-})
-
-test('flush() pushes a pending save now and is a no-op when nothing is pending', async () => {
-  const harness = createLifecycleHarness()
-  await harness.lifecycle.start()
-  harness.lifecycle.flush('back-button')
-  assert.deepEqual(harness.reasons, ['startup'])
-  harness.save()
-  harness.lifecycle.flush('back-button')
-  await Promise.resolve()
-  assert.deepEqual(harness.reasons, ['startup', 'back-button'])
-  assert.equal(harness.timers.size, 0)
-  harness.lifecycle.stop()
-})
-
-function createFailingApi(fetchFn) {
-  const timers = createTimers()
-  const intervals = createIntervals()
-  const requests = []
-  const api = createMobileSyncApi({
-    preferences: new MemoryPreferences(),
-    storage: new MemoryStorage({ 'mindflow.docs.index': JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }) }),
-    fetchFn: async (url, init) => {
-      requests.push({ url, init })
-      return fetchFn(url, init)
-    },
-    machineId: 'android-retry',
-    autoStart: true,
-    documentRef: new FakeDocument(),
-    windowRef: new EventTarget(),
-    observeLocalChanges: () => () => {},
-    setTimeoutFn: (callback, delay) => timers.setTimeout(callback, delay),
-    clearTimeoutFn: id => timers.clearTimeout(id),
-    setIntervalFn: (callback, delay) => intervals.setInterval(callback, delay),
-    clearIntervalFn: id => intervals.clearInterval(id)
-  })
-  return { api, timers, intervals, requests }
-}
-
-test('network failures retry with backoff (30 s doubling to 5 min) and never bypass the HTTP cache rule', async () => {
-  const token = 'github_pat_RETRY_SECRET_VALUE'
-  const { api, timers, requests } = createFailingApi(async () => {
-    throw new Error(`socket hang up for ${token}`)
-  })
-  assert.deepEqual(await api.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token }), { ok: true })
-  assert.equal((await api.getStatus()).state, 'offline')
-  assert.ok(requests.length > 0)
-  assert.ok(requests.every(request => request.init.cache === 'no-store'), '每個 GitHub 請求都要繞過 WebView HTTP 快取')
-  assert.deepEqual(timers.delays(), [MOBILE_SYNC_RETRY_INITIAL_MS])
-
-  const seen = []
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    await timers.runAll()
-    await api.syncNow({ reason: 'settle' })
-    seen.push(...timers.delays())
-  }
-  assert.equal(timers.size, 1, '同一時間最多一個重試計時器')
-  assert.equal(Math.max(...seen), MOBILE_SYNC_RETRY_MAX_MS)
-  assert.ok(seen.every(delay => delay <= MOBILE_SYNC_RETRY_MAX_MS))
-
-  const diagnostics = await api.getDiagnostics()
-  assert.ok(diagnostics.length > 0)
-  assert.ok(diagnostics.some(entry => entry.reason === 'retry' && entry.ok === false))
-  assert.equal(JSON.stringify(diagnostics).includes(token), false, '診斷紀錄不能含權杖')
-  await api.dispose()
-  assert.equal(timers.size, 0, 'dispose 取消排著的重試')
-})
-
-test('authentication failures do not retry in a loop', async () => {
-  const { api, timers } = createFailingApi(async () => new Response(JSON.stringify({ message: 'Bad credentials' }), {
-    status: 401,
-    headers: { 'content-type': 'application/json' }
-  }))
-  assert.deepEqual(await api.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token: 'github_pat_bad' }), { ok: true })
-  assert.equal((await api.getStatus()).state, 'error')
-  assert.equal(timers.size, 0)
-  await api.dispose()
+  preferences.values.set(MOBILE_SYNC_STATE_KEY, JSON.stringify({ lastSyncedCommitSha: 'c1', baseManifest: { docs: {} }, perDoc: {}, machineId: 'mobile-legacy-1', storeEpoch: 'e1' }))
+  const platform = createMobilePlatform({ preferences, fetchFn: async () => { throw new Error('no fetch') } })
+  assert.deepEqual(await platform.loadLegacyState(), { lastSyncedCommitSha: 'c1', baseManifest: { docs: {} }, perDoc: {}, machineId: 'mobile-legacy-1', storeEpoch: 'e1' })
 })
