@@ -5,23 +5,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/patch-capacitor-cli.mjs",
     "copy-web": "node scripts/copy-web.mjs",
     "test": "node --test test/*.test.mjs",
     "sync": "npm run copy-web && cap sync android"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
-    "@capacitor/android": "6.2.1",
-    "@capacitor/core": "6.2.1",
-    "@capacitor/preferences": "6.0.4"
+    "@capacitor-mlkit/barcode-scanning": "8.2.1",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.4",
+    "@capacitor/preferences": "8.0.1",
+    "@capacitor/share": "8.0.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "6.2.1"
+    "@capacitor/cli": "8.5.3"
   },
   "overrides": {
-    "tar": "7.5.22"
+    "uuid": "11.1.1"
   }
 }

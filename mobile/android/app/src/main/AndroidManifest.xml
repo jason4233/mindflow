@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Auto Backup stays on (WebView localStorage under app_webview/ is restored on a new phone),
+      but the MindflowSecureStorage file is excluded: its Android Keystore key never leaves the
+      device, so a restored copy could not be decrypted anyway.
+      dataExtractionRules applies to Android 12+ (API 31+), fullBackupContent to Android 11 and older.
+    -->
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
@@ -27,6 +35,13 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          Lets Google Play services fetch the Google code scanner UI module ahead of time when the app
+          is installed from Play. Sideloaded installs download it on demand through
+          BarcodeScanner.installGoogleBarcodeScannerModule(). scan() needs no CAMERA permission.
+        -->
+        <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
     </application>
 
     <!-- Permissions -->
