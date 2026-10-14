@@ -806,7 +806,8 @@ export function createMobileSyncApi({
   setTimeoutFn = globalThis.setTimeout,
   clearTimeoutFn = globalThis.clearTimeout,
   setIntervalFn = globalThis.setInterval,
-  clearIntervalFn = globalThis.clearInterval
+  clearIntervalFn = globalThis.clearInterval,
+  startGate = null
 } = {}) {
   if (!storage || !hasMethods(storage, ['getItem', 'setItem', 'removeItem', 'key'])) {
     throw new TypeError('localStorage is required')
@@ -826,7 +827,8 @@ export function createMobileSyncApi({
   let retryDelayMs = retryInitialMs
   const diagnostics = []
 
-  const ready = preferenceStore.load().then(loaded => {
+  // startGate：App 啟動時的備份還原檢查；完成前不讀本機狀態、不開始同步。
+  const ready = Promise.all([preferenceStore.load(), Promise.resolve(startGate).catch(() => {})]).then(([loaded]) => {
     config = { ...loaded.config, apiBase }
     state = loaded.state
     status = publicStatus({

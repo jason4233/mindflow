@@ -5,6 +5,9 @@ import {
   getCapacitorPreferences,
   isNativeCapacitor
 } from './sync-mobile.mjs'
+import { startMobileBackups } from './mobile-backup.mjs'
+import { mountMobileBackupSection, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
+import { importDocumentCopy } from './store.js'
 
 const STATUS_COPY = {
   disabled: { label: '同步未啟用', tone: 'muted' },
@@ -17,6 +20,7 @@ const STATUS_COPY = {
 const boundTriggers = new WeakSet()
 let controller = null
 let mobileSyncApi = null
+let mobileBackups = null
 
 export function describeSyncStatus(status = {}, environment = true) {
   const syncAvailable = environment === true || environment === 'electron' || environment === 'capacitor'
@@ -99,6 +103,7 @@ function createSyncSettingsController() {
 
   desktopPanel.hidden = !syncAvailable
   webPanel.hidden = syncAvailable
+  if (environment.kind === 'capacitor') mountMobileBackupSection(dialog.querySelector('[data-sync-form]'), { store: mobileBackups?.store })
 
   dialog.querySelector('[data-sync-close]').addEventListener('click', () => dialog.close())
   dialog.addEventListener('click', event => {
@@ -395,7 +400,9 @@ function resolveSyncEnvironment(windowRef = globalThis.window) {
           storage: windowRef.localStorage,
           fetchFn: windowRef.fetch?.bind(windowRef) || globalThis.fetch,
           documentRef: windowRef.document,
-          windowRef
+          windowRef,
+          // 儲存區整個不見時要先從手機備份還原，同步才開始；否則第一次同步看到的是空的本機。
+          startGate: mobileBackups?.ready
         })
       }
     }
@@ -406,6 +413,8 @@ function resolveSyncEnvironment(windowRef = globalThis.window) {
 
 // settings.js 也由 editor 入口匯入；在 UI 尚未開啟前先啟動，才能保證 app 開啟即 pull。
 if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis.window) === 'capacitor') {
+  mobileBackups = startMobileBackups({ windowRef: globalThis.window, importCopy: importDocumentCopy })
+  void mobileBackups?.ready.then(() => showRestoredNoticeIfNeeded())
   resolveSyncEnvironment(globalThis.window)
 }
 

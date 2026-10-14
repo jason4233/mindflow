@@ -347,6 +347,11 @@ export function preserveConflictCopy(id, { now = new Date() } = {}) {
   return createDocumentCopy(source, `${source.title}（衝突副本・覆蓋前保留 ${stamp}）`)
 }
 
+/** 以新 id 另存一份外來文件（手機備份還原用）；不覆蓋任何現有文件。 */
+export function importDocumentCopy(source, title) {
+  return createDocumentCopy(normalizeDoc(source), title)
+}
+
 function createDocumentCopy(source, title) {
   const copy = structuredCloneSafe(source)
   copy.id = createId('doc')

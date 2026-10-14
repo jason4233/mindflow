@@ -30,6 +30,7 @@
     "files": [
       "main.mjs",
       "app-paths.mjs",
+      "backup-rules.mjs",
       "backup-store.mjs",
       "legacy-storage.mjs",
       "protocol.mjs",
@@ -71,6 +72,10 @@
       {
         "from": "../js/qr-encode.mjs",
         "to": "js/qr-encode.mjs"
+      },
+      {
+        "from": "../js/backup-rules.mjs",
+        "to": "js/backup-rules.mjs"
       }
     ],
     "win": {
