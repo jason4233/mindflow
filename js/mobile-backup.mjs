@@ -10,12 +10,21 @@ import {
   normalizeMindflowEntries
 } from './backup-rules.mjs'
 import { getCapacitorPlugin } from './capacitor-plugins.mjs'
-import { assertSupportedDocument } from './sync-plan.mjs'
+import { STORE_EPOCH_KEY, assertSupportedDocument, newStoreEpoch } from './sync-plan.mjs'
 
 export const MOBILE_BACKUP_DIRECTORY = 'backups'
 export const MOBILE_BACKUP_LIMIT = 10
 export const MOBILE_BACKUP_INTERVAL_MS = 2 * 60_000
 export const MOBILE_BACKUP_FS_DIRECTORY = 'DATA'
+// 自動還原失敗時另存的備份：不在輪替名單裡，定期備份不會把它擠掉；一律不覆蓋不同的內容，
+// 不同次的失敗依序存到下一個位置（restore-failed.json、restore-failed-2.json …）
+const RESTORE_FAILED_PATHS = [
+  `${MOBILE_BACKUP_DIRECTORY}/restore-failed.json`,
+  ...Array.from({ length: 9 }, (_, index) => `${MOBILE_BACKUP_DIRECTORY}/restore-failed-${index + 2}.json`)
+]
+// 還原失敗、來源還沒另存成功時記下來源；保護好之前暫停輪替
+const RESTORE_PENDING_PATH = `${MOBILE_BACKUP_DIRECTORY}/restore-pending.json`
+const RESTORE_FAILED_NOTICE_KEY = 'mindflow.backup.restoreFailed'
 const EXPORT_FS_DIRECTORY = 'CACHE'
 const HISTORY_KEY_PREFIX = 'mindflow.history.'
 
@@ -116,6 +125,11 @@ export function createMobileBackupStore({
   const paths = mobileBackupPaths(limit)
   let lastHash = null
   let queue = Promise.resolve()
+  // 還原失敗、還沒另存成功的來源（也寫在 restore-pending.json，跨重開有效）
+  let pendingRestoreSource = null
+  const parseJsonText = text => {
+    try { return typeof text === 'string' ? JSON.parse(text) : null } catch { return null }
+  }
 
   const exists = async path => {
     try {
@@ -159,6 +173,8 @@ export function createMobileBackupStore({
       const serialized = JSON.stringify(entries)
       const hash = contentHash(serialized)
       if (hash === lastHash) return null
+      // 還原失敗、來源還沒另存成功：這一次不輪替（同步照常）
+      if (!(await ensureRestoreSourceProtected())) return null
 
       // 由舊到新反向複製，任何時刻至少仍留有一份可讀的上一版備份。
       for (let index = paths.length - 1; index >= 1; index -= 1) {
@@ -193,6 +209,12 @@ export function createMobileBackupStore({
 
   async function listBackups() {
     const list = []
+    for (const path of RESTORE_FAILED_PATHS) {
+      const preserved = await readBackup(path)
+      if (preserved) {
+        list.push({ path, createdAt: preserved.createdAt, reason: preserved.reason, docCount: backupDocuments(preserved.entries).length, preserved: true })
+      }
+    }
     for (const path of paths) {
       const backup = await readBackup(path)
       if (backup) list.push({ path, createdAt: backup.createdAt, reason: backup.reason, docCount: backupDocuments(backup.entries).length })
@@ -208,10 +230,109 @@ export function createMobileBackupStore({
     if (hasIntentionalMindflowState(readStorageEntries(storage))) return false
     const backup = await readLatestBackup()
     if (!backup) return false
-    // 讀備份的這段時間使用者可能已經新增了文件：寫入前再確認一次，免得備份的索引蓋掉新文件。
-    if (hasIntentionalMindflowState(readStorageEntries(storage))) return false
-    for (const [key, value] of Object.entries(backup.entries)) storage.setItem(key, value)
+    // 先記下這份來源：還原若失敗、另存又失敗，之後的備份輪替會先停下來（跨重開也有效）。
+    // 記錄本身也可能因空間不足而失敗，所以同時記在記憶體裡，這次開啟期間一樣暫停輪替。
+    pendingRestoreSource = backup.path
+    await writePendingMarker(backup.path).catch(() => {})
+    // 讀備份與記錄的這段時間使用者可能已經新增了文件：寫入前在同一段執行裡再確認一次，免得備份的索引蓋掉新文件。
+    if (hasIntentionalMindflowState(readStorageEntries(storage))) {
+      pendingRestoreSource = null
+      await writePendingMarker(null).catch(() => {})
+      return false
+    }
+    // 寫入還原內容之前先換掉本機儲存區識別碼：Preferences 裡的同步 base 是較新的那一份，
+    // 識別碼對不上才會被當成首次同步（只做聯集）。不能只移除標記——升級前沒有識別碼的 base
+    // 在「本機也沒有標記」時會被信任一次。標記先寫：還原內容落盤時，新標記一定已經在磁碟上。
+    const written = []
+    const write = (key, value) => {
+      written.push({ key, previous: storage.getItem(key) })
+      storage.setItem(key, value)
+    }
+    try {
+      write(STORE_EPOCH_KEY, newStoreEpoch())
+      for (const [key, value] of Object.entries(backup.entries)) write(key, value)
+    } catch (error) {
+      // 寫到一半失敗（多半是空間不足）：回滾已寫的，儲存區維持「空的」，下次開啟才會再自動還原；
+      // 半套內容會讓之後的檢查以為不需要還原，剩下的文件就再也不會自動救回。回滾本身失敗不能吞掉。
+      for (const item of written.reverse()) {
+        try {
+          if (item.previous === null) storage.removeItem(item.key)
+          else storage.setItem(item.key, item.previous)
+        } catch {
+          error.rollbackIncomplete = true
+        }
+      }
+      // 這份備份另存到不會被輪替的位置（「從自動備份還原」也找得到）；另存成功才解除輪替暫停
+      await ensureRestoreSourceProtected()
+      throw error
+    }
+    pendingRestoreSource = null
+    await writePendingMarker(null).catch(() => {})
     lastHash = contentHash(JSON.stringify(backup.entries))
+    return true
+  }
+
+  function writePendingMarker(source) {
+    return filesystem.writeFile({
+      path: RESTORE_PENDING_PATH,
+      data: JSON.stringify({ version: 1, source }),
+      directory,
+      encoding: 'utf8',
+      recursive: true
+    })
+  }
+
+  /**
+   * 把來源備份另存到保留檔。保留檔一律不覆蓋不同的內容：已有一份內容相同的就算保護好了（重試不重寫），
+   * 其餘依序找第一個空的位置。讀不到某個位置的狀態就丟錯，交給呼叫端當成「沒保護好」，不冒險覆蓋。
+   * 回傳保留檔路徑；來源檔已經不在時回傳 null（沒有東西可以保護）。
+   */
+  async function preserveRestoreSource(source) {
+    const sourceText = await readText(source)
+    if (sourceText === null) return null
+    for (const slot of RESTORE_FAILED_PATHS) {
+      const existing = await readText(slot)
+      if (existing === sourceText) return slot
+      if (existing === null) {
+        await filesystem.writeFile({ path: slot, data: sourceText, directory, encoding: 'utf8', recursive: true })
+        return slot
+      }
+    }
+    throw new Error('All restore-failed slots hold other preserved backups')
+  }
+
+  /**
+   * 輪替備份之前呼叫：有還原失敗、還沒保護好的來源就先另存；回傳 true 才可以輪替。
+   * 不變式：只有在「沒有待保護標記」或「這一次已另存並成功清掉標記」時才輪替。標記還在，來源就還沒被輪替，
+   * 重試只會複製到同一份內容（已存在就略過），保留檔不會被已輪替的新內容覆蓋。
+   * - 標記不存在（檔案不存在）＝沒有待保護的來源，可以輪替。
+   * - 標記存在但讀不出來（讀取錯誤）＝不能當成沒有，這一次不輪替。標記內容損壞則和電腦版一樣，當成沒有。
+   * - 另存失敗，或另存成功但清標記失敗＝這一次不輪替。
+   */
+  async function ensureRestoreSourceProtected() {
+    let source = pendingRestoreSource
+    if (!source) {
+      let markerText
+      try {
+        markerText = await readText(RESTORE_PENDING_PATH)
+      } catch {
+        return false
+      }
+      const marker = parseJsonText(markerText)
+      source = typeof marker?.source === 'string' && marker.source ? marker.source : null
+      if (!source) return true
+    }
+    try {
+      await preserveRestoreSource(source)
+    } catch {
+      return false
+    }
+    pendingRestoreSource = null
+    try {
+      await writePendingMarker(null)
+    } catch {
+      return false
+    }
     return true
   }
 
@@ -322,8 +443,24 @@ export function startMobileBackups({
     })
     return false
   }).catch(error => {
+    // 還原失敗不能跟「不需要還原」混成同一個結果：留下提示，也不啟動定期備份（避免把還沒救回的那份輪替掉）。
     console.error('MindFlow 備份還原檢查失敗', error)
+    try { windowRef?.sessionStorage?.setItem(RESTORE_FAILED_NOTICE_KEY, error?.rollbackIncomplete ? 'partial' : '1') } catch { /* 只影響提示 */ }
     return false
   })
   return { ready, store }
+}
+
+/**
+ * 啟動時的自動還原失敗過：回傳一次（true；撤回沒完成時回傳 'partial'），讓頁面提示使用者到「手機備份」手動還原。
+ */
+export function consumeRestoreFailedNotice(windowRef = globalThis.window) {
+  try {
+    const value = windowRef?.sessionStorage?.getItem(RESTORE_FAILED_NOTICE_KEY)
+    if (value !== '1' && value !== 'partial') return false
+    windowRef.sessionStorage.removeItem(RESTORE_FAILED_NOTICE_KEY)
+    return value === 'partial' ? 'partial' : true
+  } catch {
+    return false
+  }
 }

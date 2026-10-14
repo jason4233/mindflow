@@ -90,6 +90,20 @@ class MemoryStorage {
     this.setItem(`mindflow.doc.${id}`, JSON.stringify(document))
     this.setItem('mindflow.docs.index', JSON.stringify(index))
   }
+
+  purgeDoc(id) {
+    const index = JSON.parse(this.getItem('mindflow.docs.index'))
+    index.docs = index.docs.filter(item => item.id !== id)
+    index.trash = index.trash.filter(item => item.id !== id)
+    index.favorites = index.favorites.filter(favoriteId => favoriteId !== id)
+    this.removeItem(`mindflow.doc.${id}`)
+    this.setItem('mindflow.docs.index', JSON.stringify(index))
+  }
+
+  // 模擬程式被殺、localStorage 回到磁碟上較舊的內容
+  replaceAll(snapshot) {
+    this.values = new Map(Object.entries(snapshot))
+  }
 }
 
 function createTimers() {
@@ -208,6 +222,7 @@ async function createDesktopAndMobile({ fetchFn = fetch } = {}) {
   const mobileStorage = new MemoryStorage()
   const clock = { desktop: '2026-09-01T10:00:00.000Z', mobile: '2026-09-01T10:00:00.000Z' }
   const timers = createTimers()
+  const mobilePreferences = new MemoryPreferences()
   const desktop = createSyncEngineForTest({
     userDataPath,
     machineId: 'desktop-M1',
@@ -217,7 +232,7 @@ async function createDesktopAndMobile({ fetchFn = fetch } = {}) {
     applyWrites: async writes => desktopStorage.applyWrites(writes)
   })
   const mobile = createMobileSyncApi({
-    preferences: new MemoryPreferences(),
+    preferences: mobilePreferences,
     storage: mobileStorage,
     fetchFn: (url, init) => fetchFn(url, init),
     apiBase: server.apiBase,
@@ -235,6 +250,7 @@ async function createDesktopAndMobile({ fetchFn = fetch } = {}) {
     mobile,
     desktopStorage,
     mobileStorage,
+    mobilePreferences,
     clock,
     async close() {
       await mobile.dispose()
@@ -462,6 +478,143 @@ test('審查 BLOCKER 2：資料遺失後、第一次同步前先新增了文件�
     assert.deepEqual(Object.keys(remote.manifest.docs).sort(), ['A', 'B', 'C'])
     const local = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.id).sort()
     assert.deepEqual(local, ['A', 'B', 'C'])
+  } finally {
+    await env.close()
+  }
+})
+
+test('複審 HIGH（手機）：同步把遠端內容寫進本機後、localStorage 落盤前 App 被殺 → 重開後不刪雲端文件、不回退遠端修改', async () => {
+  const env = await createDesktopAndMobile()
+  try {
+    seedDoc(env.desktopStorage, { id: 'kept', title: 'kept v1', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.desktop.syncNow({ reason: 'seed' }), { ok: true })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    // WebView 約 5 秒後才把 localStorage 寫到磁碟：先記下手機「磁碟上」的內容（含當時的識別碼）
+    const diskBeforeSync = env.mobileStorage.snapshot()
+
+    env.clock.desktop = '2026-09-01T10:00:00.000Z'
+    env.desktopStorage.editDoc('kept', { title: 'kept v2（電腦的修改）', updatedAt: env.clock.desktop })
+    seedDoc(env.desktopStorage, { id: 'fresh', title: '電腦新建', at: env.clock.desktop })
+    assert.deepEqual(await env.desktop.syncNow({ reason: 'desktop-edit' }), { ok: true })
+
+    env.clock.mobile = '2026-09-01T10:05:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'pull' }), { ok: true })
+    assert.equal(JSON.parse(env.mobileStorage.getItem('mindflow.doc.fresh')).title, '電腦新建')
+    // Preferences 裡的同步狀態已立刻寫入，localStorage 卻還沒落盤就被滑掉：重開後是舊內容與舊識別碼
+    env.mobileStorage.replaceAll(diskBeforeSync)
+
+    env.clock.mobile = '2026-09-01T10:10:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-kill' }), { ok: true })
+    assert.deepEqual(await env.desktop.syncNow({ reason: 'pull' }), { ok: true })
+
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {}, '沒有任何文件被記成刪除')
+    assert.equal(remote.doc('fresh')?.title, '電腦新建', 'fresh 還在雲端')
+    assert.equal(remote.doc('kept').title, 'kept v2（電腦的修改）', 'kept 沒有被回退成 v1')
+    for (const storage of [env.mobileStorage, env.desktopStorage]) {
+      assert.equal(JSON.parse(storage.getItem('mindflow.doc.fresh')).title, '電腦新建')
+      assert.equal(JSON.parse(storage.getItem('mindflow.doc.kept')).title, 'kept v2（電腦的修改）')
+    }
+  } finally {
+    await env.close()
+  }
+})
+
+test('複審 HIGH 缺口（手機）：只推送、本機沒有其他寫入的一輪也要把新識別碼寫進本機，下一輪 base 才可信', async () => {
+  const env = await createDesktopAndMobile()
+  try {
+    const assertMarkerMatchesState = async label => {
+      const marker = env.mobileStorage.getItem('mindflow.sync.storeEpoch')
+      const saved = JSON.parse((await env.mobilePreferences.get({ key: 'mindflow.sync.mobile.state' })).value)
+      assert.equal(typeof marker, 'string', label)
+      assert.equal(marker, saved.storeEpoch, `${label}：本機標記必須與同步狀態的識別碼一致`)
+    }
+    const conflictTitles = () => JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.title).filter(title => title.includes('衝突副本'))
+
+    // 第一次同步只推送（雲端是空的）、第二次也只推送本機的修改：兩輪本機都沒有文件要寫入
+    seedDoc(env.mobileStorage, { id: 'solo', title: 'solo v1', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    await assertMarkerMatchesState('第一次同步後')
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    env.mobileStorage.editDoc('solo', { title: 'solo v2', updatedAt: env.clock.mobile })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'local-change' }), { ok: true })
+    await assertMarkerMatchesState('第二次同步後')
+    assert.deepEqual(conflictTitles(), [], '自己的修改不能被當成首次同步的衝突')
+    // base 可信時永久刪除才會傳到雲端；若被當成首次同步（只做聯集），文件會從雲端被拉回來
+    env.clock.mobile = '2026-09-01T11:00:00.000Z'
+    env.mobileStorage.purgeDoc('solo')
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'local-change' }), { ok: true })
+    assert.equal(typeof remoteState(env.server).manifest.tombstones.solo, 'string', '刪除必須傳到雲端')
+    assert.equal(env.mobileStorage.getItem('mindflow.doc.solo'), null, '文件不能被當成首次同步拉回來')
+  } finally {
+    await env.close()
+  }
+})
+
+test('Sol #1（手機）：推送成功但沒套用、立刻重試且兩邊內容已相同 → base 前進時也要換識別碼，之後被殺不會把較新版本蓋回', async () => {
+  const env = await createDesktopAndMobile()
+  try {
+    seedDoc(env.mobileStorage, { id: 'plan', title: 'plan t1', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    // 磁碟上是 t1（含當時的識別碼）；記憶體裡又改成 t2，還沒落盤
+    const disk = env.mobileStorage.snapshot()
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    env.mobileStorage.editDoc('plan', { title: 'plan t2', updatedAt: env.clock.mobile })
+
+    // 推送成功，但本機套用失敗（等同 updateRef 回應遺失）：同步狀態與 localStorage 都沒前進
+    const originalSetItem = env.mobileStorage.setItem
+    let failed = false
+    env.mobileStorage.setItem = function (key, value) {
+      if (!failed && key === 'mindflow.sync.storeEpoch') {
+        failed = true
+        throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+      }
+      return originalSetItem.call(this, key, value)
+    }
+    assert.equal((await env.mobile.syncNow({ reason: 'local-change' })).ok, false)
+    delete env.mobileStorage.setItem
+    // 使用者立刻重試：兩邊內容相同、沒有東西要推或要寫，但 base 會前進到 t2
+    env.clock.mobile = '2026-09-01T10:01:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'manual' }), { ok: true })
+    // App 在 localStorage 落盤前被滑掉：磁碟回到 t1
+    env.mobileStorage.replaceAll(disk)
+    env.clock.mobile = '2026-09-01T10:10:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-kill' }), { ok: true })
+
+    assert.equal(remoteState(env.server).doc('plan').title, 'plan t2', '雲端的 t2 不能被舊的 t1 蓋回')
+    const titles = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.title)
+    assert.ok(titles.includes('plan t2'), JSON.stringify(titles))
+  } finally {
+    await env.close()
+  }
+})
+
+test('複審 LOW：設定變更觸發的同步撞上進行中的一輪 → 不會結束後再多跑一次', async () => {
+  let gate = null
+  const env = await createDesktopAndMobile({
+    async fetchFn(url, init = {}) {
+      if (gate && String(url).includes('/git/ref/')) {
+        const wait = gate
+        gate = null
+        await wait
+      }
+      return fetch(url, init)
+    }
+  })
+  try {
+    seedDoc(env.mobileStorage, { id: 'A', title: 'A', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    let release
+    gate = new Promise(resolve => { release = resolve })
+    const running = env.mobile.syncNow({ reason: 'poll' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const joined = env.mobile.syncNow({ reason: 'config' })
+    release()
+    await running
+    await joined
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const runs = (await env.mobile.getDiagnostics()).filter(entry => entry.reason !== 'seed')
+    assert.deepEqual(runs.map(entry => entry.reason), ['poll'], JSON.stringify(runs))
   } finally {
     await env.close()
   }

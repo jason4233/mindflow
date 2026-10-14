@@ -352,18 +352,25 @@ jobs:
           # only release-signed builds get a versioned asset.
           if [[ "$SIGNING_MODE" == "release" ]]; then
             gh release upload latest "$stable" "$versioned" --clobber --repo "$repo"
-            keep="$versioned_name"
+
+            # Keep at most one versioned APK on latest (uploaded first, so there is never a gap).
+            gh release view latest --repo "$repo" --json assets --jq ".assets[].name" |
+              while IFS= read -r asset; do
+                if [[ "$asset" =~ ^MindFlow-[0-9]+\.apk$ && "$asset" != "$versioned_name" ]]; then
+                  echo "Removing outdated asset $asset"
+                  gh release delete-asset latest "$asset" --yes --repo "$repo"
+                fi
+              done
           else
+            # Once latest carries a release-signed MindFlow-<n>.apk, a throwaway-signed build must not touch it:
+            # it would replace MindFlow.apk with an APK that cannot be installed over the release-signed app, and
+            # the cleanup would delete the last installable versioned APK. Read the asset list into a variable
+            # first: piping into grep -q under pipefail can fail with SIGPIPE and pick the wrong branch.
+            latest_assets="$(gh release view latest --repo "$repo" --json assets --jq ".assets[].name")"
+            if grep -Eq '^MindFlow-[0-9]+\.apk$' <<< "$latest_assets"; then
+              echo "::warning title=Latest release left unchanged::This APK uses a throwaway signing key but latest already holds a release-signed APK, so nothing was published. Check the ANDROID_* repository secrets (docs/android-release-signing.md)."
+              exit 0
+            fi
             echo "::warning title=No in-app update prompt::This APK uses a throwaway signing key, so only MindFlow.apk is published and the app will not offer it as an update."
             gh release upload latest "$stable" --clobber --repo "$repo"
-            keep=""
           fi
-
-          # Keep at most one versioned APK on latest (uploaded first, so there is never a gap).
-          gh release view latest --repo "$repo" --json assets --jq ".assets[].name" |
-            while IFS= read -r asset; do
-              if [[ "$asset" =~ ^MindFlow-[0-9]+\.apk$ && "$asset" != "$keep" ]]; then
-                echo "Removing outdated asset $asset"
-                gh release delete-asset latest "$asset" --yes --repo "$repo"
-              fi
-            done

@@ -1,16 +1,20 @@
 import {
+  CONFLICT_COPY_CANDIDATES,
   STORE_EPOCH_KEY,
   SyncLocalChangedError,
   SyncSchemaError,
+  baseAdvances,
   buildConflictCopy,
   buildLocalState,
   changedSince,
   computeLocalWrites,
   computeSyncPlan,
   emptyManifest,
+  isSameConflictCopy,
   rotateStoreEpoch,
   trustedBase,
-  writeExpectations
+  writeExpectations,
+  writesChangeEntries
 } from './sync-plan.mjs'
 
 export const MOBILE_SYNC_CONFIG_KEY = 'mindflow.sync.mobile.config'
@@ -21,7 +25,8 @@ export const MOBILE_SYNC_PULL_INTERVAL_MS = 5 * 60_000
 export const MOBILE_SYNC_RETRY_INITIAL_MS = 30_000
 export const MOBILE_SYNC_RETRY_MAX_MS = 5 * 60_000
 const DIAGNOSTIC_LIMIT = 30
-const LOCAL_CHANGE_REASONS = new Set(['local-change', 'hidden-change', 'hidden', 'flush', 'back-button', 'app-pause', 'pagehide', 'exit', 'config'])
+// 不含 'config'：setConfig 已先等進行中的同步結束、新設定生效後才放行，撞上的那一輪本來就用新設定，不必再跑一次。
+const LOCAL_CHANGE_REASONS = new Set(['local-change', 'hidden-change', 'hidden', 'flush', 'back-button', 'app-pause', 'pagehide', 'exit'])
 
 const DEFAULT_API_BASE = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
@@ -267,10 +272,13 @@ function applyStorageWrites(storage, writes, dispatchSyncApplied) {
   try {
     for (const key of removeKeys) storage.removeItem(key)
     for (const [key, value] of setEntries) {
-      if (key !== INDEX_KEY) storage.setItem(key, value)
+      if (key !== INDEX_KEY && key !== STORE_EPOCH_KEY) storage.setItem(key, value)
     }
     const indexEntry = setEntries.find(([key]) => key === INDEX_KEY)
     if (indexEntry) storage.setItem(indexEntry[0], indexEntry[1])
+    // 識別碼最後寫：localStorage 分批落盤，磁碟上若已是新識別碼，這一批其他內容一定也已落盤。
+    const epochEntry = setEntries.find(([key]) => key === STORE_EPOCH_KEY)
+    if (epochEntry) storage.setItem(epochEntry[0], epochEntry[1])
   } catch (error) {
     for (const item of previous) {
       try {
@@ -617,8 +625,30 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
   const conflictBlobs = {}
   const pushIds = new Set(plan.pushDocs)
   const purgeIds = new Set(plan.purgeLocal)
-  const addConflictCopy = (raw, label) => {
-    const copy = buildConflictCopy(raw, label, syncNow)
+  // 候選 id 能不能用：本機、雲端每一份同 id 的文件都必須是同一份輸方內容的原封不動副本（重試時沿用、不累積）；
+  // 任一端被改過（不能蓋掉，也不能只看本機那份就以為能沿用）、在回收筒（不能拉回來）、已永久刪除（會跟 tombstone 打架）都不行。
+  const copyCandidateUsable = async candidate => {
+    const id = candidate.id
+    if (Object.hasOwn(plan.nextManifest.tombstones, id) || Object.hasOwn(remoteManifest.tombstones ?? {}, id)) return false
+    if ([plan.nextManifest.docs[id], remoteManifest.docs?.[id], augmentedLocal.docs[id]].some(meta => meta?.state === 'trashed')) return false
+    const versions = []
+    if (typeof augmentedLocal.docBlobs[id] === 'string') versions.push(augmentedLocal.docBlobs[id])
+    if (tree.byPath[documentPath(id)]) versions.push(await readRemoteDoc(id))
+    return versions.every(existing => isSameConflictCopy(existing, candidate.json))
+  }
+  const addConflictCopy = async (raw, label) => {
+    let copy = null
+    for (let attempt = 0; attempt < CONFLICT_COPY_CANDIDATES && !copy; attempt += 1) {
+      const candidate = buildConflictCopy(raw, label, syncNow, { attempt })
+      if (await copyCandidateUsable(candidate)) copy = candidate
+    }
+    if (!copy) {
+      // 退路（含時間的 id）也要過同樣的檢查：同一輪重跑時時間不變、退路 id 也不變，可能已被別台改過。
+      // 找不到安全位置就中止這一輪，不覆寫任何文件；下一輪時間不同，退路 id 也不同。
+      const fallback = buildConflictCopy(raw, label, syncNow, { distinct: true })
+      if (!(await copyCandidateUsable(fallback))) throw new Error('找不到安全的位置另存衝突副本，這一輪同步已中止，沒有覆寫任何文件。')
+      copy = fallback
+    }
     const document = JSON.parse(copy.json)
     conflictBlobs[copy.id] = copy.json
     augmentedLocal.docBlobs[copy.id] = copy.json
@@ -653,15 +683,15 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
     }
     if (conflict.loserCopyFrom === 'local') {
       if (typeof localRaw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
-      addConflictCopy(localRaw, state.machineId)
+      await addConflictCopy(localRaw, state.machineId)
     } else {
-      addConflictCopy(remoteRaw, remoteManifest.lastWriter || 'remote-device')
+      await addConflictCopy(remoteRaw, remoteManifest.lastWriter || 'remote-device')
     }
   }
   for (const resurrection of plan.resurrect) {
     const localRaw = localState.docBlobs[resurrection.id]
-    if (typeof localRaw === 'string') addConflictCopy(localRaw, state.machineId)
-    else addConflictCopy(await readRemoteDoc(resurrection.id), remoteManifest.lastWriter || 'remote-device')
+    if (typeof localRaw === 'string') await addConflictCopy(localRaw, state.machineId)
+    else await addConflictCopy(await readRemoteDoc(resurrection.id), remoteManifest.lastWriter || 'remote-device')
     purgeIds.add(resurrection.id)
   }
   plan.pushDocs = [...pushIds].sort()
@@ -684,20 +714,23 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
     }
   }
   const writes = { setKeys, removeKeys: [...removeKeys] }
-  const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
-    Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
-  writes.expected = writeExpectations(entries, writes)
   const pushedLocalIds = [...pushIds].filter(id => !Object.hasOwn(conflictBlobs, id) && typeof localState.docBlobs[id] === 'string')
-  const prePushExpected = writeExpectations(entries, writes, pushedLocalIds.map(id => `${DOC_KEY_PREFIX}${id}`))
 
   const remoteDocPaths = Object.keys(tree.byPath).filter(path => idFromDocumentPath(path))
   const desiredDocPaths = new Set(Object.keys(plan.nextManifest.docs).map(documentPath))
   const deletedRemotePaths = remoteDocPaths.filter(path => !desiredDocPaths.has(path))
   const needsPush = pushIds.size > 0 || deletedRemotePaths.length > 0 || manifestsDiffer(remoteManifest, plan.nextManifest)
-  // 這一輪寫了本機或要推雲端 → 換新的本機儲存區識別碼（見 rotateStoreEpoch）；必須在算好 CAS 期望值之前放進 setKeys。
-  const storeEpoch = rotateStoreEpoch(entries, writes.setKeys, { changed: localChanged || needsPush })
+  const nextBaseManifest = needsPush
+    ? plan.nextManifest
+    : { ...plan.nextManifest, lastWriter: remoteManifest.lastWriter ?? null }
+  // 這一輪寫了本機、要推雲端，或 base 要前進 → 換新的本機儲存區識別碼（見 rotateStoreEpoch、baseAdvances）。
+  const storeEpoch = rotateStoreEpoch(entries, writes.setKeys, {
+    changed: writesChangeEntries(entries, writes) || needsPush || baseAdvances(base, nextBaseManifest, plan.nextPerDoc)
+  })
+  // localChanged 與兩份 CAS 期望值都要在識別碼放進 setKeys 之後才算：只推送的一輪也得把新識別碼寫進 localStorage。
+  const localChanged = writesChangeEntries(entries, writes)
   writes.expected = writeExpectations(entries, writes)
-  Object.assign(prePushExpected, writeExpectations(entries, writes))
+  const prePushExpected = writeExpectations(entries, writes, pushedLocalIds.map(id => `${DOC_KEY_PREFIX}${id}`))
 
   let commitSha = ref.sha
   const pushedDocs = {}
@@ -732,9 +765,7 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
     pushedDocs,
     nextState: {
       lastSyncedCommitSha: commitSha,
-      baseManifest: needsPush
-        ? plan.nextManifest
-        : { ...plan.nextManifest, lastWriter: remoteManifest.lastWriter ?? null },
+      baseManifest: nextBaseManifest,
       perDoc: plan.nextPerDoc,
       machineId: state.machineId,
       etag: ref.etag,

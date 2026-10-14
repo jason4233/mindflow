@@ -1,13 +1,23 @@
 /**
  * 同步設定對話框裡「只有手機 App 才有」的區塊：手機備份（匯出、從自動備份還原、從檔案還原）。
  */
-import { backupDocuments, consumeRestoredNotice, formatBackupStamp, parseBackupPayload } from './mobile-backup.mjs'
+import { backupDocuments, consumeRestoreFailedNotice, consumeRestoredNotice, formatBackupStamp, parseBackupPayload } from './mobile-backup.mjs'
 import { PairingError, decodePairingPayload } from './pairing.mjs'
 
-/** 剛從手機備份自動還原並重新載入時，提示一次。 */
+/** 剛從手機備份自動還原並重新載入時，或自動還原失敗時，提示一次。 */
 export function showRestoredNoticeIfNeeded({ windowRef = globalThis.window, documentRef = globalThis.document } = {}) {
-  if (!consumeRestoredNotice(windowRef)) return false
-  const message = '本機資料不見了，已自動從手機備份還原。'
+  let message
+  const failed = consumeRestoredNotice(windowRef) ? null : consumeRestoreFailedNotice(windowRef)
+  if (failed === null) {
+    message = '本機資料不見了，已自動從手機備份還原。'
+  } else if (failed) {
+    const undo = failed === 'partial'
+      ? '撤回沒有完全成功，首頁可能只出現部分文件。'
+      : '已寫入的部分已撤回。'
+    message = `本機資料不見了，但從手機備份自動還原時失敗（可能是儲存空間不足），${undo}請清出空間後，到「同步設定 → 手機備份 → 從自動備份還原」選標著「還原失敗時保留」的備份。`
+  } else {
+    return false
+  }
   const toast = documentRef.querySelector('#dashboard-toast')
   if (toast) {
     toast.textContent = message
@@ -108,7 +118,7 @@ export function mountMobileBackupSection(container, {
       const row = documentRef.createElement('li')
       const button = documentRef.createElement('button')
       button.type = 'button'
-      button.textContent = `${formatBackupStamp(item.createdAt)}・${item.docCount} 份文件`
+      button.textContent = `${item.preserved ? '還原失敗時保留・' : ''}${formatBackupStamp(item.createdAt)}・${item.docCount} 份文件`
       button.addEventListener('click', () => run(async () => {
         const backup = await store.readBackup(item.path)
         if (!backup) {

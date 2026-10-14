@@ -44,7 +44,16 @@ export function trustedBase(state, entries) {
   if (!state?.lastSyncedCommitSha || !state?.baseManifest) return null
   const marker = isObject(entries) ? entries[STORE_EPOCH_KEY] : undefined
   const legacyBase = (state.storeEpoch === undefined || state.storeEpoch === null) && (marker === undefined || marker === null)
-  if (!legacyBase && (typeof state.storeEpoch !== 'string' || !state.storeEpoch || marker !== state.storeEpoch)) return null
+  if (legacyBase) {
+    // 「本機沒有標記」也是 WebView 資料遺失的樣子，而本機從來不留刪除紀錄：本機少了 base 裡的哪一份文件，
+    // 分不出是使用者刪的還是資料遺失（例如索引還在、內容不見，或遺失後又新建了文件）。
+    // 升級前的 base 只在它的每一份文件本機都還在時才信任；少一份就當首次同步（只做聯集），
+    // 代價是升級前還沒同步出去的本機刪除會被加回來，但不會把雲端文件記成刪除。
+    const baseIds = isObject(state.baseManifest.docs) ? Object.keys(state.baseManifest.docs) : []
+    if (!baseIds.every(id => typeof entries?.[`${DOC_PREFIX}${id}`] === 'string')) return null
+  } else if (typeof state.storeEpoch !== 'string' || !state.storeEpoch || marker !== state.storeEpoch) {
+    return null
+  }
   return { manifest: state.baseManifest, perDoc: isObject(state.perDoc) ? state.perDoc : {} }
 }
 
@@ -58,6 +67,32 @@ export function rotateStoreEpoch(entries, setKeys, { changed }) {
   const epoch = existing && !changed ? existing : newStoreEpoch()
   if (epoch !== existing) setKeys[STORE_EPOCH_KEY] = epoch
   return epoch
+}
+
+/**
+ * 這一輪結束後要存的 base 是否跟這一輪信任的 base 不同（首次同步＝建立新 base，也算）。
+ * base 前進時一定要換識別碼：例如上一輪推送成功但沒套用，這一輪兩邊內容已相同、什麼都不用推或寫，
+ * base 卻前進到新內容；若沿用舊識別碼，localStorage 落盤前被殺，舊內容會配上新 base，被當成本機修改蓋回雲端。
+ * lastWriter 只是衝突副本的標籤，不影響判斷，不比。
+ */
+export function baseAdvances(base, nextManifest, nextPerDoc) {
+  if (!base) return true
+  const comparable = ({ lastWriter: _lastWriter, ...rest } = {}) => canonicalJson(rest)
+  return comparable(base.manifest) !== comparable(nextManifest) ||
+    canonicalJson(isObject(base.perDoc) ? base.perDoc : {}) !== canonicalJson(isObject(nextPerDoc) ? nextPerDoc : {})
+}
+
+/**
+ * 這批寫入會不會改到本機儲存區（快照 entries 為準）。換了識別碼本身也算一筆寫入：
+ * 引擎必須在 rotateStoreEpoch 之後才用這個判斷要不要套用，否則「只推送、本機沒寫入」的一輪
+ * 會把新識別碼存進同步狀態、localStorage 卻還是舊的 → 之後每一次都被當成首次同步。
+ */
+export function writesChangeEntries(entries, writes) {
+  const snapshot = isObject(entries) ? entries : {}
+  const removeKeys = Array.isArray(writes?.removeKeys) ? writes.removeKeys : []
+  const setKeys = isObject(writes?.setKeys) ? writes.setKeys : {}
+  return removeKeys.some(key => Object.hasOwn(snapshot, key)) ||
+    Object.entries(setKeys).some(([key, value]) => snapshot[key] !== value)
 }
 
 const INDEX_KEY = 'mindflow.docs.index'
@@ -160,8 +195,13 @@ export function buildLocalState(entries) {
 
   for (const row of activeRows) {
     if (!isObject(row) || typeof row.id !== 'string' || !row.id) continue
-    // index 先於 blob 清除而殘留時，不能把沒有內容的 metadata 排進 push，否則整輪套用必然中止。
-    if (!parsedBlobs[row.id]) continue
+    // 索引列著、內容卻不見：不能把沒有內容的 metadata 排進 push（整輪套用必然中止），
+    // 也不能當成使用者永久刪除（會推 tombstone、讓每台裝置都刪掉）——隔離，由健康的雲端版本拉回修復。
+    // 代價：永久刪除寫到一半（內容已刪、索引還沒改）被殺時，那份文件會被保守地救回一次。
+    if (!parsedBlobs[row.id]) {
+      quarantinedIds.add(row.id)
+      continue
+    }
     docs[row.id] = localMeta(row, parsedBlobs[row.id], 'active')
   }
   for (const row of trashRows) {
@@ -169,11 +209,15 @@ export function buildLocalState(entries) {
       ? { id: row }
       : row
     if (!isObject(normalizedRow) || typeof normalizedRow.id !== 'string' || !normalizedRow.id) continue
-    if (!parsedBlobs[normalizedRow.id]) continue
+    if (!parsedBlobs[normalizedRow.id]) {
+      quarantinedIds.add(normalizedRow.id)
+      continue
+    }
     docs[normalizedRow.id] = localMeta(normalizedRow, parsedBlobs[normalizedRow.id], 'trashed')
   }
 
-  const knownIds = new Set(Object.keys(docs))
+  // 隔離中的文件也保留收藏：從雲端拉回修復後，收藏狀態不能被當成「本機取消收藏」推出去。
+  const knownIds = new Set([...Object.keys(docs), ...quarantinedIds])
   const favorites = (!Array.isArray(parsedIndex) && Array.isArray(parsedIndex.favorites) ? parsedIndex.favorites : [])
     .filter((id, index, items) => typeof id === 'string' && knownIds.has(id) && items.indexOf(id) === index)
     .sort()
@@ -580,7 +624,36 @@ function twoDigits(value) {
   return String(value).padStart(2, '0')
 }
 
-export function buildConflictCopy(docJsonString, machineLabel, now) {
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (isObject(value)) {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/**
+ * 已經存在、id 相同的文件，是不是同一份輸方內容產生的衝突副本（只差標題與時間）。
+ * 是 → 重試時覆寫它不會掉任何東西；不是（例如使用者已經編輯過那份副本）→ 呼叫端必須改用
+ * buildConflictCopy(..., { distinct: true }) 換一個 id，不能拿新的副本蓋掉使用者的修改。
+ */
+export function isSameConflictCopy(existingRaw, copyJson) {
+  const existing = parseJson(existingRaw)
+  const copy = parseJson(copyJson)
+  if (!isObject(existing) || !isObject(copy)) return false
+  const comparable = ({ title: _title, createdAt: _createdAt, updatedAt: _updatedAt, ...rest }) => canonicalJson(rest)
+  return comparable(existing) === comparable(copy)
+}
+
+// 同一份輸方內容最多試幾個候選 id；全都不能用（實務上不會發生）才退回含時間的 id。
+export const CONFLICT_COPY_CANDIDATES = 32
+
+/**
+ * 衝突副本的 id 只看「輸方內容＋裝置＋第幾個候選」，不含時間：重試時會走到同一串候選，找回上一輪已推上去的那份，
+ * 不會越積越多。attempt 0 是穩定 id；呼叫端在某個候選已被改過、刪除或在回收筒時改試下一個（見 isSameConflictCopy）。
+ * distinct 是最後的退路：id 改含時間。
+ */
+export function buildConflictCopy(docJsonString, machineLabel, now, { attempt = 0, distinct = false } = {}) {
   if (typeof docJsonString !== 'string') throw new TypeError('文件 JSON 必須是字串')
   const document = parseJson(docJsonString)
   if (!isObject(document) || typeof document.id !== 'string' || !document.id) {
@@ -594,8 +667,9 @@ export function buildConflictCopy(docJsonString, machineLabel, now) {
   const label = String(machineLabel || '未知裝置')
   const suffix = `${twoDigits(displayDate.getMonth() + 1)}-${twoDigits(displayDate.getDate())} ${twoDigits(displayDate.getHours())}:${twoDigits(displayDate.getMinutes())}`
   const title = `${normalizeTitle(document.title)}（衝突副本・${label} ${suffix}）`
-  // id 只看「輸方內容＋裝置」，不含時間：同一份輸方內容重試多次（例如套用一直失敗）只會覆寫同一份副本，不會越積越多。
-  const identity = `${docJsonString}\u0000${label}`
+  const identity = distinct
+    ? `${docJsonString}\u0000${label}\u0000${timestamp}`
+    : attempt > 0 ? `${docJsonString}\u0000${label}\u0000#${attempt}` : `${docJsonString}\u0000${label}`
   let id = `conflict-${stableHash(identity)}-${stableHash(identity, 0x9e3779b9)}`
   if (id === document.id) id = `${id}-copy`
 

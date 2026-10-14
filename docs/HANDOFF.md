@@ -37,7 +37,14 @@
 
 全部功能與第一輪對抗式審查的修正，詳見 `docs/M1_NOTES.md`。CI（`tests.yml` 的 4 個 job，加上 `android.yml` 的 APK 建置）在 `79e4f80` 全部通過。
 
-### 3.2 第二輪複審（針對 `79e4f80`）的發現：待處理
+### 3.2 第二輪複審（針對 `79e4f80`）的發現
+
+> 2026-10-14 更新：
+> - 下表 7 項都已處理並補上回歸測試，另外修了獨立審查抓到的 3 項，見 `docs/M1_NOTES.md` 7.1–7.3。
+> - GPT-6.1 Sol 跨體系外審又抓到 6 項（4 HIGH、2 MEDIUM），也已處理，每項都有紅燈與綠燈的測試，見 `docs/M1_NOTES.md` 7.4。
+> - Sol 第 2 輪複審抓到 3 HIGH、1 LOW，也已處理，見 `docs/M1_NOTES.md` 7.5。
+> - Sol 第 3 輪複審抓到手機來源備份保護的 2 個 HIGH，也已處理，見 `docs/M1_NOTES.md` 7.6；剩下的罕見邊角記在 M1_NOTES 第 6 節第 12–14 點。
+> - 還沒做的是下面清單的第 3–5 步：推送、最後一次外審確認、改 PR #3 的標題。
 
 複審的重現腳本放在 scratch，已隨容器消失，以下是重點：
 
@@ -66,7 +73,15 @@
   - 根目錄 156、電腦版 117（唯一失敗是既有的 Linux 路徑測試）、手機 24 項；
   - 真實 Electron 端到端與瀏覽器實測（見設計文件第 10 節）。
 - **待做**：
-  1. 把 M1 複審修正移植過來：`js/sync/reconcile.mjs` 的識別碼要同樣輪換，並重算 `localChanged`；`js/sync/engine.mjs` 移除 `'config'`；還原時移除標記。`trustedBase` 與衝突副本 id 的修改在共用的 `js/sync-plan.mjs`，合併 M1 分支後會自動帶過來。
+  1. 把 M1 複審修正移植過來（M1 的做法見 `docs/M1_NOTES.md` 7.1）：
+     - `js/sync/reconcile.mjs`：識別碼同樣輪換，條件是「寫了本機、推了雲端或 base 前進（`baseAdvances`）」；先 rotate，再用 `writesChangeEntries` 算 `localChanged` 與兩份 CAS 期望值；套用寫入時識別碼最後寫。M2a 的 base 在 IndexedDB（立刻落盤），localStorage 仍延遲，HIGH 的形態完全相同。
+     - 衝突副本：`addConflictCopy` 改走 `buildConflictCopy(..., { attempt })` 的候選序列，沿用條件是本機、雲端每一份都原封不動、不在回收筒、沒有 tombstone，要一起搬。
+     - 衝突副本的退路 id 也要過候選檢查，不通過就中止這一輪。
+     - 電腦版 renderer 化之後，還原腳本的「寫入前重新確認空庫＋失敗回滾（結構化回報）」、同步的 `startGate`（等開機救援，輪詢也要等）、還原失敗時暫停備份輪替（`restore-pending.json`）都要保留。
+     - 「索引列著、內容不見就隔離」在共用的 `buildLocalState`，合併 M1 分支後會自動帶過來。
+     - `js/sync/engine.mjs` 移除 `'config'`。
+     - 還原時寫新的隨機標記（標記仍在 localStorage 的 `mindflow.sync.storeEpoch`，M1 的還原路徑對 M2a 一樣有效）。
+     - `trustedBase`（含升級前 base 的新條件）與 `buildConflictCopy`／`isSameConflictCopy` 在共用的 `js/sync-plan.mjs`，合併 M1 分支後會自動帶過來。
   2. **重跑獨立對抗式審查**（上一次被中斷，沒有結果）。審查重點：
      - v1→v2 升級；
      - 資產往返；
