@@ -8,7 +8,7 @@ import {
   computeLocalWrites,
   computeSyncPlan,
   emptyManifest,
-  newStoreEpoch,
+  rotateStoreEpoch,
   trustedBase,
   writeExpectations
 } from './sync-plan.mjs'
@@ -683,8 +683,6 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
       if (key !== INDEX_KEY && key.endsWith(`.${id}`)) removeKeys.add(key)
     }
   }
-  const storeEpoch = typeof entries[STORE_EPOCH_KEY] === 'string' && entries[STORE_EPOCH_KEY] ? entries[STORE_EPOCH_KEY] : newStoreEpoch()
-  if (entries[STORE_EPOCH_KEY] !== storeEpoch) setKeys[STORE_EPOCH_KEY] = storeEpoch
   const writes = { setKeys, removeKeys: [...removeKeys] }
   const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
     Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
@@ -696,6 +694,10 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
   const desiredDocPaths = new Set(Object.keys(plan.nextManifest.docs).map(documentPath))
   const deletedRemotePaths = remoteDocPaths.filter(path => !desiredDocPaths.has(path))
   const needsPush = pushIds.size > 0 || deletedRemotePaths.length > 0 || manifestsDiffer(remoteManifest, plan.nextManifest)
+  // 這一輪寫了本機或要推雲端 → 換新的本機儲存區識別碼（見 rotateStoreEpoch）；必須在算好 CAS 期望值之前放進 setKeys。
+  const storeEpoch = rotateStoreEpoch(entries, writes.setKeys, { changed: localChanged || needsPush })
+  writes.expected = writeExpectations(entries, writes)
+  Object.assign(prePushExpected, writeExpectations(entries, writes))
 
   let commitSha = ref.sha
   const pushedDocs = {}
