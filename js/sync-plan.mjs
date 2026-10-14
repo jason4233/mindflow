@@ -35,12 +35,29 @@ export function newStoreEpoch() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
 }
 
-/** 只有 base 與本機儲存區是同一份（識別碼相符）時才回傳 base；否則回傳 null（首次同步）。 */
+/**
+ * 只有 base 與本機儲存區是同一份（識別碼相符）時才回傳 base；否則回傳 null（首次同步）。
+ * 升級前（M1 以前）留下的 base 沒有識別碼、本機也還沒有標記：信任一次，否則每台既有裝置升級後
+ * 都會被迫做一次聯集（刪掉的文件復活、多出衝突副本）。備份還原與舊資料搬入會另外把 base 作廢。
+ */
 export function trustedBase(state, entries) {
   if (!state?.lastSyncedCommitSha || !state?.baseManifest) return null
   const marker = isObject(entries) ? entries[STORE_EPOCH_KEY] : undefined
-  if (typeof state.storeEpoch !== 'string' || !state.storeEpoch || marker !== state.storeEpoch) return null
+  const legacyBase = (state.storeEpoch === undefined || state.storeEpoch === null) && (marker === undefined || marker === null)
+  if (!legacyBase && (typeof state.storeEpoch !== 'string' || !state.storeEpoch || marker !== state.storeEpoch)) return null
   return { manifest: state.baseManifest, perDoc: isObject(state.perDoc) ? state.perDoc : {} }
+}
+
+/**
+ * 決定這一輪結束後的識別碼並放進 setKeys。只要這一輪寫了本機或推了雲端，就換一個新的識別碼：
+ * Chromium 會延遲約 5 秒才把 localStorage 寫到磁碟，而同步狀態是立刻寫入的；若程式在這段時間被殺掉，
+ * 磁碟上的舊內容會帶著舊識別碼，與新的 base 對不上 → 下次當首次同步，而不是拿新 base 比對舊內容。
+ */
+export function rotateStoreEpoch(entries, setKeys, { changed }) {
+  const existing = isObject(entries) && typeof entries[STORE_EPOCH_KEY] === 'string' && entries[STORE_EPOCH_KEY] ? entries[STORE_EPOCH_KEY] : null
+  const epoch = existing && !changed ? existing : newStoreEpoch()
+  if (epoch !== existing) setKeys[STORE_EPOCH_KEY] = epoch
+  return epoch
 }
 
 const INDEX_KEY = 'mindflow.docs.index'
@@ -577,7 +594,8 @@ export function buildConflictCopy(docJsonString, machineLabel, now) {
   const label = String(machineLabel || '未知裝置')
   const suffix = `${twoDigits(displayDate.getMonth() + 1)}-${twoDigits(displayDate.getDate())} ${twoDigits(displayDate.getHours())}:${twoDigits(displayDate.getMinutes())}`
   const title = `${normalizeTitle(document.title)}（衝突副本・${label} ${suffix}）`
-  const identity = `${docJsonString}\u0000${label}\u0000${timestamp}`
+  // id 只看「輸方內容＋裝置」，不含時間：同一份輸方內容重試多次（例如套用一直失敗）只會覆寫同一份副本，不會越積越多。
+  const identity = `${docJsonString}\u0000${label}`
   let id = `conflict-${stableHash(identity)}-${stableHash(identity, 0x9e3779b9)}`
   if (id === document.id) id = `${id}-copy`
 
