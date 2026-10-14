@@ -6,11 +6,17 @@ import test from 'node:test'
 
 import {
   MANIFEST_SCHEMA_VERSION,
+  SUPPORTED_DOC_SCHEMA_VERSION,
+  SyncSchemaError,
+  assertSupportedDocument,
+  assertSupportedManifest,
   buildConflictCopy,
   buildLocalState,
+  changedSince,
   computeLocalWrites,
   computeSyncPlan,
-  emptyManifest
+  emptyManifest,
+  writeExpectations
 } from '../sync-plan.mjs'
 import { ensureRepo, getRef } from '../sync-github.mjs'
 import { loadSyncSettings } from '../sync-settings.mjs'
@@ -807,4 +813,75 @@ test('computeLocalWrites fails closed when a required pulled blob is missing', (
     pulledBlobs: {},
     localState: localState()
   }), /pulled blob|遠端文件/i)
+})
+
+
+// ── M1 版本閘門：較新格式（schemaVersion 2）一律停止同步，避免舊版白名單把新欄位刪掉 ──
+test('版本閘門：本版支援的格式通過，沒有版本號的舊資料也通過', () => {
+  assert.equal(MANIFEST_SCHEMA_VERSION, 1)
+  assert.equal(SUPPORTED_DOC_SCHEMA_VERSION, 1)
+  assert.doesNotThrow(() => assertSupportedManifest(emptyManifest()))
+  assert.doesNotThrow(() => assertSupportedManifest({ docs: {} }))
+  assert.doesNotThrow(() => assertSupportedManifest(null))
+  assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', title: 'A' }), 'a'))
+  assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion: 1 }), 'a'))
+  assert.doesNotThrow(() => assertSupportedDocument('not json', 'a'), '損壞 blob 由既有的損壞檢查處理，不是版本問題')
+})
+
+test('版本閘門：較新或看不懂的版本號一律拒絕', () => {
+  for (const schemaVersion of [2, 99, '2', 1.5, 0, -1]) {
+    assert.throws(() => assertSupportedManifest({ schemaVersion, docs: {} }), SyncSchemaError, `manifest ${schemaVersion}`)
+    assert.throws(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion }), 'a'), SyncSchemaError, `doc ${schemaVersion}`)
+  }
+  try {
+    assertSupportedDocument(JSON.stringify({ id: 'x', schemaVersion: 2 }), 'x')
+  } catch (error) {
+    assert.equal(error.code, 'SCHEMA_TOO_NEW')
+    assert.equal(error.kind, 'document')
+    assert.equal(error.id, 'x')
+    assert.match(error.message, /較新版本的 MindFlow/)
+  }
+})
+
+test('版本閘門：computeSyncPlan 碰到 v2 manifest 直接中止，不產生任何計畫', () => {
+  assert.throws(() => computeSyncPlan({
+    local: buildLocalState({}),
+    remoteManifest: { ...emptyManifest(), schemaVersion: 2 },
+    base: null,
+    machineId: 'm',
+    now: T0
+  }), SyncSchemaError)
+})
+
+test('版本閘門：computeLocalWrites 拉到 v2 文件就中止，不寫任何 key', () => {
+  const plan = {
+    pullDocs: ['future'],
+    purgeLocal: [],
+    nextManifest: { ...emptyManifest(), docs: { future: { title: 'F', createdAt: T0, updatedAt: T1, state: 'active' } } }
+  }
+  const pulledBlobs = { future: JSON.stringify({ id: 'future', title: 'F', schemaVersion: 2, conflicts: [] }) }
+  assert.throws(() => computeLocalWrites({ plan, pulledBlobs, localState: buildLocalState({}) }), SyncSchemaError)
+})
+
+test('版本閘門：較新格式的文件不能被做成衝突副本（會被本機白名單默默降版）', () => {
+  assert.throws(() => buildConflictCopy(JSON.stringify({ id: 'a', title: 'A', schemaVersion: 2 }), 'pc', T0), SyncSchemaError)
+})
+
+// ── M1 同步競爭：套用前比對快照 ──
+test('writeExpectations 收集要寫／要刪／額外指定的 key 的快照值（不存在＝null）', () => {
+  const entries = { 'mindflow.doc.a': 'A', 'mindflow.docs.index': 'I' }
+  const writes = { setKeys: { 'mindflow.doc.b': 'B2', 'mindflow.docs.index': 'I2' }, removeKeys: ['mindflow.doc.a'] }
+  assert.deepEqual(writeExpectations(entries, writes, ['mindflow.doc.c']), {
+    'mindflow.doc.a': 'A',
+    'mindflow.doc.b': null,
+    'mindflow.doc.c': null,
+    'mindflow.docs.index': 'I'
+  })
+})
+
+test('changedSince 找出同步期間被改過、被新增或被刪掉的 key', () => {
+  const expected = { k1: 'v1', k2: null, k3: 'v3' }
+  const current = { k1: 'v1', k2: 'new', k3: null }
+  assert.deepEqual(changedSince(expected, key => current[key] ?? null), ['k2', 'k3'])
+  assert.deepEqual(changedSince(expected, key => ({ k1: 'v1', k3: 'v3' })[key] ?? null), [])
 })

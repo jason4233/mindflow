@@ -1,4 +1,29 @@
 export const MANIFEST_SCHEMA_VERSION = 1
+// 本版能安全讀寫的文件格式。M2a 起雲端會出現 schemaVersion 2；
+// 舊版的欄位白名單會把新欄位（衝突紀錄、HLC）刪掉再推回去，所以看到更新的版本一律停止同步。
+export const SUPPORTED_DOC_SCHEMA_VERSION = 1
+export const SCHEMA_TOO_NEW_MESSAGE = '雲端的同步資料是較新版本的 MindFlow 寫入的，這個版本無法安全同步（會刪掉新格式的資料），所以已暫停同步。請先更新 MindFlow：電腦版會自動更新，手機版請安裝最新的 APK。本機的心智圖不受影響。'
+
+export class SyncSchemaError extends Error {
+  constructor(message = SCHEMA_TOO_NEW_MESSAGE, { kind = 'manifest', id = null, version = null } = {}) {
+    super(message)
+    this.name = 'SyncSchemaError'
+    this.code = 'SCHEMA_TOO_NEW'
+    this.kind = kind
+    this.id = id
+    this.version = version
+  }
+}
+
+// 同步讀了本機快照之後、寫回之前，本機又有新修改：這一輪作廢，從頭再同步一次。
+export class SyncLocalChangedError extends Error {
+  constructor(keys = []) {
+    super('同步期間本機有新的修改，稍後會自動重新同步。')
+    this.name = 'SyncLocalChangedError'
+    this.code = 'LOCAL_CHANGED_DURING_SYNC'
+    this.keys = keys
+  }
+}
 
 const INDEX_KEY = 'mindflow.docs.index'
 const DOC_PREFIX = 'mindflow.doc.'
@@ -160,6 +185,54 @@ function normalizeManifest(source) {
   return manifest
 }
 
+function supportedVersion(value, maxVersion) {
+  // 沒有版本號＝舊格式（v1 以前就沒寫）；寫了就必須是本版認得的整數，否則一律當成看不懂的新格式。
+  if (value === undefined || value === null) return true
+  return Number.isInteger(value) && value >= 1 && value <= maxVersion
+}
+
+// 版本閘門：遠端 manifest 比本版新就整個停止同步（不讀也不寫）。
+export function assertSupportedManifest(source) {
+  if (!isObject(source)) return
+  if (!supportedVersion(source.schemaVersion, MANIFEST_SCHEMA_VERSION)) {
+    throw new SyncSchemaError(SCHEMA_TOO_NEW_MESSAGE, { kind: 'manifest', version: source.schemaVersion })
+  }
+}
+
+// 版本閘門：任何從雲端拿到的文件 blob 比本版新，也停止同步，避免舊版白名單刪掉新欄位。
+export function assertSupportedDocument(raw, id = null) {
+  const document = typeof raw === 'string' ? parseJson(raw) : raw
+  if (!isObject(document)) return
+  if (!supportedVersion(document.schemaVersion, SUPPORTED_DOC_SCHEMA_VERSION)) {
+    throw new SyncSchemaError(SCHEMA_TOO_NEW_MESSAGE, { kind: 'document', id, version: document.schemaVersion })
+  }
+}
+
+// 套用前要確認「沒有被同步期間的本機修改改過」的每個 key，對應快照當下的值（不存在＝null）。
+export function writeExpectations(entries, writes, extraKeys = []) {
+  const snapshot = isObject(entries) ? entries : {}
+  const keys = new Set([
+    ...(Array.isArray(writes?.removeKeys) ? writes.removeKeys : []),
+    ...Object.keys(isObject(writes?.setKeys) ? writes.setKeys : {}),
+    ...extraKeys
+  ])
+  const expected = {}
+  for (const key of [...keys].sort()) {
+    expected[key] = typeof snapshot[key] === 'string' ? snapshot[key] : null
+  }
+  return expected
+}
+
+// 回傳跟快照不一致的 key（readValue 回傳目前值，不存在回 null）。
+export function changedSince(expected, readValue) {
+  const changed = []
+  for (const [key, value] of Object.entries(isObject(expected) ? expected : {})) {
+    const current = readValue(key)
+    if ((typeof current === 'string' ? current : null) !== value) changed.push(key)
+  }
+  return changed
+}
+
 function normalizeLocal(source) {
   const local = isObject(source) ? source : {}
   const docs = {}
@@ -278,6 +351,7 @@ function mergeTombstones({ remoteTombstones, baseTombstones, initialSync }) {
 }
 
 export function computeSyncPlan({ local, remoteManifest, base, machineId, now }) {
+  assertSupportedManifest(remoteManifest)
   const localState = normalizeLocal(local)
   const remote = normalizeManifest(remoteManifest)
   const initialSync = base === null || base === undefined
@@ -472,6 +546,8 @@ export function buildConflictCopy(docJsonString, machineLabel, now) {
   if (!isObject(document) || typeof document.id !== 'string' || !document.id) {
     throw new TypeError('文件 JSON 損壞或缺少 id')
   }
+  // 衝突副本會被本機存檔的白名單整理：較新格式的文件不能在這裡被默默降版。
+  assertSupportedDocument(document, document.id)
 
   const timestamp = isoValue(now)
   const displayDate = new Date(now)
@@ -518,6 +594,7 @@ export function computeLocalWrites({ plan, pulledBlobs, localState }) {
   for (const id of pullIds) {
     const raw = pulled[id]
     // 先完整驗證所有 doc blob；任一缺失就不產生 index patch，避免 UI 指向不存在的文件。
+    assertSupportedDocument(raw, id)
     thumbnailFromBlob(raw, id)
     setKeys[`${DOC_PREFIX}${id}`] = raw
     effectiveBlobs[id] = raw

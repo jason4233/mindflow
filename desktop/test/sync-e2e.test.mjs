@@ -323,6 +323,11 @@ class MemoryRendererStorage {
   }
 
   applyAuthoritativeWrites(writes) {
+    // 模擬 renderer 套用腳本的原子比對：同步讀快照後本機若又改了要被覆蓋的 key，整批不寫。
+    if (writes.expected) {
+      const changedKeys = Object.keys(writes.expected).filter((key) => (this.entries.get(key) ?? null) !== writes.expected[key])
+      if (changedKeys.length) return { conflict: true, changedKeys }
+    }
     this.authoritativeWrites.push(structuredClone(writes))
     for (const key of writes.removeKeys || []) this.entries.delete(key)
     // sync 是權威寫入：測試 seam 只接受 frozen computeLocalWrites 的 set/remove 形狀。
@@ -360,8 +365,19 @@ async function createSyncInstance({ name, server, token, clock }) {
     repo: `${server.owner}/${server.repo}`,
     branch: server.branch
   }
-  const readEntries = async () => storage.snapshot()
-  const applyWrites = async (writes) => storage.applyAuthoritativeWrites(writes)
+  // hooks 讓測試在「同步讀完快照之後」或「套用之前」插入使用者的存檔，重現同步期間的競爭。
+  const hooks = {}
+  let readCount = 0
+  const readEntries = async () => {
+    const snapshot = storage.snapshot()
+    readCount += 1
+    hooks.afterRead?.(readCount)
+    return snapshot
+  }
+  const applyWrites = async (writes) => {
+    hooks.beforeApply?.(writes)
+    return storage.applyAuthoritativeWrites(writes)
+  }
   const logger = Object.fromEntries(['debug', 'info', 'warn', 'error'].map((level) => [
     level,
     (...args) => logs.push({ level, args })
@@ -393,6 +409,7 @@ async function createSyncInstance({ name, server, token, clock }) {
     name,
     storage,
     logs,
+    hooks,
     userDataPath,
     async syncNow() {
       const originalConsole = Object.fromEntries(['debug', 'info', 'warn', 'error'].map((level) => [level, console[level]]))
@@ -589,4 +606,151 @@ test('雙實例：B 收藏後，favorite delta 經中樞傳回 A', async () => {
 
   assert.deepEqual(pair.a.storage.index().favorites, ['favorite-me'])
   await assertSyncSafety({ token: pair.token, server: pair.server, instances: [pair.a, pair.b] })
+})
+
+
+function conflictCopies(instance) {
+  return instance.storage.activeDocs().filter((doc) => doc.title.includes('衝突副本'))
+}
+
+test('競爭：同步讀完快照、推送前使用者又存了同一份圖 → 重跑一輪，推上去的是最新版、不產生副本', async () => {
+  const pair = await createPair()
+  pair.a.storage.putDoc({ id: 'plan', title: 'v1', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+
+  pair.a.storage.editDoc('plan', { title: 'v2', updatedAt: '2026-08-30T01:05:00.000Z' })
+  let armed = true
+  pair.a.hooks.afterRead = () => {
+    // 這次同步第一次讀完快照後，使用者又改了一次（v3）
+    if (!armed) return
+    armed = false
+    pair.a.storage.editDoc('plan', { title: 'v3', updatedAt: '2026-08-30T01:05:30.000Z' })
+  }
+  await pair.a.syncNow()
+  pair.a.hooks.afterRead = null
+  await pair.b.syncNow()
+
+  assert.equal(pair.a.storage.doc('plan').title, 'v3')
+  assert.equal(pair.b.storage.doc('plan').title, 'v3', 'B 必須拿到推送前最後一次的修改')
+  assert.equal(conflictCopies(pair.a).length, 0)
+  assert.equal(conflictCopies(pair.b).length, 0)
+  await assertSyncSafety({ token: pair.token, server: pair.server, instances: [pair.a, pair.b] })
+})
+
+test('競爭：同步要把遠端版本寫進本機前，使用者剛好在本機改了同一份圖 → 本機修改不會被蓋掉', async () => {
+  const pair = await createPair()
+  pair.a.storage.putDoc({ id: 'notes', title: '共同版本', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+
+  pair.clockB.set('2026-08-30T02:00:00.000Z')
+  pair.b.storage.editDoc('notes', { title: 'B 的修改', updatedAt: '2026-08-30T02:00:00.000Z' })
+  await pair.b.syncNow()
+
+  let injected = false
+  pair.clockA.set('2026-08-30T02:10:00.000Z')
+  pair.a.hooks.beforeApply = () => {
+    if (injected) return
+    injected = true
+    // 同步已經走完網路、正要套用 B 的版本：使用者在 A 上剛存了一筆
+    pair.a.storage.editDoc('notes', { title: 'A 剛存的修改', updatedAt: '2026-08-30T02:10:00.000Z' })
+  }
+  await pair.a.syncNow()
+  pair.a.hooks.beforeApply = null
+  await pair.b.syncNow()
+
+  // 真正的同時修改：A 較新所以勝出，B 的版本保留成衝突副本；重點是 A 的修改沒有被默默蓋掉。
+  for (const instance of [pair.a, pair.b]) {
+    assert.equal(instance.storage.doc('notes').title, 'A 剛存的修改')
+    const copies = conflictCopies(instance)
+    assert.equal(copies.length, 1)
+    assert.ok(copies[0].title.includes('B 的修改'))
+  }
+  await assertSyncSafety({ token: pair.token, server: pair.server, instances: [pair.a, pair.b] })
+})
+
+test('推送成功但本機套用失敗（base 沒前進）→ 下一次同步不會產生內容相同的衝突副本', async () => {
+  const pair = await createPair()
+  pair.a.storage.putDoc({ id: 'alpha', title: 'alpha v1', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  pair.a.storage.putDoc({ id: 'beta', title: 'beta v1', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+
+  pair.clockA.set('2026-08-30T02:00:00.000Z')
+  pair.clockB.set('2026-08-30T02:00:00.000Z')
+  pair.a.storage.editDoc('alpha', { title: 'alpha v2', updatedAt: '2026-08-30T02:00:00.000Z' })
+  pair.b.storage.editDoc('beta', { title: 'beta v2', updatedAt: '2026-08-30T02:00:01.000Z' })
+  await pair.b.syncNow()
+
+  let failed = false
+  pair.a.hooks.beforeApply = () => {
+    if (failed) return
+    failed = true
+    throw new Error('renderer quota failure')
+  }
+  await assert.rejects(pair.a.syncNow(), /quota/)
+  pair.a.hooks.beforeApply = null
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+
+  for (const instance of [pair.a, pair.b]) {
+    assert.equal(instance.storage.doc('alpha').title, 'alpha v2')
+    assert.equal(instance.storage.doc('beta').title, 'beta v2')
+    assert.equal(conflictCopies(instance).length, 0, `${instance.name} 不應出現內容相同的衝突副本`)
+  }
+  await assertSyncSafety({ token: pair.token, server: pair.server, instances: [pair.a, pair.b] })
+})
+
+test('版本閘門：雲端 manifest 是較新格式 → 停止同步、不寫本機、不推送', async () => {
+  const pair = await createPair()
+  pair.a.storage.putDoc({ id: 'mine', title: '本機文件', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  const head = (await getRef(pair.server).then((response) => response.json())).object.sha
+  const newer = await createCommitOn(pair.server, {
+    parentSha: head,
+    files: { 'manifest.json': JSON.stringify({ schemaVersion: 2, docs: {}, favorites: [], tombstones: {}, lastWriter: 'future' }) }
+  })
+  await fetch(`${pair.server.apiBase}/repos/${pair.server.owner}/${pair.server.repo}/git/refs/heads/${pair.server.branch}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sha: newer.sha, force: false })
+  })
+  const before = JSON.stringify(pair.a.storage.snapshot())
+  const requestStart = pair.server.requests.length
+
+  await assert.rejects(pair.a.syncNow(), /較新版本的 MindFlow/)
+
+  assert.equal(JSON.stringify(pair.a.storage.snapshot()), before, '本機資料不得被改動')
+  const writes = pair.server.requests.slice(requestStart).filter((request) => ['POST', 'PATCH'].includes(request.method))
+  assert.equal(writes.length, 0, '較新格式時不得對雲端寫入任何東西')
+})
+
+test('版本閘門：manifest 仍是 v1 但某份文件是較新格式 → 停止同步、不寫本機', async () => {
+  const pair = await createPair()
+  pair.a.storage.putDoc({ id: 'shared', title: '共同', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  const head = (await getRef(pair.server).then((response) => response.json())).object.sha
+  const futureDoc = { schemaVersion: 2, version: 1, id: 'shared', title: '未來格式', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T05:00:00.000Z', root: { id: 'r', text: '未來格式', children: [] }, conflicts: [] }
+  const manifest = {
+    schemaVersion: 1,
+    docs: { shared: { title: '未來格式', createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T05:00:00.000Z', state: 'active' } },
+    favorites: [],
+    tombstones: {},
+    lastWriter: 'future-device'
+  }
+  const newer = await createCommitOn(pair.server, {
+    parentSha: head,
+    files: { 'manifest.json': JSON.stringify(manifest), 'docs/shared.json': JSON.stringify(futureDoc) }
+  })
+  await fetch(`${pair.server.apiBase}/repos/${pair.server.owner}/${pair.server.repo}/git/refs/heads/${pair.server.branch}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sha: newer.sha, force: false })
+  })
+  const before = JSON.stringify(pair.b.storage.snapshot())
+
+  await assert.rejects(pair.b.syncNow(), /較新版本的 MindFlow/)
+  assert.equal(JSON.stringify(pair.b.storage.snapshot()), before)
+  assert.equal(pair.b.storage.doc('shared').title, '共同')
 })

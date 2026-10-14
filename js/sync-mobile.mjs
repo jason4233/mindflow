@@ -1,9 +1,13 @@
 import {
+  SyncLocalChangedError,
+  SyncSchemaError,
   buildConflictCopy,
   buildLocalState,
+  changedSince,
   computeLocalWrites,
   computeSyncPlan,
-  emptyManifest
+  emptyManifest,
+  writeExpectations
 } from './sync-plan.mjs'
 
 export const MOBILE_SYNC_CONFIG_KEY = 'mindflow.sync.mobile.config'
@@ -14,6 +18,7 @@ export const MOBILE_SYNC_CHANGE_DEBOUNCE_MS = 45_000
 const DEFAULT_API_BASE = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const UPDATE_REF_ATTEMPTS = 3
+const LOCAL_CHANGE_ATTEMPTS = 3
 const MANIFEST_PATH = 'manifest.json'
 const INDEX_KEY = 'mindflow.docs.index'
 const DOC_KEY_PREFIX = 'mindflow.doc.'
@@ -236,6 +241,11 @@ export function observeMindflowStorage(storage, listener) {
 }
 
 function applyStorageWrites(storage, writes, dispatchSyncApplied) {
+  // 同步走網路的這幾秒內使用者若又存了要被覆蓋的 key，整批不寫，交由呼叫端重跑一輪。
+  if (isObject(writes?.expected)) {
+    const changedKeys = changedSince(writes.expected, key => storage.getItem(key))
+    if (changedKeys.length) return { conflict: true, changedKeys }
+  }
   const removeKeys = [...new Set(Array.isArray(writes?.removeKeys) ? writes.removeKeys : [])]
   const setEntries = Object.entries(isObject(writes?.setKeys) ? writes.setKeys : {})
   const touched = [...new Set([...removeKeys, ...setEntries.map(([key]) => key)])]
@@ -495,7 +505,7 @@ function createGitHubClient(fetchFn) {
   })
 }
 
-async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
+async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedThisRun = new Map() }) {
   const entries = readStorageEntries(storage)
   const localState = buildLocalState(entries)
   const ref = await client.getRef(cfg)
@@ -550,12 +560,28 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
   }
 
   for (const conflict of plan.conflicts) {
+    const localRaw = localState.docBlobs[conflict.id]
+    const remoteRaw = await readRemoteDoc(conflict.id)
+    if (typeof localRaw === 'string' && localRaw === remoteRaw) {
+      // 兩邊內容一字不差（例如上一輪推送成功但 base 沒存到）：不是衝突，不產生副本。
+      pushIds.delete(conflict.id)
+      plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+      continue
+    }
+    if (typeof localRaw === 'string' && pushedThisRun.get(conflict.id) === remoteRaw) {
+      // 雲端那份是本輪稍早自己推的版本、本機之後又改了：本機直接蓋過，不算衝突。
+      pushIds.add(conflict.id)
+      plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+      delete pulledBlobs[conflict.id]
+      plan.nextManifest.docs[conflict.id] = { ...plan.nextManifest.docs[conflict.id], ...localState.docs[conflict.id] }
+      plan.nextPerDoc[conflict.id] = localState.docs[conflict.id].updatedAt
+      continue
+    }
     if (conflict.loserCopyFrom === 'local') {
-      const raw = localState.docBlobs[conflict.id]
-      if (typeof raw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
-      addConflictCopy(raw, state.machineId)
+      if (typeof localRaw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
+      addConflictCopy(localRaw, state.machineId)
     } else {
-      addConflictCopy(await readRemoteDoc(conflict.id), remoteManifest.lastWriter || 'remote-device')
+      addConflictCopy(remoteRaw, remoteManifest.lastWriter || 'remote-device')
     }
   }
   for (const resurrection of plan.resurrect) {
@@ -586,6 +612,9 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
   const writes = { setKeys, removeKeys: [...removeKeys] }
   const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
     Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
+  writes.expected = writeExpectations(entries, writes)
+  const pushedLocalIds = [...pushIds].filter(id => !Object.hasOwn(conflictBlobs, id) && typeof localState.docBlobs[id] === 'string')
+  const prePushExpected = writeExpectations(entries, writes, pushedLocalIds.map(id => `${DOC_KEY_PREFIX}${id}`))
 
   const remoteDocPaths = Object.keys(tree.byPath).filter(path => idFromDocumentPath(path))
   const desiredDocPaths = new Set(Object.keys(plan.nextManifest.docs).map(documentPath))
@@ -593,7 +622,12 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
   const needsPush = pushIds.size > 0 || deletedRemotePaths.length > 0 || manifestsDiffer(remoteManifest, plan.nextManifest)
 
   let commitSha = ref.sha
+  const pushedDocs = {}
   if (needsPush) {
+    // 還沒對雲端寫任何東西：本機在同步期間又存檔就作廢重跑。
+    const changedKeys = changedSince(prePushExpected, key => storage.getItem(key))
+    if (changedKeys.length) throw new SyncLocalChangedError(changedKeys)
+
     const treeEntries = []
     for (const id of [...pushIds].sort()) {
       const raw = augmentedLocal.docBlobs[id] ?? pulledBlobs[id]
@@ -610,12 +644,14 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
       parentSha: ref.sha
     })
     await client.updateRef(cfg, commitSha)
+    for (const id of pushedLocalIds) pushedDocs[id] = localState.docBlobs[id]
   }
 
   return {
     entries,
     localChanged,
     writes,
+    pushedDocs,
     nextState: {
       lastSyncedCommitSha: commitSha,
       baseManifest: needsPush
@@ -787,24 +823,39 @@ export function createMobileSyncApi({
     const syncNow = now()
     if (!(syncNow instanceof Date) || Number.isNaN(syncNow.getTime())) throw new TypeError('now must return a valid Date')
     const repoStatus = await client.ensureRepo(config)
+    const pushedThisRun = new Map()
+    let refConflicts = 0
+    let localChanges = 0
     let outcome
-    for (let attempt = 1; attempt <= UPDATE_REF_ATTEMPTS; attempt += 1) {
+    for (;;) {
       try {
-        outcome = await reconcileAttempt({ cfg: config, state, storage, client, syncNow })
-        break
+        outcome = await reconcileAttempt({ cfg: config, state, storage, client, syncNow, pushedThisRun })
       } catch (error) {
-        const refConflict = error instanceof MobileSyncHttpError && error.status === 422
-        if (!refConflict || attempt === UPDATE_REF_ATTEMPTS) throw error
+        if (error instanceof MobileSyncHttpError && error.status === 422) {
+          refConflicts += 1
+          if (refConflicts < UPDATE_REF_ATTEMPTS) continue
+        } else if (error instanceof SyncLocalChangedError) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+        }
+        throw error
       }
-    }
-
-    if (outcome.localChanged) {
-      applyingRemote = true
-      try {
-        applyStorageWrites(storage, outcome.writes, emitSyncApplied)
-      } finally {
-        applyingRemote = false
+      for (const [id, raw] of Object.entries(outcome.pushedDocs)) pushedThisRun.set(id, raw)
+      if (outcome.localChanged) {
+        applyingRemote = true
+        let applied
+        try {
+          applied = applyStorageWrites(storage, outcome.writes, emitSyncApplied)
+        } finally {
+          applyingRemote = false
+        }
+        if (applied?.conflict) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+          throw new SyncLocalChangedError(applied.changedKeys)
+        }
       }
+      break
     }
     state = outcome.nextState
     await preferenceStore.saveState(state)

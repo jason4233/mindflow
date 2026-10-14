@@ -16,11 +16,15 @@ import {
   updateRef
 } from './sync-github.mjs'
 import {
+  SyncLocalChangedError,
+  SyncSchemaError,
   buildConflictCopy,
   buildLocalState,
+  changedSince,
   computeLocalWrites,
   computeSyncPlan,
-  emptyManifest
+  emptyManifest,
+  writeExpectations
 } from './sync-plan.mjs'
 import {
   getDecryptedToken,
@@ -37,6 +41,8 @@ export const CLOSE_FLUSH_TIMEOUT_MS = 10_000
 const RETRY_INITIAL_MS = 30_000
 const RETRY_MAX_MS = 5 * 60_000
 const UPDATE_REF_ATTEMPTS = 3
+// 同步期間本機一直有新修改時最多重跑幾輪；超過就交給下一次觸發（不會遺失：沒套用就沒覆蓋）。
+const LOCAL_CHANGE_ATTEMPTS = 3
 const STATE_FILENAME = 'sync-state.json'
 const MANIFEST_PATH = 'manifest.json'
 const INDEX_KEY = 'mindflow.docs.index'
@@ -221,6 +227,11 @@ function rendererApplyScript(writes) {
   return `(() => {
     const writes = JSON.parse(${serialized});
     const indexKey = 'mindflow.docs.index';
+    const expected = writes.expected && typeof writes.expected === 'object' ? writes.expected : null;
+    if (expected) {
+      const changedKeys = Object.keys(expected).filter(key => localStorage.getItem(key) !== expected[key]);
+      if (changedKeys.length) return { conflict: true, changedKeys };
+    }
     const removeKeys = [...new Set(Array.isArray(writes.removeKeys) ? writes.removeKeys : [])];
     const setEntries = Object.entries(writes.setKeys || {});
     const touched = [...new Set([...removeKeys, ...setEntries.map(([key]) => key)])];
@@ -448,19 +459,35 @@ class SyncEngine {
     let outcome
 
     const repoStatus = await ensureRepo(this.cfg)
-    for (let attempt = 1; attempt <= UPDATE_REF_ATTEMPTS; attempt += 1) {
+    // 這次同步自己推上去的文件內容：之後若雲端那份正是它、本機又改了，就是同一台的先後修改，不算衝突。
+    const pushedThisRun = new Map()
+    let refConflicts = 0
+    let localChanges = 0
+    for (;;) {
       try {
-        outcome = await this.reconcileAttempt(previousState, startedAt)
-        break
+        outcome = await this.reconcileAttempt(previousState, startedAt, pushedThisRun)
       } catch (error) {
-        const refConflict = error instanceof SyncHttpError && error.status === 422
-        if (!refConflict || attempt === UPDATE_REF_ATTEMPTS) throw error
-        // 422 是 compare-and-swap 競爭；必須回到 ref pull 重新合併，不可 force push。
+        if (error instanceof SyncHttpError && error.status === 422) {
+          // 422 是 compare-and-swap 競爭；必須回到 ref pull 重新合併，不可 force push。
+          refConflicts += 1
+          if (refConflicts < UPDATE_REF_ATTEMPTS) continue
+        } else if (error instanceof SyncLocalChangedError) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+        }
+        throw error
       }
-    }
-
-    if (outcome.localChanged) {
-      await this.storageQueue.run(() => this.applyWrites(outcome.writes))
+      for (const [id, raw] of Object.entries(outcome.pushedDocs)) pushedThisRun.set(id, raw)
+      if (outcome.localChanged) {
+        // renderer 內原子比對：同步讀快照後若使用者又存了被覆蓋的 key，整批不寫、重跑一輪。
+        const applied = await this.storageQueue.run(() => this.applyWrites(outcome.writes))
+        if (applied?.conflict) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+          throw new SyncLocalChangedError(applied.changedKeys || [])
+        }
+      }
+      break
     }
     // renderer 套用成功後才允許前進 base；失敗時 state file 保持原值。
     await saveSyncState(this.userDataPath, outcome.nextState)
@@ -493,7 +520,7 @@ class SyncEngine {
     return warning ? { warning } : {}
   }
 
-  async reconcileAttempt(previousState, syncNow) {
+  async reconcileAttempt(previousState, syncNow, pushedThisRun = new Map()) {
     const entries = await this.storageQueue.run(() => this.readEntries())
     const localState = buildLocalState(entries)
     const ref = await getRef(this.cfg)
@@ -548,12 +575,28 @@ class SyncEngine {
     }
 
     for (const conflict of plan.conflicts) {
+      const localRaw = localState.docBlobs[conflict.id]
+      const remoteRaw = await readRemoteDoc(conflict.id)
+      if (typeof localRaw === 'string' && localRaw === remoteRaw) {
+        // 兩邊內容一字不差（例如上一輪推送成功但 base 沒存到）：不是衝突，不產生副本。
+        pushIds.delete(conflict.id)
+        plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+        continue
+      }
+      if (typeof localRaw === 'string' && pushedThisRun.get(conflict.id) === remoteRaw) {
+        // 雲端那份是本輪稍早自己推的版本、本機之後又改了：本機直接蓋過，不算衝突。
+        pushIds.add(conflict.id)
+        plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+        delete pulledBlobs[conflict.id]
+        plan.nextManifest.docs[conflict.id] = { ...plan.nextManifest.docs[conflict.id], ...localState.docs[conflict.id] }
+        plan.nextPerDoc[conflict.id] = localState.docs[conflict.id].updatedAt
+        continue
+      }
       if (conflict.loserCopyFrom === 'local') {
-        const raw = localState.docBlobs[conflict.id]
-        if (typeof raw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
-        addConflictCopy(raw, previousState.machineId)
+        if (typeof localRaw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
+        addConflictCopy(localRaw, previousState.machineId)
       } else {
-        addConflictCopy(await readRemoteDoc(conflict.id), remoteManifest.lastWriter || 'remote-device')
+        addConflictCopy(remoteRaw, remoteManifest.lastWriter || 'remote-device')
       }
     }
     for (const resurrection of plan.resurrect) {
@@ -584,6 +627,10 @@ class SyncEngine {
     const writes = { setKeys, removeKeys: [...removeKeys] }
     const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
       Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
+    // 套用時要確認沒被同步期間的本機存檔改過的 key；推送前另外確認要推的本機文件也還是快照那份。
+    writes.expected = writeExpectations(entries, writes)
+    const pushedLocalIds = [...pushIds].filter(id => !Object.hasOwn(conflictBlobs, id) && typeof localState.docBlobs[id] === 'string')
+    const prePushExpected = writeExpectations(entries, writes, pushedLocalIds.map(id => `${DOC_KEY_PREFIX}${id}`))
 
     const remoteDocPaths = Object.keys(tree.byPath).filter(path => idFromDocumentPath(path))
     const desiredDocPaths = new Set(Object.keys(plan.nextManifest.docs).map(documentPath))
@@ -592,7 +639,13 @@ class SyncEngine {
       manifestsDiffer(remoteManifest, plan.nextManifest)
 
     let commitSha = ref.sha
+    const pushedDocs = {}
     if (needsPush) {
+      // 還沒對雲端寫任何東西：此時發現本機在同步期間又存檔，直接作廢重跑最便宜也最安全。
+      const current = await this.storageQueue.run(() => this.readEntries())
+      const changedKeys = changedSince(prePushExpected, key => current?.[key] ?? null)
+      if (changedKeys.length) throw new SyncLocalChangedError(changedKeys)
+
       const treeEntries = []
       for (const id of [...pushIds].sort()) {
         const raw = augmentedLocal.docBlobs[id] ?? pulledBlobs[id]
@@ -612,6 +665,7 @@ class SyncEngine {
         parentSha: ref.sha
       })
       await updateRef(this.cfg, commitSha)
+      for (const id of pushedLocalIds) pushedDocs[id] = localState.docBlobs[id]
     }
 
     const baseManifest = needsPush
@@ -621,6 +675,7 @@ class SyncEngine {
       entries,
       localChanged,
       writes,
+      pushedDocs,
       nextState: {
         lastSyncedCommitSha: commitSha,
         baseManifest,
@@ -637,6 +692,8 @@ class SyncEngine {
     const message = safeErrorMessage(error, [this.cfg.token])
     const offline = error instanceof SyncHttpError && error.status === 0
     this.setStatus({ state: offline ? 'offline' : 'error', lastError: message })
+    // 雲端是較新格式時重試沒有意義：等使用者更新後的下一次啟動／聚焦再試。
+    if (error instanceof SyncSchemaError) return
     if (!this.started || !this.isEnabled() || this.disposed || this.retryTimer) return
     const delay = this.retryDelayMs
     this.retryDelayMs = Math.min(RETRY_MAX_MS, delay * 2)
