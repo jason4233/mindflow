@@ -59,7 +59,7 @@ test('a newer versionCode is reported as an update; the request bypasses the HTT
   assert.equal(result.latest.versionCode, 42)
   assert.equal(result.current.versionCode, 41)
   assert.equal(requests[0].init.cache, 'no-store')
-  assert.equal(requests[0].url, 'https://api.github.com/repos/jason4233/mindflow/releases/latest')
+  assert.equal(requests[0].url, 'https://api.github.com/repos/jason4233/mindflow/releases/tags/latest')
 })
 
 test('same or older release is current', async () => {

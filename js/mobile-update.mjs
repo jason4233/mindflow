@@ -1,11 +1,12 @@
 /**
- * 手機 App 內檢查新版：讀 GitHub 上 MindFlow 的 latest release，找 `MindFlow-<versionCode>.apk`，
+ * 手機 App 內檢查新版：讀 GitHub 上 MindFlow 滾動的 latest release，找 `MindFlow-<versionCode>.apk`，
  * 比 App 自己的 versionCode 新就在首頁顯示提示，按下去用系統瀏覽器下載。
  * 不需要權杖（公開 API，每 IP 每小時 60 次），預設每 6 小時最多查一次。
  */
 import { getCapacitorPlugin } from './capacitor-plugins.mjs'
 
-export const UPDATE_RELEASE_API = 'https://api.github.com/repos/jason4233/mindflow/releases/latest'
+// 直接讀滾動的 `latest` tag：android.yml 只把 MindFlow-<versionCode>.apk 放在這個 release。
+export const UPDATE_RELEASE_API = 'https://api.github.com/repos/jason4233/mindflow/releases/tags/latest'
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000
 export const UPDATE_SNOOZE_MS = 3 * 24 * 60 * 60_000
 export const UPDATE_STATE_KEY = 'mindflow.mobile.update'

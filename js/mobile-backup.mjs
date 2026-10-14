@@ -80,7 +80,9 @@ function contentHash(value) {
   return `${value.length}:${hash.toString(16)}`
 }
 
+// Capacitor Filesystem 8：檔案不存在是 code OS-PLUG-FILE-0008、訊息 "... does not exist."
 function missingFile(error) {
+  if (error?.code === 'OS-PLUG-FILE-0008') return true
   return /not exist|no such file|does not exist|not found|ENOENT/iu.test(String(error?.message || error))
 }
 

@@ -1,0 +1,101 @@
+name: Tests
+
+# 每個 PR 與 main 都跑：網頁＋共用同步核心、手機同步引擎、電腦版 main process、觸控 E2E。
+# 只讀權限，不碰 release、不需要任何 secret。
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web and shared sync core
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Root unit tests
+        run: node --test tests/*.test.mjs
+
+  mobile:
+    name: Mobile sync engine and Android config
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Mobile tests
+        working-directory: mobile
+        run: npm test
+
+  desktop:
+    name: Desktop main process
+    # 電腦版只發 Windows；部分測試依賴 Windows 路徑語意，必須在 Windows 上跑。
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Desktop tests
+        working-directory: desktop
+        run: node --test test/*.test.mjs
+
+  touch-e2e:
+    name: Touch E2E (375x812 and desktop mouse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+          executable="$(node --input-type=module -e "import { chromium } from 'playwright'; console.log(chromium.executablePath())")"
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE=$executable" >> "$GITHUB_ENV"
+
+      - name: Touch E2E
+        run: node tests/e2e/touch.mobile.mjs
