@@ -134,3 +134,13 @@ test('cloud doc codec reads v1 documents and refuses newer schemas', async () =>
   assert.throws(() => decodeCloudDoc(legacy, { id: 'other' }), /mismatch/)
   await assert.rejects(encodeCloudDoc(legacy, { id: 'doc_1', hlc: 'bad' }), TypeError)
 })
+
+test('HLC stamp() dates a past local edit at its own time, but never before what the device has already seen', () => {
+  const clock = createHlcClock({ node: 'pc', wallClock: () => 50_000 })
+  assert.equal(parseHlc(clock.stamp(40_000)).wall, 40_000, '修改當下的時間')
+  const seen = formatHlc({ wall: 45_000, counter: 3, node: 'phone' })
+  clock.receive(seen)
+  const after = clock.stamp(41_000)
+  assert.equal(compareHlc(seen, after), -1, '看過的時間戳之後才發生的修改，排在它後面')
+  assert.equal(parseHlc(clock.stamp(Number.NaN)).wall, 50_000, '沒有時間就用現在')
+})

@@ -63,6 +63,16 @@ export function createHlcClock({ node, last = null, wallClock = () => Date.now()
       if (physical > state.wall) return advance(physical, 0)
       return advance(state.wall, state.counter + 1)
     },
+    /**
+     * 替「過去某個時間點發生的本機事件」蓋章（例如文件的 updatedAt）：
+     * 時間取事件當下，但一定大於這台裝置之前發出或看過的所有時間戳（保持因果順序）。
+     */
+    stamp(eventWall) {
+      const physical = wallClock()
+      const wall = Number.isFinite(eventWall) ? Math.min(Math.trunc(eventWall), physical + MAX_DRIFT_MS) : physical
+      if (wall > state.wall) return advance(wall, 0)
+      return advance(state.wall, state.counter + 1)
+    },
     /** 收到遠端時間戳：讓本機時鐘不落後於它（忽略離譜的未來值）。 */
     receive(remote) {
       const parsed = parseHlc(remote)

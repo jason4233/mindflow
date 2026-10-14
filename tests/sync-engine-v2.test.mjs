@@ -522,3 +522,110 @@ test('poll: an unchanged branch costs one 304 request; a change triggers a pull'
     await env.close()
   }
 })
+
+test('offline edits on both devices: the later version (HLC) wins, the other is kept as a conflict copy; a ref race is retried', async () => {
+  const env = await createEnv()
+  try {
+    env.pcStorage.putDoc(makeDoc('campaign', '共同初稿', '2026-10-14T09:00:00.000Z'))
+    await env.pc.syncNow()
+    await env.android.syncNow()
+    env.server.setOffline(true)
+    env.clocks.pc = Date.parse('2026-10-14T11:00:00.000Z')
+    env.clocks.android = Date.parse('2026-10-14T12:00:00.000Z')
+    const pcDoc = env.pcStorage.doc('campaign')
+    env.pcStorage.putDoc({ ...pcDoc, title: '電腦離線版本', updatedAt: '2026-10-14T11:00:00.000Z' })
+    const phoneDoc = env.androidStorage.doc('campaign')
+    env.androidStorage.putDoc({ ...phoneDoc, title: '手機離線版本', updatedAt: '2026-10-14T12:00:00.000Z' })
+    const offline = await env.pc.syncNow()
+    assert.equal(offline.ok, false)
+    assert.equal((await env.pc.getStatus()).state, 'offline')
+    assert.equal(JSON.stringify(await env.pc.getStatus()).includes(TOKEN), false)
+    env.server.setOffline(false)
+
+    await env.android.syncNow()
+    env.server.injectUpdateRef422(1)
+    const start = env.server.requests.length
+    assert.deepEqual(await env.pc.syncNow(), { ok: true })
+    const requests = env.server.requests.slice(start)
+    const conflictAt = requests.findIndex(request => request.method === 'PATCH' && request.status === 422)
+    assert.ok(conflictAt >= 0 && requests.slice(conflictAt + 1).some(request => request.method === 'PATCH' && request.status === 200), '422 後重拉重推')
+    await env.android.syncNow()
+
+    for (const storage of [env.pcStorage, env.androidStorage]) {
+      assert.equal(storage.doc('campaign').title, '手機離線版本', '較晚的版本勝出')
+      const titles = storage.titles()
+      assert.equal(titles.length, 2)
+      assert.ok(titles.some(title => title.startsWith('電腦離線版本（衝突副本・電腦')), JSON.stringify(titles))
+    }
+  } finally {
+    await env.close()
+  }
+})
+
+test('favorites sync through the hub', async () => {
+  const env = await createEnv()
+  try {
+    env.pcStorage.putDoc(makeDoc('fav', '重要專案', '2026-10-14T09:00:00.000Z'))
+    await env.pc.syncNow()
+    await env.android.syncNow()
+    const index = JSON.parse(env.androidStorage.getItem('mindflow.docs.index'))
+    index.favorites = ['fav']
+    env.androidStorage.setItem('mindflow.docs.index', JSON.stringify(index))
+    await env.android.syncNow()
+    await env.pc.syncNow()
+    assert.deepEqual(JSON.parse(env.pcStorage.getItem('mindflow.docs.index')).favorites, ['fav'])
+  } finally {
+    await env.close()
+  }
+})
+
+test('push succeeded but applying locally failed once: the next sync does not create identical conflict copies', async () => {
+  const env = await createEnv()
+  try {
+    env.pcStorage.putDoc(makeDoc('alpha', 'alpha v1', '2026-10-14T09:00:00.000Z'))
+    env.pcStorage.putDoc(makeDoc('beta', 'beta v1', '2026-10-14T09:00:00.000Z'))
+    await env.pc.syncNow()
+    await env.android.syncNow()
+    env.pcStorage.putDoc({ ...env.pcStorage.doc('alpha'), title: 'alpha v2', updatedAt: '2026-10-14T10:00:00.000Z' })
+    env.androidStorage.putDoc({ ...env.androidStorage.doc('beta'), title: 'beta v2', updatedAt: '2026-10-14T10:00:01.000Z' })
+    await env.android.syncNow()
+
+    // 電腦這輪要拉 beta、推 alpha：推送成功後寫本機時第一次寫入失敗（例如配額）
+    const originalSet = env.pcStorage.setItem.bind(env.pcStorage)
+    let fail = true
+    env.pcStorage.setItem = (key, value) => {
+      if (fail && key === 'mindflow.doc.beta') {
+        fail = false
+        throw new Error('QuotaExceededError (injected)')
+      }
+      return originalSet(key, value)
+    }
+    const failed = await env.pc.syncNow()
+    assert.equal(failed.ok, false)
+    assert.match(failed.error, /Quota/)
+    env.pcStorage.setItem = originalSet
+    assert.deepEqual(await env.pc.syncNow(), { ok: true })
+    await env.android.syncNow()
+    for (const storage of [env.pcStorage, env.androidStorage]) {
+      assert.equal(storage.doc('alpha').title, 'alpha v2')
+      assert.equal(storage.doc('beta').title, 'beta v2')
+      assert.equal(storage.titles().filter(title => title.includes('衝突副本')).length, 0, JSON.stringify(storage.titles()))
+    }
+  } finally {
+    await env.close()
+  }
+})
+
+test('a public repository syncs but shows a warning', async () => {
+  const env = await createEnv()
+  try {
+    env.server.isPrivate = false
+    env.pcStorage.putDoc(makeDoc('pub', '公開警告', '2026-10-14T09:00:00.000Z'))
+    const result = await env.pc.syncNow()
+    assert.equal(result.ok, true)
+    assert.match(result.warning, /public/)
+    assert.match((await env.pc.getStatus()).warning, /private/)
+  } finally {
+    await env.close()
+  }
+})

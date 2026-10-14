@@ -95,14 +95,16 @@ export async function reconcileOnce({
   // 版本閘門：v3 以上直接停止；v1 照常比對，推送時整份升級成 v2。
   assertSupportedManifest(remoteManifest)
   const remoteVersion = Number.isInteger(remoteManifest.schemaVersion) ? remoteManifest.schemaVersion : 1
-  for (const meta of Object.values(remoteManifest.docs || {})) clock.receive(meta?.hlc)
 
   const base = state.lastSyncedCommitSha && state.baseManifest
     ? { manifest: state.baseManifest, perDoc: state.perDoc || {} }
     : null
 
-  // 本機每個版本的 HLC：沒改過就沿用 base 的；改過就在第一次看到時蓋章，重試時沿用同一個章。
-  const pending = { ...(state.pending || {}) }
+  // 本機每個版本的 HLC：沒改過就沿用 base 的；改過就在第一次看到時蓋章。
+  // pending 是引擎持有的同一個物件：這一輪失敗或重試時章仍保留，否則重算時時鐘已看過較新的遠端時間戳，
+  // 較早的本機修改會被蓋成較新的章。
+  if (!state.pending || typeof state.pending !== 'object') state.pending = {}
+  const pending = state.pending
   for (const [id, meta] of Object.entries(localState.docs)) {
     const baseStamp = base?.perDoc?.[id]
     const baseMeta = base?.manifest?.docs?.[id]
@@ -113,10 +115,13 @@ export async function reconcileOnce({
       delete pending[id]
       continue
     }
-    if (pending[id]?.updatedAt !== meta.updatedAt) pending[id] = { updatedAt: meta.updatedAt, hlc: clock.now() }
+    // 以修改當下的時間（本機文件的 updatedAt，同一台裝置的時鐘）蓋章，而不是同步的時間；
+    // 而且要在接收這一輪的遠端時間戳「之前」蓋，否則較早的離線修改會因為晚同步而勝出。
+    if (pending[id]?.updatedAt !== meta.updatedAt) pending[id] = { updatedAt: meta.updatedAt, hlc: clock.stamp(Date.parse(meta.updatedAt)) }
     meta.hlc = pending[id].hlc
     meta.writer = machineId
   }
+  for (const meta of Object.values(remoteManifest.docs || {})) clock.receive(meta?.hlc)
 
   const plan = computeSyncPlan({ local: localState, remoteManifest, base, machineId, now: syncNow })
 

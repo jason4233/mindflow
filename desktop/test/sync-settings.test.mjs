@@ -182,7 +182,7 @@ test('refuses to persist a token when safeStorage encryption is unavailable', as
   })
 })
 
-test('preload exposes only the frozen IPC bridge and strips token material from getConfig', async () => {
+test('preload exposes only the sync bridge and never hands token material to the renderer', async () => {
   const ipcRenderer = new EventEmitter()
   const calls = []
   ipcRenderer.invoke = async (channel, payload) => {
@@ -191,22 +191,17 @@ test('preload exposes only the frozen IPC bridge and strips token material from 
       return {
         enabled: true,
         repo: 'owner/private',
+        branch: 'main',
         hasToken: true,
         token: 'ghp_renderer_must_never_receive_this',
         tokenCipher: 'also-private'
       }
     }
-    if (channel === 'mindflow-sync:set-config') return { ok: true }
-    if (channel === 'mindflow-sync:sync-now') return { ok: false, error: 'offline' }
+    if (channel === 'mindflow-sync:set-config') return { ok: true, token: 'leak' }
+    if (channel === 'mindflow-sync:github-request') return { status: 200, etag: 'W/"1"', data: { object: { sha: 'abc' } }, rateRemaining: 4999, token: 'leak' }
+    if (channel === 'mindflow-sync:get-legacy-state') return { lastSyncedCommitSha: 'c1', baseManifest: { docs: {} }, perDoc: {}, machineId: 'pc-1', token: 'leak' }
+    if (channel === 'mindflow-sync:startup-ready') return true
     if (channel === 'mindflow-sync:show-pairing-qr') return { ok: true, payload: 'mindflow-pair:{"token":"ghp_must_not_reach_renderer"}' }
-    if (channel === 'mindflow-sync:get-status') {
-      return {
-        state: 'offline',
-        lastSyncAt: '2026-08-30T01:02:03.000Z',
-        lastError: 'offline',
-        docCount: 12
-      }
-    }
     throw new Error(`Unexpected channel: ${channel}`)
   }
 
@@ -214,67 +209,31 @@ test('preload exposes only the frozen IPC bridge and strips token material from 
   assert.equal(exposed.name, 'mindflowSync')
   assert.deepEqual(Object.keys(exposed.api).sort(), [
     'getConfig',
-    'getStatus',
-    'onStatus',
+    'getLegacyState',
+    'githubRequest',
     'setConfig',
     'showPairingQr',
-    'syncNow'
+    'waitForStartup'
   ])
 
   const config = await exposed.api.getConfig()
-  assert.deepEqual(config, {
-    enabled: true,
-    repo: 'owner/private',
-    hasToken: true
-  })
-  assert.equal(JSON.stringify(config).includes('ghp_renderer'), false)
-  assert.equal(Object.hasOwn(config, 'tokenCipher'), false)
-
+  assert.deepEqual(config, { enabled: true, repo: 'owner/private', branch: 'main', hasToken: true })
   assert.deepEqual(
-    await exposed.api.setConfig({ token: 'ghp_new', repo: 'owner/new', enabled: false }),
+    await exposed.api.setConfig({ token: 'ghp_new', repo: 'owner/new', enabled: false, branch: 'evil' }),
     { ok: true }
   )
-  assert.deepEqual(await exposed.api.syncNow(), { ok: false, error: 'offline' })
+  const response = await exposed.api.githubRequest({ method: 'GET', path: '/repos/owner/private/git/ref/heads/main', headers: { 'if-none-match': 'x' }, extra: 1 })
+  assert.deepEqual(response, { status: 200, etag: 'W/"1"', data: { object: { sha: 'abc' } }, rateRemaining: 4999 })
+  assert.deepEqual(await exposed.api.getLegacyState(), { lastSyncedCommitSha: 'c1', baseManifest: { docs: {} }, perDoc: {}, machineId: 'pc-1' })
+  assert.equal(await exposed.api.waitForStartup(), true)
   assert.deepEqual(await exposed.api.showPairingQr(), { ok: true }, '配對 QR 的內容（含 PAT）不得回到 renderer')
-  assert.deepEqual(await exposed.api.getStatus(), {
-    state: 'offline',
-    lastSyncAt: '2026-08-30T01:02:03.000Z',
-    lastError: 'offline',
-    docCount: 12
-  })
 
   assert.deepEqual(calls, [
     { channel: 'mindflow-sync:get-config', payload: undefined },
-    {
-      channel: 'mindflow-sync:set-config',
-      payload: { token: 'ghp_new', repo: 'owner/new', enabled: false }
-    },
-    { channel: 'mindflow-sync:sync-now', payload: undefined },
-    { channel: 'mindflow-sync:show-pairing-qr', payload: undefined },
-    { channel: 'mindflow-sync:get-status', payload: undefined }
+    { channel: 'mindflow-sync:set-config', payload: { token: 'ghp_new', repo: 'owner/new', enabled: false } },
+    { channel: 'mindflow-sync:github-request', payload: { method: 'GET', path: '/repos/owner/private/git/ref/heads/main', headers: { 'if-none-match': 'x' } } },
+    { channel: 'mindflow-sync:get-legacy-state', payload: undefined },
+    { channel: 'mindflow-sync:startup-ready', payload: undefined },
+    { channel: 'mindflow-sync:show-pairing-qr', payload: undefined }
   ])
-
-  const statuses = []
-  const unsubscribe = exposed.api.onStatus(status => statuses.push(status))
-  ipcRenderer.emit('mindflow-sync:status-changed', {}, {
-    state: 'syncing',
-    lastSyncAt: null,
-    lastError: null,
-    docCount: 12
-  })
-  assert.deepEqual(statuses, [{
-    state: 'syncing',
-    lastSyncAt: null,
-    lastError: null,
-    docCount: 12
-  }])
-
-  unsubscribe()
-  ipcRenderer.emit('mindflow-sync:status-changed', {}, {
-    state: 'idle',
-    lastSyncAt: '2026-08-30T01:03:00.000Z',
-    lastError: null,
-    docCount: 12
-  })
-  assert.equal(statuses.length, 1)
 })

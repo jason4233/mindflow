@@ -248,6 +248,8 @@ export function createSyncEngine({
           localChanges += 1
           if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
         }
+        // 這一輪已蓋的 HLC 章要留下來（下一次同步沿用），否則較早的修改會被蓋成較新的章。
+        await kv.set(STATE_KEY, syncState).catch(() => {})
         throw error
       }
       for (const [id, raw] of Object.entries(outcome.pushedDocs)) pushedThisRun.set(id, raw)

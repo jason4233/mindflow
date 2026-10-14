@@ -51,6 +51,7 @@ export class FakeGitHubServer {
     this.rateRemaining = rateRemaining
     this.requests = []
     this.offline = false
+    this.isPrivate = true
     this.updateRefFailuresRemaining = 0
     this.server = null
     this.apiBase = null
@@ -153,7 +154,7 @@ export class FakeGitHubServer {
       this.#sendJson(request, response, 200, {
         name: this.repo,
         full_name: `${this.owner}/${this.repo}`,
-        private: true,
+        private: this.isPrivate,
         default_branch: this.branch,
         permissions: { admin: true, push: true, pull: true }
       })
