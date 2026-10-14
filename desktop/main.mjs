@@ -256,7 +256,13 @@ async function launch() {
   let markStartupReady
   const startupReady = new Promise(resolve => { markStartupReady = resolve })
   // 同步引擎在 renderer；main 只保管加密的 PAT、代理 GitHub 請求，並在啟動救援完成後才放行同步。
-  syncIpcRegistration = registerSyncBridgeIpc({ ipcMain, userDataPath, startupReady })
+  syncIpcRegistration = registerSyncBridgeIpc({
+    ipcMain,
+    userDataPath,
+    startupReady,
+    // 只在開發模式允許指向本機的假 GitHub 伺服器做端到端測試；安裝版一律是 api.github.com。
+    ...(!app.isPackaged && process.env.MINDFLOW_GITHUB_API_BASE ? { apiBase: process.env.MINDFLOW_GITHUB_API_BASE } : {})
+  })
   // 配對 QR 在 main process 讀出並解密 PAT、直接畫在獨立視窗；renderer 只會收到 { ok }。
   pairingIpcRegistration = registerPairingIpc({
     ipcMain,
