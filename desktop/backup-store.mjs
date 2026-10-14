@@ -1,12 +1,220 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  DOCUMENT_INDEX_KEY,
+  DOCUMENT_KEY_PREFIX,
+  hasIntentionalMindflowState,
+  hasMindflowDocuments,
+  normalizeMindflowEntries
+} from './backup-rules.mjs'
+import { STORE_EPOCH_KEY } from './sync-plan.mjs'
 
-export const DOCUMENT_INDEX_KEY = 'mindflow.docs.index'
-export const DOCUMENT_KEY_PREFIX = 'mindflow.doc.'
+export {
+  DOCUMENT_INDEX_KEY,
+  DOCUMENT_KEY_PREFIX,
+  hasIntentionalMindflowState,
+  hasMindflowDocuments,
+  normalizeMindflowEntries
+}
+
 export const BACKUP_DIRECTORY = 'backups'
 export const BACKUP_FILENAME = 'mindflow-backup.json'
 export const BACKUP_LIMIT = 10
 export const BACKUP_INTERVAL_MS = 2 * 60 * 1000
+
+/**
+ * 備份還原與舊資料搬入在 renderer 執行的寫入腳本。寫入還原內容之前先換掉本機儲存區識別碼：
+ * userData 的 sync-state.json 裡的 base 屬於較新的那份資料，識別碼對不上才會被當成首次同步（只做聯集）。
+ * 不能只移除標記——升級前沒有識別碼的 base 在「本機也沒有標記」時會被信任一次。
+ * 標記先寫：還原內容落盤時，新標記一定已經在磁碟上。
+ */
+export function rendererRestoreScript(entries, { storeEpoch }) {
+  if (typeof storeEpoch !== 'string' || !storeEpoch) throw new TypeError('storeEpoch is required')
+  const serialized = JSON.stringify(JSON.stringify(entries))
+  return `(() => {
+    const entries = JSON.parse(${serialized});
+    const indexKey = ${JSON.stringify(DOCUMENT_INDEX_KEY)};
+    const docPrefix = ${JSON.stringify(DOCUMENT_KEY_PREFIX)};
+    // 讀備份／舊資料是非同步的，這段期間使用者可能已新建文件、或同步已拉回內容：
+    // 在同一段執行裡重新確認仍是空的（與 hasIntentionalMindflowState 相同的判斷），否則取消、一個 key 都不寫。
+    let intentional = false;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (typeof key === 'string' && key.startsWith(docPrefix)) intentional = true;
+    }
+    if (!intentional) {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(indexKey));
+        intentional = Boolean(parsed && typeof parsed === 'object');
+      } catch {}
+    }
+    if (intentional) return 0;
+
+    const written = [];
+    const write = (key, value) => {
+      written.push({ key, previous: localStorage.getItem(key) });
+      localStorage.setItem(key, value);
+    };
+    try {
+      // 識別碼不列入回滾（見下方 catch），直接寫
+      localStorage.setItem(${JSON.stringify(STORE_EPOCH_KEY)}, ${JSON.stringify(storeEpoch)});
+      let count = 0;
+      for (const [key, value] of Object.entries(entries)) {
+        if (key.startsWith('mindflow.') && !key.startsWith('mindflow.sync.') && typeof value === 'string') {
+          write(key, value);
+          count += 1;
+        }
+      }
+      return count;
+    } catch (error) {
+      // 寫到一半失敗（多半是空間不足）：回滾已寫的，儲存區維持「空的」，下次開啟才會再自動還原。
+      // 回滾本身失敗不能吞掉：標在錯誤上，呼叫端才知道本機留著半套內容。
+      // 識別碼不撤回，完整回滾也一樣：舊識別碼配上 sync-state.json 會讓舊 base 被信任，
+      // 之後本機少掉的 base 文件（有內容撤回失敗，或回滾後使用者先建了新文件）會被當成本機刪除推上雲端。
+      // 寫新識別碼本身失敗時什麼都還沒寫、值也沒變過，不必寫回。
+      let rollbackIncomplete = false;
+      for (const item of written.reverse()) {
+        try {
+          if (item.previous === null) localStorage.removeItem(item.key);
+          else localStorage.setItem(item.key, item.previous);
+        } catch {
+          rollbackIncomplete = true;
+        }
+      }
+      // executeJavaScript 只帶得回錯誤訊息、帶不回自訂欄位：失敗改用結構化結果回傳，由 main 轉成錯誤。
+      return {
+        restoreFailed: true,
+        name: String(error && error.name || 'Error'),
+        message: String(error && error.message || error),
+        rollbackIncomplete
+      };
+    }
+  })()`
+}
+
+/**
+ * 開機救援判定「本機是不是空的」時在 renderer 跑的腳本：讀回 mindflow.* 的內容；讀不到文件索引（不存在或損壞）
+ * 就在同一段執行裡先清掉本機儲存區識別碼（規則同手機的 forgetStoreEpochIfStorageLost）。
+ * 同步過的儲存區一定有索引，讀不到就是本機資料遺失；識別碼留著，同步會信任 sync-state.json 的舊 base，
+ * 把本機少掉的文件當成本機刪除推上雲端（沒有備份、還原失敗或使用者先建了新文件都一樣）。
+ * 讀回與清除之間不能隔著 await。回傳的是清除之後的內容。
+ * 先 removeItem（不受空間限制），再盡量寫入 storeEpoch 這個新的隨機值：只移除的話，升級前沒有識別碼的 base
+ * 在「本機也沒有標記」時，只要 base 的文件 key 都還在仍會被信任一次（M1-A15）。
+ */
+export function rendererRecoveryCheckScript({ storeEpoch }) {
+  if (typeof storeEpoch !== 'string' || !storeEpoch) throw new TypeError('storeEpoch is required')
+  return `(() => {
+    const indexKey = ${JSON.stringify(DOCUMENT_INDEX_KEY)};
+    let readable = false;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(indexKey));
+      readable = Boolean(parsed && typeof parsed === 'object');
+    } catch {}
+    if (!readable) {
+      try { localStorage.removeItem(${JSON.stringify(STORE_EPOCH_KEY)}); } catch {}
+      try { localStorage.setItem(${JSON.stringify(STORE_EPOCH_KEY)}, ${JSON.stringify(storeEpoch)}); } catch {}
+    }
+    const entries = {};
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (typeof key === 'string' && key.startsWith('mindflow.')) entries[key] = localStorage.getItem(key);
+    }
+    return entries;
+  })()`
+}
+
+/**
+ * 開機救援失敗對話框的說明。preservedBackupPath：字串＝另存成功的位置；null＝備份還原失敗且另存也失敗；
+ * undefined＝舊資料搬入失敗（來源沒被動到）。
+ */
+export function recoveryFailedDetail({ preservedBackupPath, backupsDirectory, rollbackIncomplete = false } = {}) {
+  const legacy = preservedBackupPath === undefined
+  const where = preservedBackupPath
+    ? `還沒救回的那份備份已另存在：\n${preservedBackupPath}`
+    : preservedBackupPath === null
+      ? `備份檔仍在：\n${backupsDirectory}\n（另存失敗，空間恢復前會暫停本機備份的輪替，避免把它擠掉）`
+      : '舊版 MindFlow 的資料沒有被動到。'
+  if (!rollbackIncomplete) {
+    return `可能是儲存空間不足。已寫入的部分已撤回。\n${where}\n請清出空間後重新開啟 MindFlow，會再自動還原一次；若同步已先把雲端的文件拉回來，只存在備份裡的文件需要從上面的位置找回。`
+  }
+  // 撤回沒完成：本機留著部分文件，下次開啟的空庫檢查不會通過，不會再自動還原或搬入
+  const rest = legacy
+    ? '其餘文件仍在舊版 MindFlow 的資料裡。'
+    : '已同步到雲端的文件，同步時會從雲端拉回；只存在備份裡的文件在上面的檔案裡，請保留這個檔案，不要刪除。'
+  return `可能是儲存空間不足。撤回沒有完全成功：首頁可能只出現部分文件。\n${where}\n本機已留著部分文件，重新開啟 MindFlow 也不會再自動${legacy ? '搬入' : '還原'}。${rest}`
+}
+
+/** 把還原腳本的結構化失敗結果轉回錯誤（帶著 rollbackIncomplete）；成功或取消時原樣回傳筆數。 */
+export function restoreScriptOutcome(result) {
+  if (result && typeof result === 'object' && result.restoreFailed) {
+    const error = new Error(result.message || 'Restore failed')
+    error.name = result.name || 'Error'
+    error.rollbackIncomplete = result.rollbackIncomplete === true
+    throw error
+  }
+  return result
+}
+
+const RESTORE_PENDING_FILENAME = 'restore-pending.json'
+
+function restorePendingPath(userDataPath) {
+  return join(userDataPath, BACKUP_DIRECTORY, RESTORE_PENDING_FILENAME)
+}
+
+/** 開始自動還原前記下來源：還原若失敗、來源又還沒另存成功，之後的備份輪替會先停下來。 */
+export async function markRestorePending({ userDataPath, sourcePath }) {
+  await mkdir(join(userDataPath, BACKUP_DIRECTORY), { recursive: true })
+  await writeFile(restorePendingPath(userDataPath), JSON.stringify({ version: 1, source: sourcePath }), 'utf8')
+}
+
+export async function clearRestorePending({ userDataPath }) {
+  await rm(restorePendingPath(userDataPath), { force: true })
+}
+
+/**
+ * 輪替備份之前呼叫：有還原失敗、還沒保護好的來源（restore-pending.json）就先另存；
+ * 另存成功才清掉標記，回傳 { ok: true, path }。另存失敗回傳 { ok: false }，呼叫端這一次不能輪替，
+ * 否則唯一含未上雲資料的來源會被擠掉。來源檔已經不存在（沒有東西可保護）或標記壞掉時清掉標記。
+ */
+export async function ensureRestoreSourceProtected({ userDataPath, copy = copyFile, now = new Date() }) {
+  let pending
+  try {
+    pending = JSON.parse(await readFile(restorePendingPath(userDataPath), 'utf8'))
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { ok: true, path: null }
+    if (!(error instanceof SyntaxError)) return { ok: false, path: null }
+    pending = null
+  }
+  const source = typeof pending?.source === 'string' && pending.source ? pending.source : null
+  if (!source) {
+    await clearRestorePending({ userDataPath })
+    return { ok: true, path: null }
+  }
+  try {
+    const path = await preserveFailedRestoreSource({ userDataPath, sourcePath: source, now, copy })
+    await clearRestorePending({ userDataPath })
+    return { ok: true, path }
+  } catch (error) {
+    if (error?.code === 'ENOENT' && error?.path === source) {
+      await clearRestorePending({ userDataPath })
+      return { ok: true, path: null }
+    }
+    return { ok: false, path: null }
+  }
+}
+
+/**
+ * 自動還原失敗時，把來源備份另存成不在輪替名單裡的檔案（restore-failed-<時間>.json），
+ * 之後的定期備份才不會把還沒救回的那份擠掉。回傳另存的路徑。
+ */
+export async function preserveFailedRestoreSource({ userDataPath, sourcePath, now = new Date(), copy = copyFile }) {
+  if (!userDataPath || !sourcePath) throw new TypeError('userDataPath and sourcePath are required')
+  const stamp = now.toISOString().replace(/[:.]/g, '-')
+  const target = join(userDataPath, BACKUP_DIRECTORY, `restore-failed-${stamp}.json`)
+  await mkdir(join(userDataPath, BACKUP_DIRECTORY), { recursive: true })
+  await copy(sourcePath, target)
+  return target
+}
 
 export function backupFilePaths(userDataPath, limit = BACKUP_LIMIT) {
   const directory = join(userDataPath, BACKUP_DIRECTORY)
@@ -17,68 +225,20 @@ export function backupFilePaths(userDataPath, limit = BACKUP_LIMIT) {
   ))
 }
 
-// 判斷「這份 localStorage 有沒有真正的心智圖」。偏好設定 key 會讓「有沒有任何 mindflow.* key」
-// 這種判斷永遠為真，於是文件全掉光時反而不會觸發救援——所以一律以文件索引為準。
-export function hasMindflowDocuments(entries) {
-  if (!entries || typeof entries !== 'object') return false
-
-  const raw = entries[DOCUMENT_INDEX_KEY]
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object') {
-        // 索引讀得動就以索引為準。
-        const docs = Array.isArray(parsed) ? parsed : Array.isArray(parsed.docs) ? parsed.docs : []
-        const trash = Array.isArray(parsed.trash) ? parsed.trash : []
-        return docs.length + trash.length > 0
-      }
-    } catch {
-      // 索引壞掉不代表文件不見，往下改看文件本體。
-    }
-  }
-
-  // 索引壞掉或不存在，但文件本體還在時必須算「有資料」：
-  // 否則救援會拿舊備份蓋掉現存文件，那比不還原更糟。
-  return Object.keys(entries).some(key => key.startsWith(DOCUMENT_KEY_PREFIX))
-}
-
-/**
- * 「儲存區處於使用者刻意維護的狀態」：索引解析得動（包含刻意清空後的空索引）或仍有文件本體。
- * 救援與舊版遷移只該在索引消失／損毀且文件掉光時發動——把使用者剛清空的庫自動復活回來不是救援。
- */
-export function hasIntentionalMindflowState(entries) {
-  if (!entries || typeof entries !== 'object') return false
-  const raw = entries[DOCUMENT_INDEX_KEY]
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object') return true
-    } catch { /* 壞索引不算刻意狀態 */ }
-  }
-  return Object.keys(entries).some(key => key.startsWith(DOCUMENT_KEY_PREFIX))
-}
-
-export function normalizeMindflowEntries(entries) {
-  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {}
-
-  return Object.fromEntries(
-    Object.entries(entries)
-      .filter(([key, value]) => key.startsWith('mindflow.') && typeof value === 'string')
-      .sort(([left], [right]) => left.localeCompare(right))
-  )
-}
-
 export async function writeMindflowBackup({
   userDataPath,
   entries,
   reason = 'interval',
   now = new Date(),
-  limit = BACKUP_LIMIT
+  limit = BACKUP_LIMIT,
+  protectRestoreSource = () => ensureRestoreSourceProtected({ userDataPath })
 }) {
   if (!userDataPath) throw new TypeError('A userData path is required')
   const normalized = normalizeMindflowEntries(entries)
   // 沒有文件就不寫（含完全空白的來源）：偏好設定殘留不足以蓋掉一份含資料的備份。
   if (!hasMindflowDocuments(normalized)) return null
+  // 還原失敗、來源還沒另存成功：這一次不輪替（開機、定期、關窗的備份都走這裡）。
+  if (!(await protectRestoreSource())?.ok) return null
 
   const paths = backupFilePaths(userDataPath, limit)
   const serialized = JSON.stringify(normalized)

@@ -30,9 +30,13 @@
     "files": [
       "main.mjs",
       "app-paths.mjs",
+      "backup-rules.mjs",
       "backup-store.mjs",
       "legacy-storage.mjs",
+      "pairing-window.mjs",
+      "pairing.mjs",
       "protocol.mjs",
+      "qr-encode.mjs",
       "sync-engine.mjs",
       "sync-github.mjs",
       "sync-plan.mjs",
@@ -66,6 +70,18 @@
       {
         "from": "../js/sync-plan.mjs",
         "to": "js/sync-plan.mjs"
+      },
+      {
+        "from": "../js/qr-encode.mjs",
+        "to": "js/qr-encode.mjs"
+      },
+      {
+        "from": "../js/backup-rules.mjs",
+        "to": "js/backup-rules.mjs"
+      },
+      {
+        "from": "../js/pairing.mjs",
+        "to": "js/pairing.mjs"
       }
     ],
     "win": {

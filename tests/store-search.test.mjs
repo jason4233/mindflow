@@ -26,6 +26,7 @@ const {
   listTrashedDocuments,
   loadDocument,
   permanentlyDeleteDocument,
+  preserveConflictCopy,
   restoreDocument,
   saveDocument,
   toggleFavorite
@@ -105,6 +106,21 @@ test('建立副本會換文件與全部節點 ID，且保留原始內容', () =>
   walkNodes(copy.root, node => copyIds.push(node.id))
   assert.equal(copyIds.some(id => sourceIds.includes(id)), false)
   assert.equal(loadDocument(copy.id).root.children[0].children[0].text, '驗收清單')
+})
+
+test('以我為準覆蓋前保留對方版本：衝突副本是新文件、內容等於儲存區版本、標題標明覆蓋前保留', () => {
+  resetStorage()
+  const original = createDocument(createDefaultDoc())
+  original.title = '提案'
+  original.root.text = '對方存的版本'
+  saveDocument(original)
+  const copy = preserveConflictCopy(original.id, { now: new Date(2026, 9, 14, 9, 5) })
+  assert.ok(copy && copy.id !== original.id)
+  assert.equal(copy.title, '提案（衝突副本・覆蓋前保留 10-14 09:05）')
+  assert.equal(loadDocument(copy.id).root.text, '對方存的版本')
+  assert.ok(listDocuments().some(meta => meta.id === copy.id), '副本要出現在首頁清單')
+  assert.ok(listDocuments().some(meta => meta.id === original.id), '原文件不受影響')
+  assert.equal(preserveConflictCopy('missing-doc'), null)
 })
 
 test('mini-SVG 會轉義使用者文字且包含實際節點內容', () => {

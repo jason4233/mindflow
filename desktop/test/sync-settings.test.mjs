@@ -198,6 +198,7 @@ test('preload exposes only the frozen IPC bridge and strips token material from 
     }
     if (channel === 'mindflow-sync:set-config') return { ok: true }
     if (channel === 'mindflow-sync:sync-now') return { ok: false, error: 'offline' }
+    if (channel === 'mindflow-sync:show-pairing-qr') return { ok: true, payload: 'mindflow-pair:{"token":"ghp_must_not_reach_renderer"}' }
     if (channel === 'mindflow-sync:get-status') {
       return {
         state: 'offline',
@@ -216,6 +217,7 @@ test('preload exposes only the frozen IPC bridge and strips token material from 
     'getStatus',
     'onStatus',
     'setConfig',
+    'showPairingQr',
     'syncNow'
   ])
 
@@ -233,6 +235,7 @@ test('preload exposes only the frozen IPC bridge and strips token material from 
     { ok: true }
   )
   assert.deepEqual(await exposed.api.syncNow(), { ok: false, error: 'offline' })
+  assert.deepEqual(await exposed.api.showPairingQr(), { ok: true }, '配對 QR 的內容（含 PAT）不得回到 renderer')
   assert.deepEqual(await exposed.api.getStatus(), {
     state: 'offline',
     lastSyncAt: '2026-08-30T01:02:03.000Z',
@@ -247,6 +250,7 @@ test('preload exposes only the frozen IPC bridge and strips token material from 
       payload: { token: 'ghp_new', repo: 'owner/new', enabled: false }
     },
     { channel: 'mindflow-sync:sync-now', payload: undefined },
+    { channel: 'mindflow-sync:show-pairing-qr', payload: undefined },
     { channel: 'mindflow-sync:get-status', payload: undefined }
   ])
 

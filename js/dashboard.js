@@ -24,7 +24,8 @@ import {
   importDocumentMarkdown,
   importDocumentTxt
 } from './io/import.js'
-import { initializeSyncSettings } from './settings.js'
+import { getMobileSyncApi, initializeSyncSettings } from './settings.js'
+import { initializeMobileApp } from './mobile-app.mjs'
 
 const elements = {
   heading: document.querySelector('#view-heading'),
@@ -76,6 +77,20 @@ ensurePhaseCStyles()
 initializeImportEntry()
 bindEvents()
 render()
+initializeMobileApp({
+  page: 'dashboard',
+  getSyncApi: getMobileSyncApi,
+  onBack() {
+    // 返回鍵先退出搜尋，再按才是離開 App
+    if (!elements.search.value) return false
+    state.query = ''
+    elements.search.value = ''
+    elements.clearSearch.hidden = true
+    elements.search.blur()
+    render()
+    return true
+  }
+})
 
 function bindEvents() {
   document.querySelector('#create-document').addEventListener('click', createBlankDocument)

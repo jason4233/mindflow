@@ -6,11 +6,23 @@ import test from 'node:test'
 
 import {
   MANIFEST_SCHEMA_VERSION,
+  SUPPORTED_DOC_SCHEMA_VERSION,
+  SyncSchemaError,
+  assertSupportedDocument,
+  assertSupportedManifest,
   buildConflictCopy,
   buildLocalState,
+  CONFLICT_COPY_CANDIDATES,
+  STORE_EPOCH_KEY,
+  trustedBase,
+  changedSince,
   computeLocalWrites,
   computeSyncPlan,
-  emptyManifest
+  emptyManifest,
+  isSameConflictCopy,
+  rotateStoreEpoch,
+  writeExpectations,
+  writesChangeEntries
 } from '../sync-plan.mjs'
 import { ensureRepo, getRef } from '../sync-github.mjs'
 import { loadSyncSettings } from '../sync-settings.mjs'
@@ -807,4 +819,201 @@ test('computeLocalWrites fails closed when a required pulled blob is missing', (
     pulledBlobs: {},
     localState: localState()
   }), /pulled blob|遠端文件/i)
+})
+
+
+// ── M1 版本閘門：較新格式（schemaVersion 2）一律停止同步，避免舊版白名單把新欄位刪掉 ──
+test('版本閘門：本版支援的格式通過，沒有版本號的舊資料也通過', () => {
+  assert.equal(MANIFEST_SCHEMA_VERSION, 1)
+  assert.equal(SUPPORTED_DOC_SCHEMA_VERSION, 1)
+  assert.doesNotThrow(() => assertSupportedManifest(emptyManifest()))
+  assert.doesNotThrow(() => assertSupportedManifest({ docs: {} }))
+  assert.doesNotThrow(() => assertSupportedManifest(null))
+  assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', title: 'A' }), 'a'))
+  assert.doesNotThrow(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion: 1 }), 'a'))
+  assert.doesNotThrow(() => assertSupportedDocument('not json', 'a'), '損壞 blob 由既有的損壞檢查處理，不是版本問題')
+})
+
+test('版本閘門：較新或看不懂的版本號一律拒絕', () => {
+  for (const schemaVersion of [2, 99, '2', 1.5, 0, -1]) {
+    assert.throws(() => assertSupportedManifest({ schemaVersion, docs: {} }), SyncSchemaError, `manifest ${schemaVersion}`)
+    assert.throws(() => assertSupportedDocument(JSON.stringify({ id: 'a', schemaVersion }), 'a'), SyncSchemaError, `doc ${schemaVersion}`)
+  }
+  try {
+    assertSupportedDocument(JSON.stringify({ id: 'x', schemaVersion: 2 }), 'x')
+  } catch (error) {
+    assert.equal(error.code, 'SCHEMA_TOO_NEW')
+    assert.equal(error.kind, 'document')
+    assert.equal(error.id, 'x')
+    assert.match(error.message, /較新版本的 MindFlow/)
+  }
+})
+
+test('版本閘門：computeSyncPlan 碰到 v2 manifest 直接中止，不產生任何計畫', () => {
+  assert.throws(() => computeSyncPlan({
+    local: buildLocalState({}),
+    remoteManifest: { ...emptyManifest(), schemaVersion: 2 },
+    base: null,
+    machineId: 'm',
+    now: T0
+  }), SyncSchemaError)
+})
+
+test('版本閘門：computeLocalWrites 拉到 v2 文件就中止，不寫任何 key', () => {
+  const plan = {
+    pullDocs: ['future'],
+    purgeLocal: [],
+    nextManifest: { ...emptyManifest(), docs: { future: { title: 'F', createdAt: T0, updatedAt: T1, state: 'active' } } }
+  }
+  const pulledBlobs = { future: JSON.stringify({ id: 'future', title: 'F', schemaVersion: 2, conflicts: [] }) }
+  assert.throws(() => computeLocalWrites({ plan, pulledBlobs, localState: buildLocalState({}) }), SyncSchemaError)
+})
+
+test('版本閘門：較新格式的文件不能被做成衝突副本（會被本機白名單默默降版）', () => {
+  assert.throws(() => buildConflictCopy(JSON.stringify({ id: 'a', title: 'A', schemaVersion: 2 }), 'pc', T0), SyncSchemaError)
+})
+
+// ── M1 同步競爭：套用前比對快照 ──
+test('writeExpectations 收集要寫／要刪／額外指定的 key 的快照值（不存在＝null）', () => {
+  const entries = { 'mindflow.doc.a': 'A', 'mindflow.docs.index': 'I' }
+  const writes = { setKeys: { 'mindflow.doc.b': 'B2', 'mindflow.docs.index': 'I2' }, removeKeys: ['mindflow.doc.a'] }
+  assert.deepEqual(writeExpectations(entries, writes, ['mindflow.doc.c']), {
+    'mindflow.doc.a': 'A',
+    'mindflow.doc.b': null,
+    'mindflow.doc.c': null,
+    'mindflow.docs.index': 'I'
+  })
+})
+
+test('changedSince 找出同步期間被改過、被新增或被刪掉的 key', () => {
+  const expected = { k1: 'v1', k2: null, k3: 'v3' }
+  const current = { k1: 'v1', k2: 'new', k3: null }
+  assert.deepEqual(changedSince(expected, key => current[key] ?? null), ['k2', 'k3'])
+  assert.deepEqual(changedSince(expected, key => ({ k1: 'v1', k3: 'v3' })[key] ?? null), [])
+})
+
+test('M1 儲存區整個遺失（沒有索引也沒有文件）不會把雲端文件全部記成刪除', () => {
+  const docs = { a: meta('a', T1), b: meta('b', T2) }
+  const result = planFor(buildLocalState({}), manifest(docs), syncedBase(docs))
+  assert.deepEqual(result.pullDocs, ['a', 'b'])
+  assert.deepEqual(result.nextManifest.tombstones, {})
+  assert.deepEqual(Object.keys(result.nextManifest.docs).sort(), ['a', 'b'])
+})
+
+test('M1 刻意刪光（空索引仍在）照常記成刪除', () => {
+  const docs = { a: meta('a', T1) }
+  const emptyIndex = JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] })
+  const result = planFor(buildLocalState({ 'mindflow.docs.index': emptyIndex }), manifest(docs), syncedBase(docs))
+  assert.deepEqual(result.pullDocs, [])
+  assert.deepEqual(Object.keys(result.nextManifest.tombstones), ['a'])
+})
+
+test('M1 審查：base 只在本機儲存區識別碼相符時可信（遺失、還原、搬入舊資料都當首次同步）', () => {
+  const state = { lastSyncedCommitSha: 'c1', baseManifest: manifest({ a: meta('a') }), perDoc: { a: T1 }, storeEpoch: 'epoch-1' }
+  assert.deepEqual(trustedBase(state, { [STORE_EPOCH_KEY]: 'epoch-1' }), { manifest: state.baseManifest, perDoc: { a: T1 } })
+  assert.equal(trustedBase(state, {}), null, '識別碼不見（WebView 資料遺失或從備份還原）')
+  assert.equal(trustedBase(state, { [STORE_EPOCH_KEY]: 'other' }), null)
+  assert.equal(trustedBase({ ...state, storeEpoch: null }, { [STORE_EPOCH_KEY]: 'epoch-1' }), null, '同步狀態沒有識別碼、本機卻有標記：不是升級前留下的 base')
+  assert.equal(trustedBase({ ...state, lastSyncedCommitSha: null }, { [STORE_EPOCH_KEY]: 'epoch-1' }), null)
+})
+
+test('M1 複審：升級前留下的 base（同步狀態與本機都沒有識別碼）信任一次，避免每台既有裝置升級後被迫聯集', () => {
+  const state = { lastSyncedCommitSha: 'c1', baseManifest: manifest({ a: meta('a') }), perDoc: { a: T1 } }
+  const expected = { manifest: state.baseManifest, perDoc: { a: T1 } }
+  const sameStore = { 'mindflow.doc.a': blob('a', T1) }
+  assert.deepEqual(trustedBase(state, sameStore), expected, '舊版 state 根本沒有 storeEpoch 欄位')
+  assert.deepEqual(trustedBase({ ...state, storeEpoch: null }, sameStore), expected, 'normalizeState 會把缺的欄位補成 null')
+  // 還原與搬入會寫一個新的標記：此時即使同步狀態沒有識別碼也不可信
+  assert.equal(trustedBase({ ...state, storeEpoch: null }, { ...sameStore, [STORE_EPOCH_KEY]: 'restored-epoch' }), null)
+  // 「本機沒有標記」也是 WebView 資料遺失的樣子：遺失後又新建了文件、本機一份 base 的文件都沒有 → 不可信
+  assert.equal(trustedBase(state, { 'mindflow.doc.new': blob('new', T2) }), null)
+  assert.equal(trustedBase(state, {}), null)
+  // base 本來就是空的：沒有東西會被誤記成刪除，照常信任
+  assert.deepEqual(trustedBase({ ...state, baseManifest: manifest({}) }, { 'mindflow.doc.new': blob('new', T2) }).manifest, manifest({}))
+})
+
+test('Sol 2-#3：索引列著、內容卻不見的文件要隔離（不是刪除），收藏狀態也要保留', () => {
+  const index = JSON.stringify({ version: 2, docs: [{ id: 'a' }, { id: 'lost' }], trash: [{ id: 'lostTrash', deletedAt: T2 }], favorites: ['lost'] })
+  const local = buildLocalState({ 'mindflow.docs.index': index, 'mindflow.doc.a': blob('a', T1) })
+  assert.deepEqual(local.quarantinedIds, ['lost', 'lostTrash'])
+  assert.deepEqual(local.favorites, ['lost'])
+
+  // base 可信時也不能被記成刪除；雲端有健康版本就拉回來
+  const docs = { a: meta('a', T1), lost: meta('lost', T1) }
+  const result = planFor(local, manifest(docs, ['lost']), syncedBase(docs, ['lost']))
+  assert.deepEqual(result.nextManifest.tombstones, {})
+  assert.ok(result.pullDocs.includes('lost'), '從雲端拉回修復')
+  assert.deepEqual(result.nextManifest.favorites, ['lost'])
+})
+
+test('Sol #2：升級前的 base 要每一份文件本機都還在才信任（本機沒有明確的刪除證據）', () => {
+  const state = { lastSyncedCommitSha: 'c1', baseManifest: manifest({ a: meta('a'), b: meta('b') }), perDoc: { a: T1, b: T1 } }
+  const index = JSON.stringify({ version: 2, docs: [{ id: 'a' }, { id: 'b' }], trash: [], favorites: [] })
+  assert.equal(trustedBase(state, { 'mindflow.docs.index': index, 'mindflow.doc.a': blob('a', T1) }), null, 'b 的內容不見了')
+  assert.ok(trustedBase(state, { 'mindflow.docs.index': index, 'mindflow.doc.a': blob('a', T1), 'mindflow.doc.b': blob('b', T1) }))
+})
+
+test('M1 複審：識別碼只在這一輪寫了本機或推了雲端時才換', () => {
+  const unchanged = {}
+  assert.equal(rotateStoreEpoch({ [STORE_EPOCH_KEY]: 'e1' }, unchanged, { changed: false }), 'e1')
+  assert.deepEqual(unchanged, {}, '沒變就不寫入')
+
+  const changed = {}
+  const next = rotateStoreEpoch({ [STORE_EPOCH_KEY]: 'e1' }, changed, { changed: true })
+  assert.notEqual(next, 'e1')
+  assert.deepEqual(changed, { [STORE_EPOCH_KEY]: next })
+
+  const missing = {}
+  const created = rotateStoreEpoch({}, missing, { changed: false })
+  assert.equal(typeof created, 'string')
+  assert.deepEqual(missing, { [STORE_EPOCH_KEY]: created }, '本機還沒有標記時一定要補上')
+})
+
+test('M1 複審：只換了識別碼也算本機寫入（只推送的一輪才會把新標記寫進 localStorage）', () => {
+  const entries = { [STORE_EPOCH_KEY]: 'e1', 'mindflow.docs.index': 'I', 'mindflow.doc.a': 'A' }
+  assert.equal(writesChangeEntries(entries, { setKeys: { 'mindflow.docs.index': 'I' }, removeKeys: [] }), false)
+  assert.equal(writesChangeEntries(entries, { setKeys: { 'mindflow.docs.index': 'I', [STORE_EPOCH_KEY]: 'e2' }, removeKeys: [] }), true)
+  assert.equal(writesChangeEntries(entries, { setKeys: {}, removeKeys: ['mindflow.doc.a'] }), true)
+  assert.equal(writesChangeEntries(entries, { setKeys: {}, removeKeys: ['mindflow.doc.gone'] }), false, '移除本來就不存在的 key 不算')
+
+  // 引擎的實際順序：先 rotate、再判斷要不要套用
+  const writes = { setKeys: { 'mindflow.docs.index': 'I' }, removeKeys: [] }
+  rotateStoreEpoch(entries, writes.setKeys, { changed: true })
+  assert.equal(writesChangeEntries(entries, writes), true)
+})
+
+test('M1 複審：同一份輸方內容在不同時間重試，衝突副本的 id 不變（不會越積越多）', () => {
+  const source = blob('a', T1, { title: '策略圖' })
+  const first = buildConflictCopy(source, '辦公室電腦', T2)
+  const retry = buildConflictCopy(source, '辦公室電腦', T5)
+  assert.equal(retry.id, first.id)
+  assert.notEqual(buildConflictCopy(source, '手機', T2).id, first.id, '不同裝置的副本分開')
+  assert.notEqual(buildConflictCopy(blob('a', T3, { title: '策略圖' }), '辦公室電腦', T2).id, first.id, '不同內容的副本分開')
+  assert.ok(isSameConflictCopy(first.json, retry.json), '只差標題與時間：重試時覆寫沒有損失')
+})
+
+test('M1 複審：同 id 的副本已被使用者改過 → 另建一份，不蓋掉使用者的修改', () => {
+  const source = blob('a', T1, { title: '策略圖' })
+  const first = buildConflictCopy(source, '辦公室電腦', T2)
+  const edited = JSON.parse(first.json)
+  edited.root = { ...edited.root, text: '使用者在副本上改的內容' }
+  assert.equal(isSameConflictCopy(JSON.stringify(edited), first.json), false)
+  assert.equal(isSameConflictCopy('{broken', first.json), false)
+
+  const distinct = buildConflictCopy(source, '辦公室電腦', T5, { distinct: true })
+  assert.notEqual(distinct.id, first.id)
+  assert.equal(buildConflictCopy(source, '辦公室電腦', T5, { distinct: true }).id, distinct.id, '同一輪重試仍然穩定')
+})
+
+test('Sol #5：穩定 id 不能用時改走一串固定的候選 id（不含時間），跨輪重試會走回同一個', () => {
+  const source = blob('a', T1, { title: '策略圖' })
+  const ids = Array.from({ length: 3 }, (_, attempt) => buildConflictCopy(source, '辦公室電腦', T2, { attempt }).id)
+  assert.equal(new Set(ids).size, 3, '每個候選都不同')
+  assert.equal(ids[0], buildConflictCopy(source, '辦公室電腦', T2).id, '第 0 個就是原本的穩定 id')
+  assert.deepEqual(
+    Array.from({ length: 3 }, (_, attempt) => buildConflictCopy(source, '辦公室電腦', T5, { attempt }).id),
+    ids,
+    '不同時間重試，候選序列完全相同'
+  )
+  assert.ok(CONFLICT_COPY_CANDIDATES >= 8)
 })

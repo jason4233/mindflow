@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 and older (API 30-) Auto Backup rules, referenced by android:fullBackupContent.
+  Same policy as data_extraction_rules.xml: back up everything except the
+  MindflowSecureStorage file (its Android Keystore key cannot be restored) and
+  Capacitor Preferences (sync settings/base/device id, and the PAT on the fallback path).
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="mindflow_secure.xml" />
+    <exclude domain="sharedpref" path="CapacitorStorage.xml" />
+</full-backup-content>

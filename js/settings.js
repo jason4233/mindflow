@@ -5,6 +5,12 @@ import {
   getCapacitorPreferences,
   isNativeCapacitor
 } from './sync-mobile.mjs'
+import { getCapacitorPlugin } from './capacitor-plugins.mjs'
+import { forgetStoreEpochIfStorageLost, startMobileBackups } from './mobile-backup.mjs'
+import { mountMobileBackupSection, mountMobileUpdateSection, scanPairingCode, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
+import { decodePairingPayload, isPairingPayload } from './pairing.mjs'
+import { startUpdateCheck } from './mobile-update.mjs'
+import { importDocumentCopy } from './store.js'
 
 const STATUS_COPY = {
   disabled: { label: '同步未啟用', tone: 'muted' },
@@ -17,6 +23,8 @@ const STATUS_COPY = {
 const boundTriggers = new WeakSet()
 let controller = null
 let mobileSyncApi = null
+let mobileBackups = null
+let mobileUpdates = null
 
 export function describeSyncStatus(status = {}, environment = true) {
   const syncAvailable = environment === true || environment === 'electron' || environment === 'capacitor'
@@ -91,6 +99,12 @@ function createSyncSettingsController() {
   const feedback = dialog.querySelector('[data-sync-feedback]')
   const syncNowButton = dialog.querySelector('[data-sync-now]')
   const saveButton = dialog.querySelector('[data-sync-save]')
+  const pairingRow = dialog.querySelector('[data-sync-pairing]')
+  const pairButton = dialog.querySelector('[data-sync-pair]')
+  const scanButton = dialog.querySelector('[data-sync-scan]')
+  const pairingHint = dialog.querySelector('[data-sync-pairing-hint]')
+  const canShowPairing = environment.kind === 'electron' && typeof api?.showPairingQr === 'function'
+  const canScanPairing = environment.kind === 'capacitor' && Boolean(api)
   const sidebarViews = new Set()
   let config = { enabled: false, repo: '', hasToken: false }
   let status = { state: syncAvailable ? 'disabled' : 'error', lastSyncAt: null, lastError: null, docCount: 0 }
@@ -99,6 +113,11 @@ function createSyncSettingsController() {
 
   desktopPanel.hidden = !syncAvailable
   webPanel.hidden = syncAvailable
+  if (environment.kind === 'capacitor') {
+    const form = dialog.querySelector('[data-sync-form]')
+    mountMobileBackupSection(form, { store: mobileBackups?.store })
+    mountMobileUpdateSection(form, { checker: mobileUpdates?.checker })
+  }
 
   dialog.querySelector('[data-sync-close]').addEventListener('click', () => dialog.close())
   dialog.addEventListener('click', event => {
@@ -114,6 +133,14 @@ function createSyncSettingsController() {
     void saveConfig()
   })
   syncNowButton.addEventListener('click', () => { void syncNow() })
+  pairingRow.hidden = !(canShowPairing || canScanPairing)
+  pairButton.hidden = !canShowPairing
+  scanButton.hidden = !canScanPairing
+  pairingHint.textContent = canShowPairing
+    ? '在獨立視窗顯示含 PAT 的 QR，手機掃描後就不必手打 PAT；請在私下掃描。'
+    : canScanPairing ? '在電腦版「同步設定」按「在手機上配對」，再用這個按鈕掃描。' : ''
+  pairButton.addEventListener('click', () => { void showPairingQr() })
+  scanButton.addEventListener('click', () => { void scanPairing() })
 
   if (api) {
     try {
@@ -179,9 +206,68 @@ function createSyncSettingsController() {
     return view
   }
 
+  async function showPairingQr() {
+    if (!canShowPairing || busy) return
+    clearFeedback()
+    try {
+      const result = await api.showPairingQr()
+      if (result?.ok) showFeedback('已在新視窗顯示配對 QR，請用手機的 MindFlow 掃描（2 分鐘後自動關閉）。', 'success')
+      else showFeedback(result?.error || '無法顯示配對 QR。', 'error')
+    } catch {
+      showFeedback(`無法顯示配對 QR，請確認${clientLabel}仍在執行。`, 'error')
+    }
+  }
+
+  async function scanPairing() {
+    if (!canScanPairing || busy) return
+    clearFeedback()
+    try {
+      const result = await scanPairingCode({ scanner: getCapacitorPlugin('BarcodeScanner', ['scan']) })
+      if (result.status === 'installing') {
+        showFeedback('第一次使用要先下載掃描元件（由 Google Play 服務提供），約幾秒到一分鐘。完成後再按一次「掃描」。', 'warning')
+      } else if (result.status === 'ok') {
+        await applyPairing(result.pairing)
+      }
+    } catch (error) {
+      showFeedback(error?.name === 'PairingError' ? error.message : '掃描失敗，請再試一次，或手動輸入 PAT。', 'error')
+    }
+  }
+
+  // 配對碼直接交給同步 API 存進安全儲存，PAT 不經過輸入框。
+  async function applyPairing(pairing) {
+    setBusy(true, '配對中…')
+    try {
+      const result = await api.setConfig({ enabled: true, repo: pairing.repo, branch: pairing.branch, token: pairing.token })
+      if (!result?.ok) {
+        showFeedback(redactToken(result?.error, pairing.token) || '配對失敗，請在電腦上重新顯示 QR 後再試。', 'error')
+        return
+      }
+      config = normalizeConfig(await api.getConfig())
+      status = normalizeStatus(await api.getStatus())
+      showFeedback(`配對完成，已開始與 ${pairing.repo} 同步。`, 'success')
+    } catch {
+      showFeedback('配對失敗，請再試一次。', 'error')
+    } finally {
+      tokenInput.value = ''
+      setBusy(false)
+      renderState()
+    }
+  }
+
   async function saveConfig() {
     if (!api || busy) return
     clearFeedback()
+    const pasted = tokenInput.value.trim()
+    if (environment.kind === 'capacitor' && isPairingPayload(pasted)) {
+      // 手機上把配對碼貼進 PAT 欄也可以：與掃描相同的處理。
+      tokenInput.value = ''
+      try {
+        await applyPairing(decodePairingPayload(pasted))
+      } catch (error) {
+        showFeedback(error?.name === 'PairingError' ? error.message : '配對碼無法辨識。', 'error')
+      }
+      return
+    }
     const enabled = enabledInput.checked
     const repo = repoInput.value.trim()
     const token = tokenInput.value.trim()
@@ -215,7 +301,7 @@ function createSyncSettingsController() {
       const nextConfig = await api.getConfig()
       config = normalizeConfig(nextConfig)
       status = normalizeStatus(await api.getStatus())
-      showFeedback(environment.kind === 'capacitor' ? '同步設定已存於手機 Preferences。' : '同步設定已安全儲存。', 'success')
+      showFeedback('同步設定已安全儲存。', 'success')
     } catch {
       showFeedback(`設定儲存失敗，請確認${clientLabel}仍在執行。`, 'error')
     } finally {
@@ -256,6 +342,8 @@ function createSyncSettingsController() {
     repoInput.disabled = nextBusy
     tokenInput.disabled = nextBusy
     saveButton.disabled = nextBusy
+    pairButton.disabled = nextBusy
+    scanButton.disabled = nextBusy
     saveButton.textContent = nextBusy && label ? label : '儲存設定'
   }
 
@@ -271,9 +359,10 @@ function createSyncSettingsController() {
         ? (environment.kind === 'capacitor' ? '已存於手機；留空則不變更' : '已安全儲存；留空則不變更')
         : 'github_pat_…'
       if (environment.kind === 'capacitor') {
+        const where = config.tokenStorage === 'secure' ? '以 Android Keystore 加密存在這支手機' : '存於手機的 App 設定（這版 App 沒有安全儲存，請更新）'
         tokenHint.textContent = config.hasToken
-          ? 'PAT 已存於手機的 Capacitor Preferences；若要更換，輸入新 token 後儲存。'
-          : '需要 repo Contents 讀寫權限；token 只存於手機的 Capacitor Preferences。'
+          ? `PAT 已${where}；若要更換，輸入新 token 後儲存。`
+          : `需要 repo Contents 讀寫權限；token 只會${where}。`
       } else {
         tokenHint.textContent = config.hasToken
           ? '已有加密 PAT。若要更換，輸入新 token 後儲存。'
@@ -282,6 +371,7 @@ function createSyncSettingsController() {
       guide.hidden = Boolean(config.hasToken && config.repo)
     }
     syncNowButton.disabled = !syncAvailable || busy || !config.enabled || !config.repo || !config.hasToken || status.state === 'syncing'
+    pairButton.disabled = busy || !config.repo || !config.hasToken
     sidebarViews.forEach(renderSidebarView)
   }
 
@@ -352,6 +442,11 @@ function createDialog() {
           <input id="sync-token" type="password" autocomplete="off" spellcheck="false" data-sync-token>
           <small class="sync-field-hint" data-sync-token-hint></small>
         </label>
+        <div class="sync-pairing-row" data-sync-pairing hidden>
+          <button type="button" data-sync-pair hidden>在手機上配對（顯示 QR）</button>
+          <button type="button" data-sync-scan hidden>掃描電腦上的配對 QR</button>
+          <small class="sync-field-hint" data-sync-pairing-hint></small>
+        </div>
         <section class="sync-status-card" role="status" aria-live="polite">
           <span class="sync-status-dot" data-sync-status-dot aria-hidden="true"></span>
           <span><strong data-sync-status-label>同步未啟用</strong><small data-sync-status-detail>尚未執行同步</small></span>
@@ -392,10 +487,13 @@ function resolveSyncEnvironment(windowRef = globalThis.window) {
       if (preferences && windowRef?.localStorage) {
         mobileSyncApi = createMobileSyncApi({
           preferences,
+          secureStorage: getCapacitorPlugin('MindflowSecureStorage', ['get', 'set', 'remove'], windowRef),
           storage: windowRef.localStorage,
           fetchFn: windowRef.fetch?.bind(windowRef) || globalThis.fetch,
           documentRef: windowRef.document,
-          windowRef
+          windowRef,
+          // 儲存區整個不見時要先從手機備份還原，同步才開始；否則第一次同步看到的是空的本機。
+          startGate: mobileBackups?.ready
         })
       }
     }
@@ -404,9 +502,28 @@ function resolveSyncEnvironment(windowRef = globalThis.window) {
   return { kind: 'web', api: null }
 }
 
+// 頁面一載入、使用者還不能建文件之前：本機讀不到索引就先清掉識別碼（電腦與手機都要，見 forgetStoreEpochIfStorageLost）。
+// 電腦的開機救援要等頁面載入完才檢查，中間使用者若先建了文件，就判斷不出本機曾經遺失。
+if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis.window) !== 'web') {
+  try {
+    forgetStoreEpochIfStorageLost(globalThis.window.localStorage)
+  } catch (error) {
+    console.error('MindFlow could not check the local store on load', error)
+  }
+}
+
 // settings.js 也由 editor 入口匯入；在 UI 尚未開啟前先啟動，才能保證 app 開啟即 pull。
 if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis.window) === 'capacitor') {
+  mobileBackups = startMobileBackups({ windowRef: globalThis.window, importCopy: importDocumentCopy })
+  void mobileBackups?.ready.then(() => showRestoredNoticeIfNeeded())
   resolveSyncEnvironment(globalThis.window)
+  // 首頁才有放提示的位置；編輯器裡只更新節流紀錄。
+  mobileUpdates = startUpdateCheck({ windowRef: globalThis.window })
+}
+
+/** 手機版的同步 API（尚未設定或不在原生 App 裡時為 null）；返回鍵／進背景時用來立即推送。 */
+export function getMobileSyncApi() {
+  return mobileSyncApi
 }
 
 function normalizeConfig(value) {
@@ -414,6 +531,7 @@ function normalizeConfig(value) {
     enabled: Boolean(value?.enabled),
     repo: typeof value?.repo === 'string' ? value.repo : '',
     hasToken: Boolean(value?.hasToken),
+    tokenStorage: value?.tokenStorage === 'secure' ? 'secure' : 'preferences',
     warning: typeof value?.warning === 'string' ? value.warning : null
   }
 }

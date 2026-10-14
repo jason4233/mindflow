@@ -16,11 +16,22 @@ import {
   updateRef
 } from './sync-github.mjs'
 import {
+  CONFLICT_COPY_CANDIDATES,
+  STORE_EPOCH_KEY,
+  SyncLocalChangedError,
+  SyncSchemaError,
+  baseAdvances,
   buildConflictCopy,
   buildLocalState,
+  changedSince,
   computeLocalWrites,
   computeSyncPlan,
-  emptyManifest
+  emptyManifest,
+  isSameConflictCopy,
+  rotateStoreEpoch,
+  trustedBase,
+  writeExpectations,
+  writesChangeEntries
 } from './sync-plan.mjs'
 import {
   getDecryptedToken,
@@ -37,6 +48,8 @@ export const CLOSE_FLUSH_TIMEOUT_MS = 10_000
 const RETRY_INITIAL_MS = 30_000
 const RETRY_MAX_MS = 5 * 60_000
 const UPDATE_REF_ATTEMPTS = 3
+// 同步期間本機一直有新修改時最多重跑幾輪；超過就交給下一次觸發（不會遺失：沒套用就沒覆蓋）。
+const LOCAL_CHANGE_ATTEMPTS = 3
 const STATE_FILENAME = 'sync-state.json'
 const MANIFEST_PATH = 'manifest.json'
 const INDEX_KEY = 'mindflow.docs.index'
@@ -75,7 +88,8 @@ function normalizeState(value, fallbackMachineId) {
       ? source.machineId
       : fallbackMachineId,
     etag: typeof source.etag === 'string' ? source.etag : null,
-    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null
+    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null,
+    storeEpoch: typeof source.storeEpoch === 'string' ? source.storeEpoch : null
   }
 }
 
@@ -221,6 +235,12 @@ function rendererApplyScript(writes) {
   return `(() => {
     const writes = JSON.parse(${serialized});
     const indexKey = 'mindflow.docs.index';
+    const epochKey = ${JSON.stringify(STORE_EPOCH_KEY)};
+    const expected = writes.expected && typeof writes.expected === 'object' ? writes.expected : null;
+    if (expected) {
+      const changedKeys = Object.keys(expected).filter(key => localStorage.getItem(key) !== expected[key]);
+      if (changedKeys.length) return { conflict: true, changedKeys };
+    }
     const removeKeys = [...new Set(Array.isArray(writes.removeKeys) ? writes.removeKeys : [])];
     const setEntries = Object.entries(writes.setKeys || {});
     const touched = [...new Set([...removeKeys, ...setEntries.map(([key]) => key)])];
@@ -228,10 +248,13 @@ function rendererApplyScript(writes) {
     try {
       for (const key of removeKeys) localStorage.removeItem(key);
       for (const [key, value] of setEntries) {
-        if (key !== indexKey) localStorage.setItem(key, value);
+        if (key !== indexKey && key !== epochKey) localStorage.setItem(key, value);
       }
       const indexEntry = setEntries.find(([key]) => key === indexKey);
       if (indexEntry) localStorage.setItem(indexEntry[0], indexEntry[1]);
+      // 識別碼最後寫：localStorage 分批落盤，磁碟上若已是新識別碼，這一批其他內容一定也已落盤。
+      const epochEntry = setEntries.find(([key]) => key === epochKey);
+      if (epochEntry) localStorage.setItem(epochEntry[0], epochEntry[1]);
     } catch (error) {
       for (const item of previous) {
         try {
@@ -298,6 +321,11 @@ class SyncEngine {
       docCount: 0
     })
     this.runningSync = null
+    // 開機救援（舊資料搬入／備份還原）的閘門：解析之前任何來源的同步都先等，輪詢也不讀本機、不發請求。
+    this.startGateOpen = !options.startGate
+    this.startGate = options.startGate
+      ? Promise.resolve(options.startGate).catch(() => {}).then(() => { this.startGateOpen = true })
+      : null
     this.started = false
     this.disposed = false
     this.currentFingerprint = null
@@ -381,7 +409,8 @@ class SyncEngine {
   }
 
   async pollFingerprint() {
-    if (!this.isEnabled() || this.disposed) return
+    // 開機救援還沒結束：不讀本機（救援結束後的第一次同步會拿到正確的內容）
+    if (!this.isEnabled() || this.disposed || !this.startGateOpen) return
     try {
       const entries = await this.storageQueue.run(() => this.readEntries())
       const nextFingerprint = fingerprint(entries)
@@ -402,7 +431,7 @@ class SyncEngine {
   }
 
   async pollRemote() {
-    if (!this.isEnabled() || this.disposed || this.runningSync) return
+    if (!this.isEnabled() || this.disposed || this.runningSync || !this.startGateOpen) return
     try {
       const state = await loadSyncState(this.userDataPath, this.machineIdOverride || machineIdentity())
       const result = await getRef(this.cfg, { etag: state.etag || undefined })
@@ -420,7 +449,8 @@ class SyncEngine {
     void this.syncNow({ reason: 'focus' })
   }
 
-  syncNow(_options = {}) {
+  syncNow(options = {}) {
+    if (!this.startGateOpen) return this.startGate.then(() => this.syncNow(options))
     if (!this.isEnabled()) {
       this.setStatus({ state: 'disabled', lastError: null })
       return Promise.resolve({ ok: false, error: 'Sync is disabled' })
@@ -448,19 +478,35 @@ class SyncEngine {
     let outcome
 
     const repoStatus = await ensureRepo(this.cfg)
-    for (let attempt = 1; attempt <= UPDATE_REF_ATTEMPTS; attempt += 1) {
+    // 這次同步自己推上去的文件內容：之後若雲端那份正是它、本機又改了，就是同一台的先後修改，不算衝突。
+    const pushedThisRun = new Map()
+    let refConflicts = 0
+    let localChanges = 0
+    for (;;) {
       try {
-        outcome = await this.reconcileAttempt(previousState, startedAt)
-        break
+        outcome = await this.reconcileAttempt(previousState, startedAt, pushedThisRun)
       } catch (error) {
-        const refConflict = error instanceof SyncHttpError && error.status === 422
-        if (!refConflict || attempt === UPDATE_REF_ATTEMPTS) throw error
-        // 422 是 compare-and-swap 競爭；必須回到 ref pull 重新合併，不可 force push。
+        if (error instanceof SyncHttpError && error.status === 422) {
+          // 422 是 compare-and-swap 競爭；必須回到 ref pull 重新合併，不可 force push。
+          refConflicts += 1
+          if (refConflicts < UPDATE_REF_ATTEMPTS) continue
+        } else if (error instanceof SyncLocalChangedError) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+        }
+        throw error
       }
-    }
-
-    if (outcome.localChanged) {
-      await this.storageQueue.run(() => this.applyWrites(outcome.writes))
+      for (const [id, raw] of Object.entries(outcome.pushedDocs)) pushedThisRun.set(id, raw)
+      if (outcome.localChanged) {
+        // renderer 內原子比對：同步讀快照後若使用者又存了被覆蓋的 key，整批不寫、重跑一輪。
+        const applied = await this.storageQueue.run(() => this.applyWrites(outcome.writes))
+        if (applied?.conflict) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+          throw new SyncLocalChangedError(applied.changedKeys || [])
+        }
+      }
+      break
     }
     // renderer 套用成功後才允許前進 base；失敗時 state file 保持原值。
     await saveSyncState(this.userDataPath, outcome.nextState)
@@ -493,7 +539,7 @@ class SyncEngine {
     return warning ? { warning } : {}
   }
 
-  async reconcileAttempt(previousState, syncNow) {
+  async reconcileAttempt(previousState, syncNow, pushedThisRun = new Map()) {
     const entries = await this.storageQueue.run(() => this.readEntries())
     const localState = buildLocalState(entries)
     const ref = await getRef(this.cfg)
@@ -503,9 +549,7 @@ class SyncEngine {
     const remoteManifest = manifestEntry
       ? JSON.parse(await getBlobRaw(this.cfg, manifestEntry.sha))
       : emptyManifest()
-    const base = previousState.lastSyncedCommitSha && previousState.baseManifest
-      ? { manifest: previousState.baseManifest, perDoc: previousState.perDoc }
-      : null
+    const base = trustedBase(previousState, entries)
     const plan = computeSyncPlan({
       local: localState,
       remoteManifest,
@@ -531,8 +575,30 @@ class SyncEngine {
     const conflictBlobs = {}
     const pushIds = new Set(plan.pushDocs)
     const purgeIds = new Set(plan.purgeLocal)
-    const addConflictCopy = (raw, label) => {
-      const copy = buildConflictCopy(raw, label, syncNow)
+    // 候選 id 能不能用：本機、雲端每一份同 id 的文件都必須是同一份輸方內容的原封不動副本（重試時沿用、不累積）；
+    // 任一端被改過（不能蓋掉，也不能只看本機那份就以為能沿用）、在回收筒（不能拉回來）、已永久刪除（會跟 tombstone 打架）都不行。
+    const copyCandidateUsable = async candidate => {
+      const id = candidate.id
+      if (Object.hasOwn(plan.nextManifest.tombstones, id) || Object.hasOwn(remoteManifest.tombstones ?? {}, id)) return false
+      if ([plan.nextManifest.docs[id], remoteManifest.docs?.[id], augmentedLocal.docs[id]].some(meta => meta?.state === 'trashed')) return false
+      const versions = []
+      if (typeof augmentedLocal.docBlobs[id] === 'string') versions.push(augmentedLocal.docBlobs[id])
+      if (tree.byPath[documentPath(id)]) versions.push(await readRemoteDoc(id))
+      return versions.every(existing => isSameConflictCopy(existing, candidate.json))
+    }
+    const addConflictCopy = async (raw, label) => {
+      let copy = null
+      for (let attempt = 0; attempt < CONFLICT_COPY_CANDIDATES && !copy; attempt += 1) {
+        const candidate = buildConflictCopy(raw, label, syncNow, { attempt })
+        if (await copyCandidateUsable(candidate)) copy = candidate
+      }
+      if (!copy) {
+        // 退路（含時間的 id）也要過同樣的檢查：同一輪重跑時時間不變、退路 id 也不變，可能已被別台改過。
+        // 找不到安全位置就中止這一輪，不覆寫任何文件；下一輪時間不同，退路 id 也不同。
+        const fallback = buildConflictCopy(raw, label, syncNow, { distinct: true })
+        if (!(await copyCandidateUsable(fallback))) throw new Error('找不到安全的位置另存衝突副本，這一輪同步已中止，沒有覆寫任何文件。')
+        copy = fallback
+      }
       const document = JSON.parse(copy.json)
       conflictBlobs[copy.id] = copy.json
       augmentedLocal.docBlobs[copy.id] = copy.json
@@ -548,18 +614,34 @@ class SyncEngine {
     }
 
     for (const conflict of plan.conflicts) {
+      const localRaw = localState.docBlobs[conflict.id]
+      const remoteRaw = await readRemoteDoc(conflict.id)
+      if (typeof localRaw === 'string' && localRaw === remoteRaw) {
+        // 兩邊內容一字不差（例如上一輪推送成功但 base 沒存到）：不是衝突，不產生副本。
+        pushIds.delete(conflict.id)
+        plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+        continue
+      }
+      if (typeof localRaw === 'string' && pushedThisRun.get(conflict.id) === remoteRaw) {
+        // 雲端那份是本輪稍早自己推的版本、本機之後又改了：本機直接蓋過，不算衝突。
+        pushIds.add(conflict.id)
+        plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+        delete pulledBlobs[conflict.id]
+        plan.nextManifest.docs[conflict.id] = { ...plan.nextManifest.docs[conflict.id], ...localState.docs[conflict.id] }
+        plan.nextPerDoc[conflict.id] = localState.docs[conflict.id].updatedAt
+        continue
+      }
       if (conflict.loserCopyFrom === 'local') {
-        const raw = localState.docBlobs[conflict.id]
-        if (typeof raw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
-        addConflictCopy(raw, previousState.machineId)
+        if (typeof localRaw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
+        await addConflictCopy(localRaw, previousState.machineId)
       } else {
-        addConflictCopy(await readRemoteDoc(conflict.id), remoteManifest.lastWriter || 'remote-device')
+        await addConflictCopy(remoteRaw, remoteManifest.lastWriter || 'remote-device')
       }
     }
     for (const resurrection of plan.resurrect) {
       const localRaw = localState.docBlobs[resurrection.id]
-      if (typeof localRaw === 'string') addConflictCopy(localRaw, previousState.machineId)
-      else addConflictCopy(await readRemoteDoc(resurrection.id), remoteManifest.lastWriter || 'remote-device')
+      if (typeof localRaw === 'string') await addConflictCopy(localRaw, previousState.machineId)
+      else await addConflictCopy(await readRemoteDoc(resurrection.id), remoteManifest.lastWriter || 'remote-device')
       purgeIds.add(resurrection.id)
     }
     plan.pushDocs = [...pushIds].sort()
@@ -582,17 +664,34 @@ class SyncEngine {
       }
     }
     const writes = { setKeys, removeKeys: [...removeKeys] }
-    const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
-      Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
+    const pushedLocalIds = [...pushIds].filter(id => !Object.hasOwn(conflictBlobs, id) && typeof localState.docBlobs[id] === 'string')
 
     const remoteDocPaths = Object.keys(tree.byPath).filter(path => idFromDocumentPath(path))
     const desiredDocPaths = new Set(Object.keys(plan.nextManifest.docs).map(documentPath))
     const deletedRemotePaths = remoteDocPaths.filter(path => !desiredDocPaths.has(path))
     const needsPush = pushIds.size > 0 || deletedRemotePaths.length > 0 ||
       manifestsDiffer(remoteManifest, plan.nextManifest)
+    const baseManifest = needsPush
+      ? plan.nextManifest
+      : { ...plan.nextManifest, lastWriter: remoteManifest.lastWriter ?? null }
+    // 這一輪寫了本機、要推雲端，或 base 要前進 → 換新的本機儲存區識別碼（見 rotateStoreEpoch、baseAdvances）。
+    const storeEpoch = rotateStoreEpoch(entries, writes.setKeys, {
+      changed: writesChangeEntries(entries, writes) || needsPush || baseAdvances(base, baseManifest, plan.nextPerDoc)
+    })
+    // localChanged 與兩份 CAS 期望值都要在識別碼放進 setKeys 之後才算：只推送的一輪也得把新識別碼寫進 localStorage。
+    const localChanged = writesChangeEntries(entries, writes)
+    // 套用時要確認沒被同步期間的本機存檔改過的 key；推送前另外確認要推的本機文件也還是快照那份。
+    writes.expected = writeExpectations(entries, writes)
+    const prePushExpected = writeExpectations(entries, writes, pushedLocalIds.map(id => `${DOC_KEY_PREFIX}${id}`))
 
     let commitSha = ref.sha
+    const pushedDocs = {}
     if (needsPush) {
+      // 還沒對雲端寫任何東西：此時發現本機在同步期間又存檔，直接作廢重跑最便宜也最安全。
+      const current = await this.storageQueue.run(() => this.readEntries())
+      const changedKeys = changedSince(prePushExpected, key => current?.[key] ?? null)
+      if (changedKeys.length) throw new SyncLocalChangedError(changedKeys)
+
       const treeEntries = []
       for (const id of [...pushIds].sort()) {
         const raw = augmentedLocal.docBlobs[id] ?? pulledBlobs[id]
@@ -612,22 +711,22 @@ class SyncEngine {
         parentSha: ref.sha
       })
       await updateRef(this.cfg, commitSha)
+      for (const id of pushedLocalIds) pushedDocs[id] = localState.docBlobs[id]
     }
 
-    const baseManifest = needsPush
-      ? plan.nextManifest
-      : { ...plan.nextManifest, lastWriter: remoteManifest.lastWriter ?? null }
     return {
       entries,
       localChanged,
       writes,
+      pushedDocs,
       nextState: {
         lastSyncedCommitSha: commitSha,
         baseManifest,
         perDoc: plan.nextPerDoc,
         machineId: previousState.machineId,
         etag: ref.etag,
-        lastSyncAt: syncNow.toISOString()
+        lastSyncAt: syncNow.toISOString(),
+        storeEpoch
       },
       quarantinedIds: plan.quarantinedIds
     }
@@ -637,6 +736,8 @@ class SyncEngine {
     const message = safeErrorMessage(error, [this.cfg.token])
     const offline = error instanceof SyncHttpError && error.status === 0
     this.setStatus({ state: offline ? 'offline' : 'error', lastError: message })
+    // 雲端是較新格式時重試沒有意義：等使用者更新後的下一次啟動／聚焦再試。
+    if (error instanceof SyncSchemaError) return
     if (!this.started || !this.isEnabled() || this.disposed || this.retryTimer) return
     const delay = this.retryDelayMs
     this.retryDelayMs = Math.min(RETRY_MAX_MS, delay * 2)

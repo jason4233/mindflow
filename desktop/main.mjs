@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -7,9 +7,18 @@ import {
   BACKUP_INTERVAL_MS,
   hasIntentionalMindflowState,
   hasMindflowDocuments,
+  clearRestorePending,
+  ensureRestoreSourceProtected,
+  markRestorePending,
+  preserveFailedRestoreSource,
   readLatestMindflowBackup,
+  recoveryFailedDetail,
+  rendererRecoveryCheckScript,
+  rendererRestoreScript,
+  restoreScriptOutcome,
   writeMindflowBackup
 } from './backup-store.mjs'
+import { newStoreEpoch } from './sync-plan.mjs'
 import {
   discoverLegacyOrigins,
   mergeLegacyMindflowEntries,
@@ -31,6 +40,7 @@ import {
   getDecryptedToken,
   loadSyncSettings
 } from './sync-settings.mjs'
+import { registerPairingIpc } from './pairing-window.mjs'
 import { initUpdater } from './updater.mjs'
 import { bringWindowToFront } from './window-focus.mjs'
 
@@ -55,9 +65,12 @@ protocol.registerSchemesAsPrivileged([{
 
 let mainWindow = null
 let backupTimer = null
+// 還原失敗、還沒另存成功的來源備份路徑（見 protectPendingRestoreSource）
+let pendingRestoreSource = null
 const storageQueue = createStorageQueue()
 let syncEngine = null
 let syncIpcRegistration = null
+let pairingIpcRegistration = null
 let allowWindowClose = false
 let closeInProgress = false
 
@@ -78,15 +91,15 @@ async function captureMindflowStorage(window, { flush = false } = {}) {
   return window.webContents.executeJavaScript(rendererStorageScript({ flush }), true)
 }
 
+// 開機救援判定本機是不是空的：讀回內容的同一段 renderer 執行裡，讀不到索引就先清掉識別碼（見 rendererRecoveryCheckScript）。
+async function captureForRecovery(window) {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return {}
+  return window.webContents.executeJavaScript(rendererRecoveryCheckScript({ storeEpoch: newStoreEpoch() }), true)
+}
+
+// 備份還原與舊資料搬入共用：寫入前先換掉本機儲存區識別碼，讓同步不信任較新的 base（見 rendererRestoreScript）。
 async function restoreRendererStorage(window, entries) {
-  const serialized = JSON.stringify(JSON.stringify(entries))
-  return window.webContents.executeJavaScript(`(() => {
-    const entries = JSON.parse(${serialized});
-    for (const [key, value] of Object.entries(entries)) {
-      if (key.startsWith('mindflow.') && typeof value === 'string') localStorage.setItem(key, value);
-    }
-    return Object.keys(entries).length;
-  })()`, true)
+  return restoreScriptOutcome(await window.webContents.executeJavaScript(rendererRestoreScript(entries, { storeEpoch: newStoreEpoch() }), true))
 }
 
 async function reloadWindow(window) {
@@ -123,22 +136,54 @@ async function showRendererToast(window, message) {
   })()`, true)
 }
 
+// preservedBackupPath：字串＝另存成功的位置；null＝備份還原失敗且另存也失敗；undefined＝舊資料搬入失敗（來源沒被動到）
+async function showRecoveryFailedDialog(window, { preservedBackupPath, rollbackIncomplete = false } = {}) {
+  if (!window || window.isDestroyed()) return
+  await dialog.showMessageBox(window, {
+    type: 'warning',
+    title: 'MindFlow',
+    message: '本機資料不見了，但自動還原失敗',
+    detail: recoveryFailedDetail({
+      preservedBackupPath,
+      backupsDirectory: join(app.getPath('userData'), 'backups'),
+      rollbackIncomplete
+    })
+  }).catch(() => {})
+}
+
 async function restoreLatestBackupIfEmpty(window, userDataPath) {
-  const current = await captureMindflowStorage(window)
+  const current = await captureForRecovery(window)
   // 索引消失或損毀、且文件掉光才發動救援；偏好設定殘留不阻止還原，
   // 但使用者刻意清空（合法空索引）不得被自動復活。
   if (hasIntentionalMindflowState(current)) return false
 
   const backup = await readLatestMindflowBackup({ userDataPath })
   if (!backup) return false
-  await restoreRendererStorage(window, backup.entries)
+  // 先記下這份來源：還原若失敗、另存又失敗，之後的備份輪替會先停下來（跨重開也有效）。
+  // 記錄本身也可能因磁碟滿而失敗，所以同時記在記憶體裡，這次開啟期間一樣暫停輪替。
+  pendingRestoreSource = backup.path
+  await markRestorePending({ userDataPath, sourcePath: backup.path })
+    .catch(error => console.error('MindFlow could not record the pending restore source:', error))
+  let restored
+  try {
+    restored = await restoreRendererStorage(window, backup.entries)
+  } catch (error) {
+    // 還原腳本已回滾（回滾沒完成時錯誤上有 rollbackIncomplete）；來源另存到不會被輪替的檔名，成功才解除暫停
+    const protection = await protectPendingRestoreSource(userDataPath)
+    error.preservedBackupPath = protection.path
+    throw error
+  }
+  pendingRestoreSource = null
+  await clearRestorePending({ userDataPath }).catch(() => {})
+  // 讀備份期間使用者已新建文件（或同步已拉回內容）：腳本取消了還原，不重新載入
+  if (!restored) return false
   await reloadWindow(window)
   await showRendererToast(window, '已從備份還原')
   return true
 }
 
 async function migrateLegacyStorageIfEmpty(window, userDataPaths) {
-  const current = await captureMindflowStorage(window)
+  const current = await captureForRecovery(window)
   if (hasIntentionalMindflowState(current)) return 0
 
   const origins = await discoverLegacyOrigins(userDataPaths)
@@ -148,15 +193,33 @@ async function migrateLegacyStorageIfEmpty(window, userDataPaths) {
   if (!hasMindflowDocuments(merged)) return 0
 
   const importedCount = await restoreRendererStorage(window, merged)
+  // 讀舊資料期間使用者已新建文件：腳本取消了搬入，不重新載入（呼叫端也不會再接著還原備份）
+  if (!importedCount) return 0
   await reloadWindow(window)
   await showRendererToast(window, '已匯入舊版 MindFlow 資料')
   return importedCount
 }
 
+// 還原失敗、來源還沒另存成功：保護好之前，開機、定期、關窗的備份都不輪替（同步照常）。
+async function protectPendingRestoreSource(userDataPath) {
+  let path = null
+  if (pendingRestoreSource) {
+    try {
+      path = await preserveFailedRestoreSource({ userDataPath, sourcePath: pendingRestoreSource })
+      pendingRestoreSource = null
+      await clearRestorePending({ userDataPath })
+    } catch {
+      return { ok: false, path: null }
+    }
+  }
+  const pending = await ensureRestoreSourceProtected({ userDataPath })
+  return { ok: pending.ok, path: path || pending.path }
+}
+
 function enqueueBackup(window, userDataPath, { flush = false, reason = 'interval' } = {}) {
   return storageQueue.run(async () => {
       const entries = await captureMindflowStorage(window, { flush })
-      return writeMindflowBackup({ userDataPath, entries, reason })
+      return writeMindflowBackup({ userDataPath, entries, reason, protectRestoreSource: () => protectPendingRestoreSource(userDataPath) })
   })
 }
 
@@ -250,9 +313,14 @@ async function launch() {
     // 加密金鑰不可用時不做任何 fallback；也不把密文或 token 寫入 log。
     console.error('MindFlow secure sync token is unavailable:', error?.message || 'secure storage unavailable')
   }
+  // 開機救援（舊資料搬入／備份還原）結束前，聚焦、手動、設定觸發的同步都先等：同步若先拉回內容，
+  // 救援的空庫檢查與寫入之間就會被插隊。
+  let releaseRecoveryGate
+  const recoveryGate = new Promise(resolve => { releaseRecoveryGate = resolve })
   syncEngine = createSyncEngine({
     userDataPath,
     storageQueue,
+    startGate: recoveryGate,
     cfg: {
       enabled: savedSyncSettings.enabled,
       repo: savedSyncSettings.repo,
@@ -268,6 +336,16 @@ async function launch() {
     webContents: mainWindow.webContents,
     userDataPath
   })
+  // 配對 QR 在 main process 讀出並解密 PAT、直接畫在獨立視窗；renderer 只會收到 { ok }。
+  pairingIpcRegistration = registerPairingIpc({
+    ipcMain,
+    BrowserWindow,
+    getParent: () => mainWindow,
+    getPairing: () => {
+      const settings = loadSyncSettings(userDataPath)
+      return { repo: settings.repo, branch: settings.branch, token: getDecryptedToken(settings) || '' }
+    }
+  })
   bindCloseFlush(mainWindow, userDataPath, syncEngine)
   mainWindow.on('focus', () => syncEngine?.handleFocus())
   mainWindow.once('closed', () => {
@@ -275,6 +353,8 @@ async function launch() {
     backupTimer = null
     syncIpcRegistration?.dispose()
     syncIpcRegistration = null
+    pairingIpcRegistration?.dispose()
+    pairingIpcRegistration = null
     void syncEngine?.dispose()
     syncEngine = null
     mainWindow = null
@@ -287,8 +367,15 @@ async function launch() {
     const imported = await migrateLegacyStorageIfEmpty(mainWindow, legacyUserDataPaths)
     if (!imported) await restoreLatestBackupIfEmpty(mainWindow, userDataPath)
   } catch (error) {
-    // 救援失敗不可阻擋主程式；錯誤留在 log，後續 2 分鐘備份仍會運作。
+    // 救援失敗不可阻擋主程式，但不能跟「不需要救援」混成同一個結果：明確告訴使用者。
+    // 還原腳本已回滾，來源備份已另存成不會被輪替的檔案，後續 2 分鐘備份照常運作。
     console.error('MindFlow startup recovery failed:', error)
+    void showRecoveryFailedDialog(mainWindow, {
+      preservedBackupPath: error?.preservedBackupPath,
+      rollbackIncomplete: error?.rollbackIncomplete === true
+    })
+  } finally {
+    releaseRecoveryGate()
   }
 
   try {

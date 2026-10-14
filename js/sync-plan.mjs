@@ -1,4 +1,99 @@
 export const MANIFEST_SCHEMA_VERSION = 1
+// 本版能安全讀寫的文件格式。M2a 起雲端會出現 schemaVersion 2；
+// 舊版的欄位白名單會把新欄位（衝突紀錄、HLC）刪掉再推回去，所以看到更新的版本一律停止同步。
+export const SUPPORTED_DOC_SCHEMA_VERSION = 1
+export const SCHEMA_TOO_NEW_MESSAGE = '雲端的同步資料是較新版本的 MindFlow 寫入的，這個版本無法安全同步（會刪掉新格式的資料），所以已暫停同步。請先更新 MindFlow：電腦版會自動更新，手機版請安裝最新的 APK。本機的心智圖不受影響。'
+
+export class SyncSchemaError extends Error {
+  constructor(message = SCHEMA_TOO_NEW_MESSAGE, { kind = 'manifest', id = null, version = null } = {}) {
+    super(message)
+    this.name = 'SyncSchemaError'
+    this.code = 'SCHEMA_TOO_NEW'
+    this.kind = kind
+    this.id = id
+    this.version = version
+  }
+}
+
+// 同步讀了本機快照之後、寫回之前，本機又有新修改：這一輪作廢，從頭再同步一次。
+export class SyncLocalChangedError extends Error {
+  constructor(keys = []) {
+    super('同步期間本機有新的修改，稍後會自動重新同步。')
+    this.name = 'SyncLocalChangedError'
+    this.code = 'LOCAL_CHANGED_DURING_SYNC'
+    this.keys = keys
+  }
+}
+
+// 本機儲存區的識別碼：每次同步成功時同時存在同步狀態與 localStorage（不進備份、不同步）。
+// 兩邊對不上＝這份本機資料不是 base 當時的那一份（WebView 資料遺失、從備份還原、搬進舊資料），
+// 此時 base 不可信，必須當成首次同步（只做聯集），否則會把雲端文件當成「本機刪掉的」而刪光或回退。
+export const STORE_EPOCH_KEY = 'mindflow.sync.storeEpoch'
+
+export function newStoreEpoch() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+/**
+ * 只有 base 與本機儲存區是同一份（識別碼相符）時才回傳 base；否則回傳 null（首次同步）。
+ * 升級前（M1 以前）留下的 base 沒有識別碼、本機也還沒有標記：信任一次，否則每台既有裝置升級後
+ * 都會被迫做一次聯集（刪掉的文件復活、多出衝突副本）。備份還原與舊資料搬入會另外把 base 作廢。
+ */
+export function trustedBase(state, entries) {
+  if (!state?.lastSyncedCommitSha || !state?.baseManifest) return null
+  const marker = isObject(entries) ? entries[STORE_EPOCH_KEY] : undefined
+  const legacyBase = (state.storeEpoch === undefined || state.storeEpoch === null) && (marker === undefined || marker === null)
+  if (legacyBase) {
+    // 「本機沒有標記」也是 WebView 資料遺失的樣子，而本機從來不留刪除紀錄：本機少了 base 裡的哪一份文件，
+    // 分不出是使用者刪的還是資料遺失（例如索引還在、內容不見，或遺失後又新建了文件）。
+    // 升級前的 base 只在它的每一份文件本機都還在時才信任；少一份就當首次同步（只做聯集），
+    // 代價是升級前還沒同步出去的本機刪除會被加回來，但不會把雲端文件記成刪除。
+    const baseIds = isObject(state.baseManifest.docs) ? Object.keys(state.baseManifest.docs) : []
+    if (!baseIds.every(id => typeof entries?.[`${DOC_PREFIX}${id}`] === 'string')) return null
+  } else if (typeof state.storeEpoch !== 'string' || !state.storeEpoch || marker !== state.storeEpoch) {
+    return null
+  }
+  return { manifest: state.baseManifest, perDoc: isObject(state.perDoc) ? state.perDoc : {} }
+}
+
+/**
+ * 決定這一輪結束後的識別碼並放進 setKeys。只要這一輪寫了本機或推了雲端，就換一個新的識別碼：
+ * Chromium 會延遲約 5 秒才把 localStorage 寫到磁碟，而同步狀態是立刻寫入的；若程式在這段時間被殺掉，
+ * 磁碟上的舊內容會帶著舊識別碼，與新的 base 對不上 → 下次當首次同步，而不是拿新 base 比對舊內容。
+ */
+export function rotateStoreEpoch(entries, setKeys, { changed }) {
+  const existing = isObject(entries) && typeof entries[STORE_EPOCH_KEY] === 'string' && entries[STORE_EPOCH_KEY] ? entries[STORE_EPOCH_KEY] : null
+  const epoch = existing && !changed ? existing : newStoreEpoch()
+  if (epoch !== existing) setKeys[STORE_EPOCH_KEY] = epoch
+  return epoch
+}
+
+/**
+ * 這一輪結束後要存的 base 是否跟這一輪信任的 base 不同（首次同步＝建立新 base，也算）。
+ * base 前進時一定要換識別碼：例如上一輪推送成功但沒套用，這一輪兩邊內容已相同、什麼都不用推或寫，
+ * base 卻前進到新內容；若沿用舊識別碼，localStorage 落盤前被殺，舊內容會配上新 base，被當成本機修改蓋回雲端。
+ * lastWriter 只是衝突副本的標籤，不影響判斷，不比。
+ */
+export function baseAdvances(base, nextManifest, nextPerDoc) {
+  if (!base) return true
+  const comparable = ({ lastWriter: _lastWriter, ...rest } = {}) => canonicalJson(rest)
+  return comparable(base.manifest) !== comparable(nextManifest) ||
+    canonicalJson(isObject(base.perDoc) ? base.perDoc : {}) !== canonicalJson(isObject(nextPerDoc) ? nextPerDoc : {})
+}
+
+/**
+ * 這批寫入會不會改到本機儲存區（快照 entries 為準）。換了識別碼本身也算一筆寫入：
+ * 引擎必須在 rotateStoreEpoch 之後才用這個判斷要不要套用，否則「只推送、本機沒寫入」的一輪
+ * 會把新識別碼存進同步狀態、localStorage 卻還是舊的 → 之後每一次都被當成首次同步。
+ */
+export function writesChangeEntries(entries, writes) {
+  const snapshot = isObject(entries) ? entries : {}
+  const removeKeys = Array.isArray(writes?.removeKeys) ? writes.removeKeys : []
+  const setKeys = isObject(writes?.setKeys) ? writes.setKeys : {}
+  return removeKeys.some(key => Object.hasOwn(snapshot, key)) ||
+    Object.entries(setKeys).some(([key, value]) => snapshot[key] !== value)
+}
 
 const INDEX_KEY = 'mindflow.docs.index'
 const DOC_PREFIX = 'mindflow.doc.'
@@ -100,8 +195,13 @@ export function buildLocalState(entries) {
 
   for (const row of activeRows) {
     if (!isObject(row) || typeof row.id !== 'string' || !row.id) continue
-    // index 先於 blob 清除而殘留時，不能把沒有內容的 metadata 排進 push，否則整輪套用必然中止。
-    if (!parsedBlobs[row.id]) continue
+    // 索引列著、內容卻不見：不能把沒有內容的 metadata 排進 push（整輪套用必然中止），
+    // 也不能當成使用者永久刪除（會推 tombstone、讓每台裝置都刪掉）——隔離，由健康的雲端版本拉回修復。
+    // 代價：永久刪除寫到一半（內容已刪、索引還沒改）被殺時，那份文件會被保守地救回一次。
+    if (!parsedBlobs[row.id]) {
+      quarantinedIds.add(row.id)
+      continue
+    }
     docs[row.id] = localMeta(row, parsedBlobs[row.id], 'active')
   }
   for (const row of trashRows) {
@@ -109,11 +209,15 @@ export function buildLocalState(entries) {
       ? { id: row }
       : row
     if (!isObject(normalizedRow) || typeof normalizedRow.id !== 'string' || !normalizedRow.id) continue
-    if (!parsedBlobs[normalizedRow.id]) continue
+    if (!parsedBlobs[normalizedRow.id]) {
+      quarantinedIds.add(normalizedRow.id)
+      continue
+    }
     docs[normalizedRow.id] = localMeta(normalizedRow, parsedBlobs[normalizedRow.id], 'trashed')
   }
 
-  const knownIds = new Set(Object.keys(docs))
+  // 隔離中的文件也保留收藏：從雲端拉回修復後，收藏狀態不能被當成「本機取消收藏」推出去。
+  const knownIds = new Set([...Object.keys(docs), ...quarantinedIds])
   const favorites = (!Array.isArray(parsedIndex) && Array.isArray(parsedIndex.favorites) ? parsedIndex.favorites : [])
     .filter((id, index, items) => typeof id === 'string' && knownIds.has(id) && items.indexOf(id) === index)
     .sort()
@@ -158,6 +262,54 @@ function normalizeManifest(source) {
   }
   manifest.lastWriter = typeof source.lastWriter === 'string' ? source.lastWriter : null
   return manifest
+}
+
+function supportedVersion(value, maxVersion) {
+  // 沒有版本號＝舊格式（v1 以前就沒寫）；寫了就必須是本版認得的整數，否則一律當成看不懂的新格式。
+  if (value === undefined || value === null) return true
+  return Number.isInteger(value) && value >= 1 && value <= maxVersion
+}
+
+// 版本閘門：遠端 manifest 比本版新就整個停止同步（不讀也不寫）。
+export function assertSupportedManifest(source) {
+  if (!isObject(source)) return
+  if (!supportedVersion(source.schemaVersion, MANIFEST_SCHEMA_VERSION)) {
+    throw new SyncSchemaError(SCHEMA_TOO_NEW_MESSAGE, { kind: 'manifest', version: source.schemaVersion })
+  }
+}
+
+// 版本閘門：任何從雲端拿到的文件 blob 比本版新，也停止同步，避免舊版白名單刪掉新欄位。
+export function assertSupportedDocument(raw, id = null) {
+  const document = typeof raw === 'string' ? parseJson(raw) : raw
+  if (!isObject(document)) return
+  if (!supportedVersion(document.schemaVersion, SUPPORTED_DOC_SCHEMA_VERSION)) {
+    throw new SyncSchemaError(SCHEMA_TOO_NEW_MESSAGE, { kind: 'document', id, version: document.schemaVersion })
+  }
+}
+
+// 套用前要確認「沒有被同步期間的本機修改改過」的每個 key，對應快照當下的值（不存在＝null）。
+export function writeExpectations(entries, writes, extraKeys = []) {
+  const snapshot = isObject(entries) ? entries : {}
+  const keys = new Set([
+    ...(Array.isArray(writes?.removeKeys) ? writes.removeKeys : []),
+    ...Object.keys(isObject(writes?.setKeys) ? writes.setKeys : {}),
+    ...extraKeys
+  ])
+  const expected = {}
+  for (const key of [...keys].sort()) {
+    expected[key] = typeof snapshot[key] === 'string' ? snapshot[key] : null
+  }
+  return expected
+}
+
+// 回傳跟快照不一致的 key（readValue 回傳目前值，不存在回 null）。
+export function changedSince(expected, readValue) {
+  const changed = []
+  for (const [key, value] of Object.entries(isObject(expected) ? expected : {})) {
+    const current = readValue(key)
+    if ((typeof current === 'string' ? current : null) !== value) changed.push(key)
+  }
+  return changed
 }
 
 function normalizeLocal(source) {
@@ -278,9 +430,15 @@ function mergeTombstones({ remoteTombstones, baseTombstones, initialSync }) {
 }
 
 export function computeSyncPlan({ local, remoteManifest, base, machineId, now }) {
+  assertSupportedManifest(remoteManifest)
   const localState = normalizeLocal(local)
   const remote = normalizeManifest(remoteManifest)
-  const initialSync = base === null || base === undefined
+  // 本機儲存區整個不見（沒有索引、也沒有任何文件或損壞文件）是資料遺失，不是使用者把文件刪光：
+  // 當成首次同步只把雲端拉回來，絕不把每一份文件都記成刪除推上雲端。刻意刪光時索引仍在（空索引）。
+  const storageLost = localState.rebuilt &&
+    Object.keys(localState.docs).length === 0 &&
+    localState.quarantinedIds.length === 0
+  const initialSync = storageLost || base === null || base === undefined
   const baseManifest = initialSync ? emptyManifest() : normalizeManifest(base?.manifest)
   const basePerDoc = !initialSync && isObject(base?.perDoc) ? base.perDoc : {}
   const nowIso = isoValue(now)
@@ -466,19 +624,52 @@ function twoDigits(value) {
   return String(value).padStart(2, '0')
 }
 
-export function buildConflictCopy(docJsonString, machineLabel, now) {
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (isObject(value)) {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/**
+ * 已經存在、id 相同的文件，是不是同一份輸方內容產生的衝突副本（只差標題與時間）。
+ * 是 → 重試時覆寫它不會掉任何東西；不是（例如使用者已經編輯過那份副本）→ 呼叫端必須改用
+ * buildConflictCopy(..., { distinct: true }) 換一個 id，不能拿新的副本蓋掉使用者的修改。
+ */
+export function isSameConflictCopy(existingRaw, copyJson) {
+  const existing = parseJson(existingRaw)
+  const copy = parseJson(copyJson)
+  if (!isObject(existing) || !isObject(copy)) return false
+  const comparable = ({ title: _title, createdAt: _createdAt, updatedAt: _updatedAt, ...rest }) => canonicalJson(rest)
+  return comparable(existing) === comparable(copy)
+}
+
+// 同一份輸方內容最多試幾個候選 id；全都不能用（實務上不會發生）才退回含時間的 id。
+export const CONFLICT_COPY_CANDIDATES = 32
+
+/**
+ * 衝突副本的 id 只看「輸方內容＋裝置＋第幾個候選」，不含時間：重試時會走到同一串候選，找回上一輪已推上去的那份，
+ * 不會越積越多。attempt 0 是穩定 id；呼叫端在某個候選已被改過、刪除或在回收筒時改試下一個（見 isSameConflictCopy）。
+ * distinct 是最後的退路：id 改含時間。
+ */
+export function buildConflictCopy(docJsonString, machineLabel, now, { attempt = 0, distinct = false } = {}) {
   if (typeof docJsonString !== 'string') throw new TypeError('文件 JSON 必須是字串')
   const document = parseJson(docJsonString)
   if (!isObject(document) || typeof document.id !== 'string' || !document.id) {
     throw new TypeError('文件 JSON 損壞或缺少 id')
   }
+  // 衝突副本會被本機存檔的白名單整理：較新格式的文件不能在這裡被默默降版。
+  assertSupportedDocument(document, document.id)
 
   const timestamp = isoValue(now)
   const displayDate = new Date(now)
   const label = String(machineLabel || '未知裝置')
   const suffix = `${twoDigits(displayDate.getMonth() + 1)}-${twoDigits(displayDate.getDate())} ${twoDigits(displayDate.getHours())}:${twoDigits(displayDate.getMinutes())}`
   const title = `${normalizeTitle(document.title)}（衝突副本・${label} ${suffix}）`
-  const identity = `${docJsonString}\u0000${label}\u0000${timestamp}`
+  const identity = distinct
+    ? `${docJsonString}\u0000${label}\u0000${timestamp}`
+    : attempt > 0 ? `${docJsonString}\u0000${label}\u0000#${attempt}` : `${docJsonString}\u0000${label}`
   let id = `conflict-${stableHash(identity)}-${stableHash(identity, 0x9e3779b9)}`
   if (id === document.id) id = `${id}-copy`
 
@@ -518,6 +709,7 @@ export function computeLocalWrites({ plan, pulledBlobs, localState }) {
   for (const id of pullIds) {
     const raw = pulled[id]
     // 先完整驗證所有 doc blob；任一缺失就不產生 index patch，避免 UI 指向不存在的文件。
+    assertSupportedDocument(raw, id)
     thumbnailFromBlob(raw, id)
     setKeys[`${DOC_PREFIX}${id}`] = raw
     effectiveBlobs[id] = raw

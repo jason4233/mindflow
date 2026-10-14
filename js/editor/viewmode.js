@@ -9,6 +9,7 @@ import {
   normalizeLayoutName
 } from './layout.js'
 import { findNode, structuredCloneSafe, walkNodes } from './model.js'
+import { gammaLayoutOverride, gammaLayoutRecord } from './gamma-state.js'
 import { initializeMinimap } from './minimap.js'
 import { initializeOutline } from './outline.js'
 import { registerOverlay } from './render.js'
@@ -301,7 +302,8 @@ class ViewModeController {
 
 function restoreGammaState(doc) {
   const state = readState(doc.id)
-  if (state.layout && isLayoutName(state.layout)) doc.layout = normalizeLayoutName(state.layout)
+  const layout = gammaLayoutOverride(state, doc.layout)
+  if (layout) doc.layout = layout
   const structures = state.structures && typeof state.structures === 'object' ? state.structures : {}
   walkNodes(doc.root, node => {
     const structure = structures[node.id]
@@ -315,7 +317,7 @@ function saveGammaState(doc) {
     if (isLayoutName(node.style?.structure)) structures[node.id] = normalizeLayoutName(node.style.structure)
   })
   localStorage.setItem(`${GAMMA_STATE_PREFIX}${doc.id}`, JSON.stringify({
-    layout: normalizeLayoutName(doc.layout),
+    ...gammaLayoutRecord(doc.layout),
     structures
   }))
 }

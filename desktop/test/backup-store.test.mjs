@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -9,9 +9,145 @@ import {
   backupFilePaths,
   hasIntentionalMindflowState,
   hasMindflowDocuments,
+  preserveFailedRestoreSource,
   readLatestMindflowBackup,
+  rendererRestoreScript,
   writeMindflowBackup
 } from '../backup-store.mjs'
+import vm from 'node:vm'
+
+test('M1 複審：備份還原／舊資料搬入的 renderer 腳本先寫新的識別碼，且不讓還原內容帶進任何 mindflow.sync.* key', () => {
+  const writes = []
+  const store = new Map([['mindflow.sync.storeEpoch', 'epoch-before-loss']])
+  const localStorage = {
+    setItem(key, value) { writes.push(key); store.set(key, value) },
+    getItem: key => store.get(key) ?? null
+  }
+  const entries = {
+    'mindflow.docs.index': documentIndex(1),
+    'mindflow.doc.doc-1': '{"id":"doc-1"}',
+    'mindflow.sync.storeEpoch': 'smuggled-epoch',
+    'other.app.key': 'ignored'
+  }
+  const count = vm.runInNewContext(rendererRestoreScript(entries, { storeEpoch: 'fresh-epoch' }), { localStorage })
+  assert.equal(count, 2, '只算真正寫進去的 key')
+  assert.equal(writes[0], 'mindflow.sync.storeEpoch', '識別碼最先寫')
+  assert.equal(store.get('mindflow.sync.storeEpoch'), 'fresh-epoch', '還原內容不能把識別碼換回去')
+  assert.deepEqual(writes.slice(1).sort(), ['mindflow.doc.doc-1', 'mindflow.docs.index'])
+  assert.throws(() => rendererRestoreScript(entries, {}), /storeEpoch/)
+})
+
+function fakeLocalStorage(initial, { failOnWrite = 0 } = {}) {
+  const store = new Map(Object.entries(initial))
+  const writes = []
+  let count = 0
+  const api = {
+    get length() { return store.size },
+    key: index => [...store.keys()][index] ?? null,
+    getItem: key => store.get(key) ?? null,
+    setItem(key, value) {
+      count += 1
+      if (failOnWrite && count === failOnWrite) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+      writes.push(key)
+      store.set(key, String(value))
+    },
+    removeItem(key) { store.delete(key) }
+  }
+  return { api, store, writes }
+}
+
+// 照 main 的方式跑還原腳本：腳本失敗時回傳結構化結果（executeJavaScript 帶不回錯誤的自訂欄位），轉成錯誤再拋出。
+function runRestoreLikeMain(entries, localStorage) {
+  const result = vm.runInNewContext(rendererRestoreScript(entries, { storeEpoch: 'fresh' }), { localStorage })
+  if (result && typeof result === 'object' && result.restoreFailed) {
+    throw Object.assign(new Error(result.message), { name: result.name, rollbackIncomplete: result.rollbackIncomplete })
+  }
+  return result
+}
+
+const restoreEntries = {
+  'mindflow.docs.index': documentIndex(1),
+  'mindflow.doc.doc-1': '{"id":"doc-1"}'
+}
+
+test('Sol #4：還原腳本寫入前在同一段執行裡重新確認儲存區仍是空的，否則取消', () => {
+  // 讀備份的這段時間，使用者已經新建了一份文件
+  const busy = fakeLocalStorage({ 'mindflow.docs.index': documentIndex(9), 'mindflow.doc.doc-9': '{"id":"doc-9"}' })
+  assert.equal(vm.runInNewContext(rendererRestoreScript(restoreEntries, { storeEpoch: 'fresh' }), { localStorage: busy.api }), 0)
+  assert.deepEqual(busy.writes, [], '一個 key 都不能寫')
+  assert.equal(busy.store.get('mindflow.docs.index'), documentIndex(9))
+
+  // 使用者刻意清空（合法的空索引）也不復活
+  const emptied = fakeLocalStorage({ 'mindflow.docs.index': JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }) })
+  assert.equal(vm.runInNewContext(rendererRestoreScript(restoreEntries, { storeEpoch: 'fresh' }), { localStorage: emptied.api }), 0)
+  assert.deepEqual(emptied.writes, [])
+
+  // 真的空了（只剩偏好設定或壞索引）才還原
+  const lost = fakeLocalStorage({ 'mindflow.ui.theme': 'dark', 'mindflow.docs.index': '{broken' })
+  assert.equal(vm.runInNewContext(rendererRestoreScript(restoreEntries, { storeEpoch: 'fresh' }), { localStorage: lost.api }), 2)
+})
+
+test('Sol #6：自動還原失敗時，來源備份另存到不會被輪替的檔名', async () => {
+  await withUserData(async userDataPath => {
+    await writeMindflowBackup({ userDataPath, entries: restoreEntries, reason: 'interval' })
+    const backup = await readLatestMindflowBackup({ userDataPath })
+    const preserved = await preserveFailedRestoreSource({ userDataPath, sourcePath: backup.path, now: new Date('2026-10-14T09:30:00.000Z') })
+    assert.match(preserved, /restore-failed-2026-10-14T09-30-00-000Z\.json$/)
+    assert.equal(await readFile(preserved, 'utf8'), await readFile(backup.path, 'utf8'))
+    assert.ok(!backupFilePaths(userDataPath).includes(preserved), '不在輪替名單裡')
+  })
+})
+
+test('Sol 2-#2：還原失敗、來源備份還沒保護好（restore-pending.json 還在）之前，先保護來源再輪替，不能把它擠掉', async () => {
+  await withUserData(async userDataPath => {
+    await writeMindflowBackup({ userDataPath, entries: { 'mindflow.docs.index': documentIndex(100) }, reason: 'interval' })
+    const source = backupFilePaths(userDataPath)[0]
+    const sourceText = await readFile(source, 'utf8')
+    await writeFile(join(userDataPath, 'backups', 'restore-pending.json'), JSON.stringify({ version: 1, source }))
+
+    for (let sequence = 0; sequence < 11; sequence += 1) {
+      await writeMindflowBackup({ userDataPath, entries: { 'mindflow.docs.index': documentIndex(sequence) }, reason: 'interval' })
+    }
+    const directory = join(userDataPath, 'backups')
+    const texts = await Promise.all((await readdir(directory)).map(name => readFile(join(directory, name), 'utf8')))
+    assert.ok(texts.includes(sourceText), '唯一含未上雲資料的來源備份必須還在')
+  })
+})
+
+test('Sol 2-#2：還原寫到一半失敗、回滾也失敗 → 錯誤要明確標出「回滾沒完成」，不能吞掉', () => {
+  const target = fakeLocalStorage({ 'mindflow.ui.theme': 'dark' }, { failOnWrite: 3 })
+  target.api.removeItem = () => { throw new Error('storage unavailable') }
+  let caught = null
+  try {
+    runRestoreLikeMain(restoreEntries, target.api)
+  } catch (error) {
+    caught = error
+  }
+  assert.ok(caught, '要拋出錯誤')
+  assert.equal(caught.rollbackIncomplete, true)
+})
+
+test('Sol #6：還原寫到一半失敗（空間不足）→ 把已寫的回滾，不留下「看起來不是空的」半套內容', () => {
+  const target = fakeLocalStorage({ 'mindflow.sync.storeEpoch': 'epoch-before', 'mindflow.ui.theme': 'dark' }, { failOnWrite: 3 })
+  assert.throws(() => runRestoreLikeMain(restoreEntries, target.api), /Quota/)
+  // 新識別碼寫成功之後的任何還原失敗都保留新識別碼（M1-A20）：舊的配上 sync-state.json 會讓舊 base 被信任
+  assert.equal(target.store.get('mindflow.sync.storeEpoch'), 'fresh', '完整回滾也不恢復舊識別碼')
+  assert.equal(target.store.has('mindflow.docs.index'), false)
+  assert.equal(target.store.has('mindflow.doc.doc-1'), false)
+  assert.equal(target.store.get('mindflow.ui.theme'), 'dark')
+})
+
+test('M1_NOTES 6-#13 補完：空間全滿、連新識別碼都沒寫成功 → 什麼都沒寫進去，識別碼維持原值，也不誤報「回滾沒完成」', () => {
+  const target = fakeLocalStorage({ 'mindflow.sync.storeEpoch': 'epoch-before' })
+  target.api.setItem = () => { throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' }) }
+  assert.throws(
+    () => runRestoreLikeMain(restoreEntries, target.api),
+    error => /Quota/.test(error.message) && error.rollbackIncomplete !== true,
+    '什麼都沒改過，不能說撤回沒完成'
+  )
+  assert.deepEqual([...target.store.keys()], ['mindflow.sync.storeEpoch'])
+  assert.equal(target.store.get('mindflow.sync.storeEpoch'), 'epoch-before')
+})
 
 function documentIndex(sequence) {
   return JSON.stringify({

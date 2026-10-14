@@ -1,9 +1,27 @@
 name: Build and publish Android release
 
+# Version scheme (see docs/android-release-signing.md):
+#   versionCode = 10000 + github.run_number   (monotonic; the old hard-coded APKs were versionCode 1)
+#   versionName = 1.1.<run_number>            (pull requests: 1.1.<run_number>-pr<PR number>)
+# Signing: the four ANDROID_* repository secrets select the permanent release key. Without them the
+# APK is signed with a one-off key per run and cannot be installed over an earlier APK.
+
 on:
   push:
     branches:
       - main
+    # Path filters are not evaluated for tag pushes, so every v* tag builds.
+    tags:
+      - "v*"
+    paths:
+      - "mobile/**"
+      - "index.html"
+      - "editor.html"
+      - "css/**"
+      - "js/**"
+      - "assets/**"
+      - ".github/workflows/android.yml"
+  pull_request:
     paths:
       - "mobile/**"
       - "index.html"
@@ -14,17 +32,26 @@ on:
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
+# Least privilege by default; only the publish job (never run for pull requests) can write releases.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: mindflow-android-release
-  cancel-in-progress: false
+  # Releases (main) queue in one group; each tag and each pull request get their own group.
+  group: ${{ github.event_name == 'pull_request' && format('mindflow-android-pr-{0}', github.event.pull_request.number) || (github.ref_type == 'tag' && format('mindflow-android-tag-{0}', github.ref_name)) || 'mindflow-android-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  android:
+  build:
+    name: Build and sign APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      version_code: ${{ steps.version.outputs.code }}
+      artifact: ${{ steps.package.outputs.artifact }}
+      signing_mode: ${{ steps.signing.outputs.mode }}
 
     steps:
       - name: Check out repository
@@ -33,15 +60,16 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
+          # Capacitor CLI 8 requires Node.js 22+.
           node-version: 22
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
           cache: gradle
 
       - name: Set up Android SDK
@@ -51,8 +79,10 @@ jobs:
           # 只要 platform-tools，其餘套件由下一步明確安裝
           packages: platform-tools
 
+      # Capacitor 8 compiles against API 36; AGP 8.13 builds with build-tools 35.0.0 by default and
+      # 36.0.0 provides the apksigner/zipalign/aapt2 used below.
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0"
 
       - name: Install mobile dependencies
         working-directory: mobile
@@ -66,47 +96,230 @@ jobs:
         working-directory: mobile
         run: npm run sync
 
-      - name: Build release APK
-        working-directory: mobile/android
-        run: bash ./gradlew --no-daemon assembleRelease
-
-      # Release variants are unsigned by default；CI 產生一次性 keystore，APK 可直接側載但不冒充正式商店簽章。
-      - name: Sign and verify installable APK
+      - name: Compute version
+        id: version
         shell: bash
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          unsigned_apk="mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk"
-          signed_apk="$RUNNER_TEMP/MindFlow.apk"
-          aligned_apk="$RUNNER_TEMP/MindFlow-aligned.apk"
-          keystore="$RUNNER_TEMP/mindflow-ci.keystore"
-          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          zipalign="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+          code=$((10000 + RUN_NUMBER))
+          name="1.1.${RUN_NUMBER}"
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            name="${name}-pr${PR_NUMBER}"
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "MindFlow Android versionCode=$code versionName=$name"
 
-          test -f "$unsigned_apk"
-          test -n "$apksigner"
-          test -n "$zipalign"
-          keytool -genkeypair -noprompt \
-            -keystore "$keystore" \
-            -storepass android \
-            -alias mindflow-ci \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=MindFlow CI, OU=CI, O=MindFlow, L=Taipei, ST=Taiwan, C=TW"
-          "$zipalign" -f -p 4 "$unsigned_apk" "$aligned_apk"
-          "$apksigner" sign \
-            --ks "$keystore" \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --out "$signed_apk" \
-            "$aligned_apk"
-          "$apksigner" verify --verbose --print-certs "$signed_apk"
+      # Secrets are passed only through env and are never echoed; GitHub also masks them in logs.
+      - name: Prepare release signing key
+        id: signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "mode=throwaway" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Throwaway signing key::Missing repository secrets: ${missing[*]}. This APK is signed with a one-off key generated for this run, so Android will refuse to install it over a previously installed MindFlow APK (uninstalling first deletes the app's local data). Add the secrets described in docs/android-release-signing.md to get stable, updatable APKs."
+            exit 0
+          fi
 
-      - name: Upload MindFlow.apk to rolling latest release
+          umask 077
+          keystore="$RUNNER_TEMP/mindflow-release.keystore"
+          if ! printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '\r\n\t ' | base64 --decode > "$keystore" 2>/dev/null; then
+            echo "::error title=Invalid ANDROID_KEYSTORE_BASE64::The secret is not valid base64. Re-create it as described in docs/android-release-signing.md."
+            exit 1
+          fi
+          # Fail fast (instead of silently falling back to a throwaway key) when the secrets do not match.
+          if ! keytool -list -keystore "$keystore" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error title=Release keystore check failed::The keystore cannot be opened with ANDROID_KEYSTORE_PASSWORD or does not contain the key named by ANDROID_KEY_ALIAS."
+            exit 1
+          fi
+          echo "keystore=$keystore" >> "$GITHUB_OUTPUT"
+          echo "mode=release" >> "$GITHUB_OUTPUT"
+
+      # With all four MINDFLOW_KEY* variables set, Gradle signs app-release.apk itself
+      # (mobile/android/app/build.gradle); otherwise it leaves app-release-unsigned.apk.
+      - name: Build release APK
+        working-directory: mobile/android
+        env:
+          MINDFLOW_VERSION_CODE: ${{ steps.version.outputs.code }}
+          MINDFLOW_VERSION_NAME: ${{ steps.version.outputs.name }}
+          MINDFLOW_KEYSTORE_PATH: ${{ steps.signing.outputs.keystore }}
+          MINDFLOW_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MINDFLOW_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MINDFLOW_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: bash ./gradlew --no-daemon assembleRelease
+
+      - name: Sign (fallback) and verify APK
+        shell: bash
+        env:
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          set -euo pipefail
+          build_tools="$ANDROID_HOME/build-tools/36.0.0"
+          apksigner="$build_tools/apksigner"
+          zipalign="$build_tools/zipalign"
+          aapt2="$build_tools/aapt2"
+          outputs="mobile/android/app/build/outputs/apk/release"
+          signed_apk="$RUNNER_TEMP/MindFlow-signed.apk"
+          test -x "$apksigner"
+          test -x "$zipalign"
+          test -x "$aapt2"
+
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            test -f "$outputs/app-release.apk"
+            cp "$outputs/app-release.apk" "$signed_apk"
+          else
+            # Release variants are unsigned without the secrets; sign with a key generated for this run only.
+            unsigned_apk="$outputs/app-release-unsigned.apk"
+            aligned_apk="$RUNNER_TEMP/MindFlow-aligned.apk"
+            keystore="$RUNNER_TEMP/mindflow-ci-throwaway.keystore"
+            test -f "$unsigned_apk"
+            keytool -genkeypair -noprompt \
+              -keystore "$keystore" \
+              -storepass android \
+              -alias mindflow-ci \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=MindFlow CI throwaway, OU=CI, O=MindFlow, L=Taipei, ST=Taiwan, C=TW"
+            "$zipalign" -f -p 4 "$unsigned_apk" "$aligned_apk"
+            "$apksigner" sign \
+              --ks "$keystore" \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$signed_apk" \
+              "$aligned_apk"
+          fi
+
+          "$apksigner" verify --verbose --print-certs "$signed_apk" | tee "$RUNNER_TEMP/apksigner.txt"
+          badging="$("$aapt2" dump badging "$signed_apk")"
+          grep -E "^(package|minSdkVersion|targetSdkVersion|uses-permission):" <<< "$badging"
+          if ! grep -qF "package: name='com.mindflow.app' versionCode='$VERSION_CODE' versionName='$VERSION_NAME'" <<< "$badging"; then
+            echo "::error::APK identity/version does not match com.mindflow.app $VERSION_CODE / $VERSION_NAME"
+            exit 1
+          fi
+          # Exact merged-manifest permission set: INTERNET (ours), ACCESS_NETWORK_STATE (Google
+          # datatransport, pulled in by the ML Kit code scanner) and androidx.core's app-private
+          # DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION. No CAMERA: scan() uses the Google code scanner.
+          expected_permissions="$(printf '%s\n' \
+            android.permission.ACCESS_NETWORK_STATE \
+            android.permission.INTERNET \
+            com.mindflow.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)"
+          actual_permissions="$(sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" <<< "$badging" | LC_ALL=C sort)"
+          if [[ "$actual_permissions" != "$expected_permissions" ]]; then
+            echo "::error title=Unexpected APK permissions::expected [$(paste -sd ' ' - <<< "$expected_permissions")] but the APK requests [$(paste -sd ' ' - <<< "$actual_permissions")]"
+            exit 1
+          fi
+
+          digest="$(grep -m1 'certificate SHA-256 digest' "$RUNNER_TEMP/apksigner.txt" | sed 's/.*digest: //')"
+          {
+            echo "### MindFlow Android APK"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| versionCode | \`$VERSION_CODE\` |"
+            echo "| versionName | \`$VERSION_NAME\` |"
+            echo "| Signing | \`$SIGNING_MODE\` |"
+            echo "| Certificate SHA-256 | \`$digest\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Name the APK
+        id: package
+        shell: bash
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            artifact="MindFlow-pr${PR_NUMBER}-${VERSION_CODE}"
+          else
+            artifact="MindFlow-${VERSION_CODE}"
+          fi
+          mkdir -p "$RUNNER_TEMP/dist"
+          mv "$RUNNER_TEMP/MindFlow-signed.apk" "$RUNNER_TEMP/dist/${artifact}.apk"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
+      # Pull requests stop here: the owner downloads this artifact to sideload-test the change.
+      - name: Upload APK workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: ${{ runner.temp }}/dist/${{ steps.package.outputs.artifact }}.apk
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub release assets
+    needs: build
+    # Never for pull requests: only pushes/manual runs on main (rolling "latest") or on v* tags.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/apk
+
+      - name: Upload APK to the version release
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          tag="$GITHUB_REF_NAME"
+          apk="$RUNNER_TEMP/apk/MindFlow-${VERSION_CODE}.apk"
+          test -f "$apk"
+
+          # Same pattern as release.yml; the desktop workflow may create this release concurrently.
+          if gh release view "$tag" --repo "$repo" > /dev/null 2>&1; then
+            gh release upload "$tag" "$apk" --clobber --repo "$repo"
+          elif gh release create "$tag" "$apk" \
+              --verify-tag \
+              --generate-notes \
+              --title "MindFlow $tag" \
+              --latest=false \
+              --repo "$repo"; then
+            echo "Created release $tag with MindFlow-${VERSION_CODE}.apk"
+          else
+            echo "Release $tag could not be created (probably created concurrently); uploading to it instead."
+            gh release view "$tag" --repo "$repo" > /dev/null
+            gh release upload "$tag" "$apk" --clobber --repo "$repo"
+          fi
+
+      - name: Upload APK to the rolling latest release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+          SIGNING_MODE: ${{ needs.build.outputs.signing_mode }}
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
@@ -118,13 +331,46 @@ jobs:
             exit 0
           fi
 
-          if ! gh release view latest --repo "$repo" >/dev/null 2>&1; then
+          versioned_name="MindFlow-${VERSION_CODE}.apk"
+          versioned="$RUNNER_TEMP/apk/$versioned_name"
+          stable="$RUNNER_TEMP/apk/MindFlow.apk"
+          test -f "$versioned"
+          cp "$versioned" "$stable"
+
+          if ! gh release view latest --repo "$repo" > /dev/null 2>&1; then
             gh release create latest \
               --title "MindFlow latest" \
               --notes "Automated rolling MindFlow builds." \
               --target "$GITHUB_SHA" \
               --latest \
-              --repo "$repo" || gh release view latest --repo "$repo" >/dev/null
+              --repo "$repo" || gh release view latest --repo "$repo" > /dev/null
           fi
 
-          gh release upload latest "$RUNNER_TEMP/MindFlow.apk" --clobber --repo "$repo"
+          # MindFlow.apk is the stable download link; MindFlow-<versionCode>.apk is what the app's
+          # update check looks for in the latest release. A throwaway-signed APK cannot be installed
+          # over the previous one, so it must never trigger the in-app "install the update" prompt:
+          # only release-signed builds get a versioned asset.
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            gh release upload latest "$stable" "$versioned" --clobber --repo "$repo"
+
+            # Keep at most one versioned APK on latest (uploaded first, so there is never a gap).
+            gh release view latest --repo "$repo" --json assets --jq ".assets[].name" |
+              while IFS= read -r asset; do
+                if [[ "$asset" =~ ^MindFlow-[0-9]+\.apk$ && "$asset" != "$versioned_name" ]]; then
+                  echo "Removing outdated asset $asset"
+                  gh release delete-asset latest "$asset" --yes --repo "$repo"
+                fi
+              done
+          else
+            # Once latest carries a release-signed MindFlow-<n>.apk, a throwaway-signed build must not touch it:
+            # it would replace MindFlow.apk with an APK that cannot be installed over the release-signed app, and
+            # the cleanup would delete the last installable versioned APK. Read the asset list into a variable
+            # first: piping into grep -q under pipefail can fail with SIGPIPE and pick the wrong branch.
+            latest_assets="$(gh release view latest --repo "$repo" --json assets --jq ".assets[].name")"
+            if grep -Eq '^MindFlow-[0-9]+\.apk$' <<< "$latest_assets"; then
+              echo "::warning title=Latest release left unchanged::This APK uses a throwaway signing key but latest already holds a release-signed APK, so nothing was published. Check the ANDROID_* repository secrets (docs/android-release-signing.md)."
+              exit 0
+            fi
+            echo "::warning title=No in-app update prompt::This APK uses a throwaway signing key, so only MindFlow.apk is published and the app will not offer it as an update."
+            gh release upload latest "$stable" --clobber --repo "$repo"
+          fi

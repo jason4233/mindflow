@@ -1,19 +1,37 @@
 import {
+  CONFLICT_COPY_CANDIDATES,
+  STORE_EPOCH_KEY,
+  SyncLocalChangedError,
+  SyncSchemaError,
+  baseAdvances,
   buildConflictCopy,
   buildLocalState,
+  changedSince,
   computeLocalWrites,
   computeSyncPlan,
-  emptyManifest
+  emptyManifest,
+  isSameConflictCopy,
+  rotateStoreEpoch,
+  trustedBase,
+  writeExpectations,
+  writesChangeEntries
 } from './sync-plan.mjs'
 
 export const MOBILE_SYNC_CONFIG_KEY = 'mindflow.sync.mobile.config'
 export const MOBILE_SYNC_TOKEN_KEY = 'mindflow.sync.mobile.token'
 export const MOBILE_SYNC_STATE_KEY = 'mindflow.sync.mobile.state'
 export const MOBILE_SYNC_CHANGE_DEBOUNCE_MS = 45_000
+export const MOBILE_SYNC_PULL_INTERVAL_MS = 5 * 60_000
+export const MOBILE_SYNC_RETRY_INITIAL_MS = 30_000
+export const MOBILE_SYNC_RETRY_MAX_MS = 5 * 60_000
+const DIAGNOSTIC_LIMIT = 30
+// 不含 'config'：setConfig 已先等進行中的同步結束、新設定生效後才放行，撞上的那一輪本來就用新設定，不必再跑一次。
+const LOCAL_CHANGE_REASONS = new Set(['local-change', 'hidden-change', 'hidden', 'flush', 'back-button', 'app-pause', 'pagehide', 'exit'])
 
 const DEFAULT_API_BASE = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const UPDATE_REF_ATTEMPTS = 3
+const LOCAL_CHANGE_ATTEMPTS = 3
 const MANIFEST_PATH = 'manifest.json'
 const INDEX_KEY = 'mindflow.docs.index'
 const DOC_KEY_PREFIX = 'mindflow.doc.'
@@ -119,7 +137,8 @@ function normalizeState(value, machineId) {
     perDoc: isObject(source.perDoc) ? source.perDoc : {},
     machineId: typeof source.machineId === 'string' && source.machineId ? source.machineId : machineId,
     etag: typeof source.etag === 'string' ? source.etag : null,
-    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null
+    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null,
+    storeEpoch: typeof source.storeEpoch === 'string' ? source.storeEpoch : null
   }
 }
 
@@ -236,6 +255,11 @@ export function observeMindflowStorage(storage, listener) {
 }
 
 function applyStorageWrites(storage, writes, dispatchSyncApplied) {
+  // 同步走網路的這幾秒內使用者若又存了要被覆蓋的 key，整批不寫，交由呼叫端重跑一輪。
+  if (isObject(writes?.expected)) {
+    const changedKeys = changedSince(writes.expected, key => storage.getItem(key))
+    if (changedKeys.length) return { conflict: true, changedKeys }
+  }
   const removeKeys = [...new Set(Array.isArray(writes?.removeKeys) ? writes.removeKeys : [])]
   const setEntries = Object.entries(isObject(writes?.setKeys) ? writes.setKeys : {})
   const touched = [...new Set([...removeKeys, ...setEntries.map(([key]) => key)])]
@@ -248,10 +272,13 @@ function applyStorageWrites(storage, writes, dispatchSyncApplied) {
   try {
     for (const key of removeKeys) storage.removeItem(key)
     for (const [key, value] of setEntries) {
-      if (key !== INDEX_KEY) storage.setItem(key, value)
+      if (key !== INDEX_KEY && key !== STORE_EPOCH_KEY) storage.setItem(key, value)
     }
     const indexEntry = setEntries.find(([key]) => key === INDEX_KEY)
     if (indexEntry) storage.setItem(indexEntry[0], indexEntry[1])
+    // 識別碼最後寫：localStorage 分批落盤，磁碟上若已是新識別碼，這一批其他內容一定也已落盤。
+    const epochEntry = setEntries.find(([key]) => key === STORE_EPOCH_KEY)
+    if (epochEntry) storage.setItem(epochEntry[0], epochEntry[1])
   } catch (error) {
     for (const item of previous) {
       try {
@@ -281,17 +308,74 @@ function parsePreferenceJson(value) {
   }
 }
 
-function createPreferencesStore(preferences, machineIdOverride) {
+function usableSecureStorage(secureStorage) {
+  return hasMethods(secureStorage, ['get', 'set', 'remove']) ? secureStorage : null
+}
+
+/**
+ * 設定與同步狀態存在 Capacitor Preferences；PAT 優先存進 Android Keystore 加密的 MindflowSecureStorage。
+ * 舊版留在 Preferences 的明文 PAT 會在第一次載入時搬進安全儲存並刪除明文；安全儲存不可用時才退回 Preferences。
+ */
+function createPreferencesStore(preferences, machineIdOverride, secureStorage = null) {
   if (!hasMethods(preferences, ['get', 'set'])) throw new TypeError('Capacitor Preferences is required')
   const fallbackMachineId = machineIdentity(machineIdOverride)
+  const secure = usableSecureStorage(secureStorage)
+  let tokenStorage = 'preferences'
+
+  async function removePlaintextToken() {
+    if (typeof preferences.remove === 'function') await preferences.remove({ key: MOBILE_SYNC_TOKEN_KEY })
+    else await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: '' })
+  }
+
+  async function secureAvailable() {
+    if (!secure) return false
+    try {
+      if (typeof secure.isAvailable !== 'function') return true
+      return (await secure.isAvailable())?.available === true
+    } catch {
+      return false
+    }
+  }
+
+  async function loadToken(plaintext) {
+    if (!(await secureAvailable())) return plaintext
+    try {
+      const stored = (await secure.get({ key: MOBILE_SYNC_TOKEN_KEY }))?.value
+      if (typeof stored === 'string' && stored) {
+        tokenStorage = 'secure'
+        // 已在安全儲存裡：殘留的明文（例如搬移到一半被中斷）一律清掉。
+        if (plaintext) await removePlaintextToken().catch(() => {})
+        return stored
+      }
+      if (!plaintext) {
+        tokenStorage = 'secure'
+        return ''
+      }
+      // 搬移：先寫進安全儲存並讀回確認，確認成功才刪明文，任何一步失敗都保留明文、照常同步。
+      await secure.set({ key: MOBILE_SYNC_TOKEN_KEY, value: plaintext })
+      const verified = (await secure.get({ key: MOBILE_SYNC_TOKEN_KEY }))?.value
+      if (verified !== plaintext) return plaintext
+      tokenStorage = 'secure'
+      await removePlaintextToken()
+      return plaintext
+    } catch {
+      tokenStorage = 'preferences'
+      return plaintext
+    }
+  }
+
   return Object.freeze({
+    get tokenStorage() {
+      return tokenStorage
+    },
     async load() {
       const [configResult, tokenResult, stateResult] = await Promise.all([
         preferences.get({ key: MOBILE_SYNC_CONFIG_KEY }),
         preferences.get({ key: MOBILE_SYNC_TOKEN_KEY }),
         preferences.get({ key: MOBILE_SYNC_STATE_KEY })
       ])
-      const config = normalizeConfig(parsePreferenceJson(configResult?.value), tokenResult?.value || '')
+      const token = await loadToken(tokenResult?.value || '')
+      const config = normalizeConfig(parsePreferenceJson(configResult?.value), token)
       const state = normalizeState(parsePreferenceJson(stateResult?.value), fallbackMachineId)
       return { config, state }
     },
@@ -300,15 +384,23 @@ function createPreferencesStore(preferences, machineIdOverride) {
         key: MOBILE_SYNC_CONFIG_KEY,
         value: JSON.stringify({ enabled: config.enabled, repo: config.repo, branch: config.branch })
       })
-      if (tokenChanged) {
-        if (config.token) {
-          await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: config.token })
-        } else if (typeof preferences.remove === 'function') {
-          await preferences.remove({ key: MOBILE_SYNC_TOKEN_KEY })
-        } else {
-          await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: '' })
+      if (!tokenChanged) return
+      if (await secureAvailable()) {
+        try {
+          if (config.token) await secure.set({ key: MOBILE_SYNC_TOKEN_KEY, value: config.token })
+          else await secure.remove({ key: MOBILE_SYNC_TOKEN_KEY })
+          tokenStorage = 'secure'
+          await removePlaintextToken()
+          return
+        } catch {
+          // 安全儲存寫入失敗：退回 Preferences，不能讓使用者剛輸入的 PAT 消失。
+          // 安全儲存裡的舊值盡量清掉，否則下次啟動會被舊值蓋回去（或清除權杖後又復活）。
+          await secure.remove({ key: MOBILE_SYNC_TOKEN_KEY }).catch(() => {})
         }
       }
+      tokenStorage = 'preferences'
+      if (config.token) await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: config.token })
+      else await removePlaintextToken()
     },
     async saveState(state) {
       await preferences.set({ key: MOBILE_SYNC_STATE_KEY, value: JSON.stringify(normalizeState(state, state.machineId)) })
@@ -329,6 +421,8 @@ function createGitHubClient(fetchFn) {
     const apiBase = String(cfg.apiBase || DEFAULT_API_BASE).replace(/\/+$/u, '')
     const init = {
       method,
+      // WebView 的 HTTP 快取可能回舊的分支頭，讓兩台裝置互相看不到對方的推送。
+      cache: 'no-store',
       headers: {
         accept: 'application/vnd.github+json',
         authorization: `Bearer ${cfg.token}`,
@@ -495,7 +589,7 @@ function createGitHubClient(fetchFn) {
   })
 }
 
-async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
+async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedThisRun = new Map() }) {
   const entries = readStorageEntries(storage)
   const localState = buildLocalState(entries)
   const ref = await client.getRef(cfg)
@@ -505,9 +599,7 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
   const remoteManifest = manifestEntry
     ? JSON.parse(await client.getBlobRaw(cfg, manifestEntry.sha))
     : emptyManifest()
-  const base = state.lastSyncedCommitSha && state.baseManifest
-    ? { manifest: state.baseManifest, perDoc: state.perDoc }
-    : null
+  const base = trustedBase(state, entries)
   const plan = computeSyncPlan({
     local: localState,
     remoteManifest,
@@ -533,8 +625,30 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
   const conflictBlobs = {}
   const pushIds = new Set(plan.pushDocs)
   const purgeIds = new Set(plan.purgeLocal)
-  const addConflictCopy = (raw, label) => {
-    const copy = buildConflictCopy(raw, label, syncNow)
+  // 候選 id 能不能用：本機、雲端每一份同 id 的文件都必須是同一份輸方內容的原封不動副本（重試時沿用、不累積）；
+  // 任一端被改過（不能蓋掉，也不能只看本機那份就以為能沿用）、在回收筒（不能拉回來）、已永久刪除（會跟 tombstone 打架）都不行。
+  const copyCandidateUsable = async candidate => {
+    const id = candidate.id
+    if (Object.hasOwn(plan.nextManifest.tombstones, id) || Object.hasOwn(remoteManifest.tombstones ?? {}, id)) return false
+    if ([plan.nextManifest.docs[id], remoteManifest.docs?.[id], augmentedLocal.docs[id]].some(meta => meta?.state === 'trashed')) return false
+    const versions = []
+    if (typeof augmentedLocal.docBlobs[id] === 'string') versions.push(augmentedLocal.docBlobs[id])
+    if (tree.byPath[documentPath(id)]) versions.push(await readRemoteDoc(id))
+    return versions.every(existing => isSameConflictCopy(existing, candidate.json))
+  }
+  const addConflictCopy = async (raw, label) => {
+    let copy = null
+    for (let attempt = 0; attempt < CONFLICT_COPY_CANDIDATES && !copy; attempt += 1) {
+      const candidate = buildConflictCopy(raw, label, syncNow, { attempt })
+      if (await copyCandidateUsable(candidate)) copy = candidate
+    }
+    if (!copy) {
+      // 退路（含時間的 id）也要過同樣的檢查：同一輪重跑時時間不變、退路 id 也不變，可能已被別台改過。
+      // 找不到安全位置就中止這一輪，不覆寫任何文件；下一輪時間不同，退路 id 也不同。
+      const fallback = buildConflictCopy(raw, label, syncNow, { distinct: true })
+      if (!(await copyCandidateUsable(fallback))) throw new Error('找不到安全的位置另存衝突副本，這一輪同步已中止，沒有覆寫任何文件。')
+      copy = fallback
+    }
     const document = JSON.parse(copy.json)
     conflictBlobs[copy.id] = copy.json
     augmentedLocal.docBlobs[copy.id] = copy.json
@@ -550,18 +664,34 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
   }
 
   for (const conflict of plan.conflicts) {
+    const localRaw = localState.docBlobs[conflict.id]
+    const remoteRaw = await readRemoteDoc(conflict.id)
+    if (typeof localRaw === 'string' && localRaw === remoteRaw) {
+      // 兩邊內容一字不差（例如上一輪推送成功但 base 沒存到）：不是衝突，不產生副本。
+      pushIds.delete(conflict.id)
+      plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+      continue
+    }
+    if (typeof localRaw === 'string' && pushedThisRun.get(conflict.id) === remoteRaw) {
+      // 雲端那份是本輪稍早自己推的版本、本機之後又改了：本機直接蓋過，不算衝突。
+      pushIds.add(conflict.id)
+      plan.pullDocs = plan.pullDocs.filter(id => id !== conflict.id)
+      delete pulledBlobs[conflict.id]
+      plan.nextManifest.docs[conflict.id] = { ...plan.nextManifest.docs[conflict.id], ...localState.docs[conflict.id] }
+      plan.nextPerDoc[conflict.id] = localState.docs[conflict.id].updatedAt
+      continue
+    }
     if (conflict.loserCopyFrom === 'local') {
-      const raw = localState.docBlobs[conflict.id]
-      if (typeof raw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
-      addConflictCopy(raw, state.machineId)
+      if (typeof localRaw !== 'string') throw new Error(`Local conflict document blob is missing: ${conflict.id}`)
+      await addConflictCopy(localRaw, state.machineId)
     } else {
-      addConflictCopy(await readRemoteDoc(conflict.id), remoteManifest.lastWriter || 'remote-device')
+      await addConflictCopy(remoteRaw, remoteManifest.lastWriter || 'remote-device')
     }
   }
   for (const resurrection of plan.resurrect) {
     const localRaw = localState.docBlobs[resurrection.id]
-    if (typeof localRaw === 'string') addConflictCopy(localRaw, state.machineId)
-    else addConflictCopy(await readRemoteDoc(resurrection.id), remoteManifest.lastWriter || 'remote-device')
+    if (typeof localRaw === 'string') await addConflictCopy(localRaw, state.machineId)
+    else await addConflictCopy(await readRemoteDoc(resurrection.id), remoteManifest.lastWriter || 'remote-device')
     purgeIds.add(resurrection.id)
   }
   plan.pushDocs = [...pushIds].sort()
@@ -584,16 +714,31 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
     }
   }
   const writes = { setKeys, removeKeys: [...removeKeys] }
-  const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
-    Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
+  const pushedLocalIds = [...pushIds].filter(id => !Object.hasOwn(conflictBlobs, id) && typeof localState.docBlobs[id] === 'string')
 
   const remoteDocPaths = Object.keys(tree.byPath).filter(path => idFromDocumentPath(path))
   const desiredDocPaths = new Set(Object.keys(plan.nextManifest.docs).map(documentPath))
   const deletedRemotePaths = remoteDocPaths.filter(path => !desiredDocPaths.has(path))
   const needsPush = pushIds.size > 0 || deletedRemotePaths.length > 0 || manifestsDiffer(remoteManifest, plan.nextManifest)
+  const nextBaseManifest = needsPush
+    ? plan.nextManifest
+    : { ...plan.nextManifest, lastWriter: remoteManifest.lastWriter ?? null }
+  // 這一輪寫了本機、要推雲端，或 base 要前進 → 換新的本機儲存區識別碼（見 rotateStoreEpoch、baseAdvances）。
+  const storeEpoch = rotateStoreEpoch(entries, writes.setKeys, {
+    changed: writesChangeEntries(entries, writes) || needsPush || baseAdvances(base, nextBaseManifest, plan.nextPerDoc)
+  })
+  // localChanged 與兩份 CAS 期望值都要在識別碼放進 setKeys 之後才算：只推送的一輪也得把新識別碼寫進 localStorage。
+  const localChanged = writesChangeEntries(entries, writes)
+  writes.expected = writeExpectations(entries, writes)
+  const prePushExpected = writeExpectations(entries, writes, pushedLocalIds.map(id => `${DOC_KEY_PREFIX}${id}`))
 
   let commitSha = ref.sha
+  const pushedDocs = {}
   if (needsPush) {
+    // 還沒對雲端寫任何東西：本機在同步期間又存檔就作廢重跑。
+    const changedKeys = changedSince(prePushExpected, key => storage.getItem(key))
+    if (changedKeys.length) throw new SyncLocalChangedError(changedKeys)
+
     const treeEntries = []
     for (const id of [...pushIds].sort()) {
       const raw = augmentedLocal.docBlobs[id] ?? pulledBlobs[id]
@@ -610,21 +755,22 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
       parentSha: ref.sha
     })
     await client.updateRef(cfg, commitSha)
+    for (const id of pushedLocalIds) pushedDocs[id] = localState.docBlobs[id]
   }
 
   return {
     entries,
     localChanged,
     writes,
+    pushedDocs,
     nextState: {
       lastSyncedCommitSha: commitSha,
-      baseManifest: needsPush
-        ? plan.nextManifest
-        : { ...plan.nextManifest, lastWriter: remoteManifest.lastWriter ?? null },
+      baseManifest: nextBaseManifest,
       perDoc: plan.nextPerDoc,
       machineId: state.machineId,
       etag: ref.etag,
-      lastSyncAt: syncNow.toISOString()
+      lastSyncAt: syncNow.toISOString(),
+      storeEpoch
     },
     quarantinedIds: plan.quarantinedIds
   }
@@ -632,28 +778,68 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow }) {
 
 export function createMobileSyncLifecycle({
   syncNow,
+  pollRemote,
   documentRef = globalThis.document,
+  windowRef = globalThis.window,
   observeLocalChanges,
   debounceMs = MOBILE_SYNC_CHANGE_DEBOUNCE_MS,
+  pullIntervalMs = MOBILE_SYNC_PULL_INTERVAL_MS,
   setTimeoutFn = globalThis.setTimeout,
-  clearTimeoutFn = globalThis.clearTimeout
+  clearTimeoutFn = globalThis.clearTimeout,
+  setIntervalFn = globalThis.setInterval,
+  clearIntervalFn = globalThis.clearInterval
 } = {}) {
   if (typeof syncNow !== 'function') throw new TypeError('syncNow is required')
   if (typeof observeLocalChanges !== 'function') throw new TypeError('observeLocalChanges is required')
   let started = false
   let changeTimer = null
+  let pullTimer = null
   let unsubscribe = null
+
+  const hidden = () => documentRef?.visibilityState === 'hidden'
+  const pull = () => (typeof pollRemote === 'function' ? pollRemote() : syncNow({ reason: 'poll' }))
+
+  // 只在前景輪詢：背景時 Android 會凍結 WebView，計時器也沒意義，回前景時會立即同步一次。
+  const startPolling = () => {
+    if (pullTimer || !(pullIntervalMs > 0) || typeof setIntervalFn !== 'function') return
+    pullTimer = setIntervalFn(() => Promise.resolve().then(pull).catch(() => {}), pullIntervalMs)
+    pullTimer?.unref?.()
+  }
+  const stopPolling = () => {
+    if (!pullTimer) return
+    clearIntervalFn?.(pullTimer)
+    pullTimer = null
+  }
+  const flushPendingChange = reason => {
+    if (!changeTimer) return
+    clearTimeoutFn(changeTimer)
+    changeTimer = null
+    void syncNow({ reason })
+  }
 
   const onLocalChange = () => {
     clearTimeoutFn(changeTimer)
+    changeTimer = null
+    // App 已進背景還在存檔（例如離開時的最後一次存檔）：不等 45 秒，趁 WebView 被凍結前直接推送。
+    if (hidden()) {
+      void syncNow({ reason: 'hidden-change' })
+      return
+    }
     changeTimer = setTimeoutFn(() => {
       changeTimer = null
       return syncNow({ reason: 'local-change' })
     }, debounceMs)
   }
   const onVisibilityChange = () => {
-    if (documentRef?.visibilityState === 'visible') void syncNow({ reason: 'visibility' })
+    if (documentRef?.visibilityState === 'visible') {
+      startPolling()
+      void syncNow({ reason: 'visibility' })
+    } else if (hidden()) {
+      stopPolling()
+      flushPendingChange('hidden')
+    }
   }
+  const onOnline = () => { void syncNow({ reason: 'online' }) }
 
   return Object.freeze({
     async start() {
@@ -661,16 +847,24 @@ export function createMobileSyncLifecycle({
       started = true
       unsubscribe = observeLocalChanges(onLocalChange)
       documentRef?.addEventListener?.('visibilitychange', onVisibilityChange)
+      windowRef?.addEventListener?.('online', onOnline)
+      if (!hidden()) startPolling()
       await syncNow({ reason: 'startup' })
+    },
+    /** 有尚未推送的本機修改就立刻推送（App 進背景、返回鍵離開時用）。 */
+    flush(reason = 'flush') {
+      flushPendingChange(reason)
     },
     stop() {
       if (!started) return
       started = false
       clearTimeoutFn(changeTimer)
       changeTimer = null
+      stopPolling()
       unsubscribe?.()
       unsubscribe = null
       documentRef?.removeEventListener?.('visibilitychange', onVisibilityChange)
+      windowRef?.removeEventListener?.('online', onOnline)
     }
   })
 }
@@ -699,6 +893,7 @@ export function getCapacitorPreferences(windowRef = globalThis.window) {
 
 export function createMobileSyncApi({
   preferences,
+  secureStorage = null,
   storage = globalThis.localStorage,
   fetchFn = globalThis.fetch,
   apiBase = DEFAULT_API_BASE,
@@ -710,13 +905,19 @@ export function createMobileSyncApi({
   dispatchSyncApplied,
   windowRef = globalThis.window,
   debounceMs = MOBILE_SYNC_CHANGE_DEBOUNCE_MS,
+  pullIntervalMs = MOBILE_SYNC_PULL_INTERVAL_MS,
+  retryInitialMs = MOBILE_SYNC_RETRY_INITIAL_MS,
+  retryMaxMs = MOBILE_SYNC_RETRY_MAX_MS,
   setTimeoutFn = globalThis.setTimeout,
-  clearTimeoutFn = globalThis.clearTimeout
+  clearTimeoutFn = globalThis.clearTimeout,
+  setIntervalFn = globalThis.setInterval,
+  clearIntervalFn = globalThis.clearInterval,
+  startGate = null
 } = {}) {
   if (!storage || !hasMethods(storage, ['getItem', 'setItem', 'removeItem', 'key'])) {
     throw new TypeError('localStorage is required')
   }
-  const preferenceStore = createPreferencesStore(preferences, machineId)
+  const preferenceStore = createPreferencesStore(preferences, machineId, secureStorage)
   const client = createGitHubClient(fetchFn)
   const listeners = new Set()
   let config = normalizeConfig(null)
@@ -727,8 +928,14 @@ export function createMobileSyncApi({
   let runningSync = null
   let applyingRemote = false
   let disposed = false
+  let retryTimer = null
+  let retryDelayMs = retryInitialMs
+  let rerunRequested = false
+  let reconfiguring = Promise.resolve()
+  const diagnostics = []
 
-  const ready = preferenceStore.load().then(loaded => {
+  // startGate：App 啟動時的備份還原檢查；完成前不讀本機狀態、不開始同步。
+  const ready = Promise.all([preferenceStore.load(), Promise.resolve(startGate).catch(() => {})]).then(([loaded]) => {
     config = { ...loaded.config, apiBase }
     state = loaded.state
     status = publicStatus({
@@ -761,6 +968,57 @@ export function createMobileSyncApi({
     }
   }
 
+  // 同步診斷紀錄：只留最近幾筆、只在記憶體，錯誤訊息一律先遮掉權杖。
+  function recordDiagnostic(entry) {
+    diagnostics.push({ at: now().toISOString(), ...entry })
+    if (diagnostics.length > DIAGNOSTIC_LIMIT) diagnostics.splice(0, diagnostics.length - DIAGNOSTIC_LIMIT)
+  }
+
+  function cancelRetry() {
+    clearTimeoutFn(retryTimer)
+    retryTimer = null
+  }
+
+  function resetRetry() {
+    cancelRetry()
+    retryDelayMs = retryInitialMs
+  }
+
+  // 與電腦版相同的退避：30 秒起跳、每次加倍、最多 5 分鐘；網路恢復或回前景會提早觸發同步。
+  function scheduleRetry(error) {
+    // 雲端是較新格式、或權杖／repo 設定錯誤時，重試只會一直失敗：等使用者處理。
+    if (error instanceof SyncSchemaError) return
+    if (error instanceof MobileSyncHttpError && error.retryable === false && ![0, 409, 422].includes(error.status)) return
+    if (!lifecycleStarted || disposed || !isEnabled() || retryTimer) return
+    const delay = retryDelayMs
+    retryDelayMs = Math.min(retryMaxMs, delay * 2)
+    retryTimer = setTimeoutFn(() => {
+      retryTimer = null
+      void api.syncNow({ reason: 'retry' })
+    }, delay)
+  }
+
+  function reportFailure(error) {
+    const offline = error instanceof MobileSyncHttpError && error.status === 0
+    const message = safeErrorMessage(error, config.token)
+    setStatus({ state: offline ? 'offline' : 'error', lastError: message })
+    scheduleRetry(error)
+    return message
+  }
+
+  async function pollRemote() {
+    if (disposed || !isEnabled() || runningSync) return
+    try {
+      const result = await client.getRef(config, { etag: state.etag || undefined })
+      // 分支頭沒變而且上次同步成功就什麼都不做（304 不算 GitHub 的速率限額）；上次失敗則趁連得上補一次。
+      const recovering = status.state === 'offline' || status.state === 'error'
+      if (!result.notModified || recovering) await api.syncNow({ reason: result.notModified ? 'recover' : 'etag-pull' })
+    } catch (error) {
+      const message = reportFailure(error)
+      recordDiagnostic({ reason: 'poll', ok: false, error: message })
+    }
+  }
+
   function ensureLifecycle() {
     if (lifecycle) return lifecycle
     const observer = typeof observeLocalChanges === 'function'
@@ -768,10 +1026,15 @@ export function createMobileSyncApi({
       : callback => observeMindflowStorage(storage, callback)
     lifecycle = createMobileSyncLifecycle({
       syncNow: options => api.syncNow(options),
+      pollRemote,
       documentRef,
+      windowRef,
       debounceMs,
+      pullIntervalMs,
       setTimeoutFn,
       clearTimeoutFn,
+      setIntervalFn,
+      clearIntervalFn,
       observeLocalChanges(callback) {
         return observer(() => {
           // 遠端套用會經同一個 Storage API；這批權威寫入不可再排成「本機存檔」。
@@ -787,24 +1050,39 @@ export function createMobileSyncApi({
     const syncNow = now()
     if (!(syncNow instanceof Date) || Number.isNaN(syncNow.getTime())) throw new TypeError('now must return a valid Date')
     const repoStatus = await client.ensureRepo(config)
+    const pushedThisRun = new Map()
+    let refConflicts = 0
+    let localChanges = 0
     let outcome
-    for (let attempt = 1; attempt <= UPDATE_REF_ATTEMPTS; attempt += 1) {
+    for (;;) {
       try {
-        outcome = await reconcileAttempt({ cfg: config, state, storage, client, syncNow })
-        break
+        outcome = await reconcileAttempt({ cfg: config, state, storage, client, syncNow, pushedThisRun })
       } catch (error) {
-        const refConflict = error instanceof MobileSyncHttpError && error.status === 422
-        if (!refConflict || attempt === UPDATE_REF_ATTEMPTS) throw error
+        if (error instanceof MobileSyncHttpError && error.status === 422) {
+          refConflicts += 1
+          if (refConflicts < UPDATE_REF_ATTEMPTS) continue
+        } else if (error instanceof SyncLocalChangedError) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+        }
+        throw error
       }
-    }
-
-    if (outcome.localChanged) {
-      applyingRemote = true
-      try {
-        applyStorageWrites(storage, outcome.writes, emitSyncApplied)
-      } finally {
-        applyingRemote = false
+      for (const [id, raw] of Object.entries(outcome.pushedDocs)) pushedThisRun.set(id, raw)
+      if (outcome.localChanged) {
+        applyingRemote = true
+        let applied
+        try {
+          applied = applyStorageWrites(storage, outcome.writes, emitSyncApplied)
+        } finally {
+          applyingRemote = false
+        }
+        if (applied?.conflict) {
+          localChanges += 1
+          if (localChanges < LOCAL_CHANGE_ATTEMPTS) continue
+          throw new SyncLocalChangedError(applied.changedKeys)
+        }
       }
+      break
     }
     state = outcome.nextState
     await preferenceStore.saveState(state)
@@ -834,7 +1112,12 @@ export function createMobileSyncApi({
     },
     async getConfig() {
       await ready
-      return { enabled: config.enabled, repo: config.repo, hasToken: Boolean(config.token) }
+      return {
+        enabled: config.enabled,
+        repo: config.repo,
+        hasToken: Boolean(config.token),
+        tokenStorage: preferenceStore.tokenStorage
+      }
     },
     async setConfig(patch = {}) {
       await ready
@@ -842,46 +1125,102 @@ export function createMobileSyncApi({
       const next = normalizeConfig({
         enabled: Object.hasOwn(patch, 'enabled') ? patch.enabled : config.enabled,
         repo: Object.hasOwn(patch, 'repo') ? patch.repo : config.repo,
-        branch: config.branch
+        branch: Object.hasOwn(patch, 'branch') ? patch.branch : config.branch
       }, suppliedToken)
       if (next.repo && !/^[^/\s]+\/[^/\s]+$/u.test(next.repo)) {
         return { ok: false, error: 'Repo must use owner/name format' }
       }
+      if (!/^[A-Za-z0-9._/-]{1,100}$/u.test(next.branch) || next.branch.includes('..')) {
+        return { ok: false, error: 'Branch name is invalid' }
+      }
       if (next.enabled && (!next.repo || !next.token)) {
         return { ok: false, error: 'Enabled sync requires a repository and token' }
       }
+      // 設定變更期間不准開始新的同步（計時器觸發的同步會用舊 repo 跑、把舊 base 寫回來）。
+      let finishReconfigure
+      const previousReconfigure = reconfiguring
+      reconfiguring = new Promise(resolve => { finishReconfigure = resolve })
+      await previousReconfigure
       try {
+        // 換到別的 repo／分支：舊 repo 的 base 不能拿來跟新 repo 比（會誤判刪除），改當首次同步只做聯集。
+        const targetChanged = Boolean(config.repo) && (next.repo !== config.repo || next.branch !== config.branch)
+        const credentialsChanged = targetChanged || Object.hasOwn(patch, 'token')
+        // 進行中的同步結束時會寫回舊 repo 的狀態；先等它結束再重設，免得被蓋回去。
+        await runningSync?.catch(() => {})
+        if (targetChanged) {
+          // 先重設 base 再存新設定：中途失敗也不會讓新 repo 配上舊 base。
+          state = normalizeState(null, state.machineId)
+          await preferenceStore.saveState(state)
+        }
         await preferenceStore.saveConfig(next, { tokenChanged: Object.hasOwn(patch, 'token') })
         config = { ...next, apiBase }
+        finishReconfigure()
         if (!isEnabled()) {
           lifecycle?.stop()
           lifecycleStarted = false
+          resetRetry()
           setStatus({ state: 'disabled', lastError: null, warning: null })
         } else {
           setStatus({ state: 'idle', lastError: null })
-          if (autoStart) await api.start()
+          if (autoStart) {
+            // 已在運作時 start() 不會再同步一次：配對或換 repo 後要立刻同步，而不是等下一次輪詢。
+            if (lifecycleStarted && credentialsChanged) await api.syncNow({ reason: 'config' })
+            else await api.start()
+          }
         }
         return { ok: true }
       } catch (error) {
         return { ok: false, error: safeErrorMessage(error, suppliedToken) }
+      } finally {
+        finishReconfigure()
       }
     },
-    async syncNow(_options = {}) {
+    async syncNow(options = {}) {
       await ready
       if (disposed || !isEnabled()) {
         setStatus({ state: 'disabled', lastError: null })
         return { ok: false, error: 'Sync is disabled' }
       }
-      if (runningSync) return runningSync
+      await reconfiguring
+      if (disposed || !isEnabled()) return { ok: false, error: 'Sync is disabled' }
+      if (runningSync) {
+        // 因為本機剛有修改而要求的同步撞上正在跑的一輪：那一輪可能是修改之前讀的快照，
+        // 結束後再跑一次，否則「進背景立即推送」會默默沒推。
+        if (LOCAL_CHANGE_REASONS.has(options?.reason)) rerunRequested = true
+        return runningSync
+      }
+      const reason = typeof options?.reason === 'string' ? options.reason : 'manual'
+      const startedAt = Date.now()
+      // 這次同步本身就是重試；排著的下一次重試由這次的結果決定要不要再排。
+      cancelRetry()
       runningSync = runSync()
-        .then(outcome => outcome.warning ? { ok: true, warning: outcome.warning } : { ok: true })
-        .catch(error => {
-          const offline = error instanceof MobileSyncHttpError && error.status === 0
-          setStatus({ state: offline ? 'offline' : 'error', lastError: safeErrorMessage(error, config.token) })
-          return { ok: false, error: safeErrorMessage(error, config.token) }
+        .then(outcome => {
+          resetRetry()
+          recordDiagnostic({ reason, ok: true, durationMs: Date.now() - startedAt, ...(outcome.warning ? { warning: outcome.warning } : {}) })
+          return outcome.warning ? { ok: true, warning: outcome.warning } : { ok: true }
         })
-        .finally(() => { runningSync = null })
+        .catch(error => {
+          const message = reportFailure(error)
+          recordDiagnostic({ reason, ok: false, durationMs: Date.now() - startedAt, error: message })
+          return { ok: false, error: message }
+        })
+        .finally(() => {
+          runningSync = null
+          if (rerunRequested && !disposed && isEnabled()) {
+            rerunRequested = false
+            void api.syncNow({ reason: 'rerun' })
+          }
+          rerunRequested = false
+        })
       return runningSync
+    },
+    /** 有尚未推送的本機修改就立刻推送；App 進背景或返回鍵離開時呼叫。 */
+    flush(reason = 'flush') {
+      lifecycle?.flush(reason)
+    },
+    async getDiagnostics() {
+      await ready
+      return diagnostics.map(entry => ({ ...entry }))
     },
     async getStatus() {
       await ready
@@ -896,6 +1235,7 @@ export function createMobileSyncApi({
       disposed = true
       lifecycle?.stop()
       lifecycleStarted = false
+      resetRetry()
       await runningSync?.catch(() => {})
       listeners.clear()
     }

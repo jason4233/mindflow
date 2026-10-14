@@ -1,9 +1,10 @@
 /**
  * 編輯器組裝入口：載入文件、串接 command、佈局、渲染與全部互動控制器。
  */
-import { DOC_KEY_PREFIX, createDocument, loadDocument, recoverDocument, saveDocument } from '../store.js'
+import { DOC_KEY_PREFIX, createDocument, importDocumentCopy, loadDocument, preserveConflictCopy, recoverDocument, saveDocument } from '../store.js'
 import { strings } from '../strings.js'
-import { protectSyncAppliedReload } from '../settings.js'
+import { getMobileSyncApi, protectSyncAppliedReload } from '../settings.js'
+import { initializeMobileApp } from '../mobile-app.mjs'
 import { createMeasureFn, render } from './render.js'
 import { layout } from './layout.js'
 import { CommandManager, moveNode, toggleCollapse, updateDocumentTitle, updateText } from './commands.js'
@@ -83,6 +84,8 @@ let selection = null
 let dirty = false
 // 版本衝突後鎖住自動存檔，等使用者決定（重新載入或強制覆蓋）
 let saveBlocked = false
+// 存檔被鎖住時要帶回來的橫幅：版本衝突，或文件已在另一台裝置刪除
+let showBlockedBanner = showConflictBanner
 // 預覽保護窗：此時間之前 saveNow 不寫入，避免滑桿/色票拖曳中的暫態被 Ctrl+S 或殘留計時器落盤
 let previewUntil = 0
 let syncReloadTimer = null
@@ -327,7 +330,7 @@ function saveNow(force = false) {
   cancelLiveSave()
   if (saveBlocked) {
     // 使用者把橫幅按掉但衝突還沒解決：下一次存檔嘗試時把橫幅帶回來，不准無聲吞掉變更
-    if (dirty && !document.querySelector('[data-mindflow-banner="save-error"]')) showConflictBanner()
+    if (dirty && !document.querySelector('[data-mindflow-banner="save-error"]')) showBlockedBanner()
     return
   }
   // 進行中的編輯尚未 commit 成 command，doc 仍是「乾淨」的；但這一頁確實有較新內容，
@@ -348,14 +351,22 @@ function saveNow(force = false) {
     // 時仍要成立，否則之後的取消／改回原狀不會觸發寫回，幽靈內容會留在 storage。
     if (restoreLiveEdit) liveSnapshotPersisted = true
     const stamp = saveDocument(doc, { expectedUpdatedAt: lastSavedUpdatedAt })
-    if (stamp !== false) {
-      // 這次寫進 storage 的是不是「與 canonical 不同的 live 快照」
-      liveSnapshotPersisted = Boolean(restoreLiveEdit)
-      dirty = false
-      lastSavedUpdatedAt = stamp
-      toolbar?.setSaveStatus('saved')
-      hideSaveBanner('save-error')
+    if (stamp === false) {
+      // 文件已被永久刪除（別台經同步刪除，或本機另一個視窗）：存不回去，dirty 會一直是 true、返回鍵也永遠不放行。
+      // 鎖住存檔並說明原因，讓使用者把畫面上的內容另存成新文件。
+      saveBlocked = true
+      showBlockedBanner = showDeletedElsewhereBanner
+      liveSnapshotPersisted = false
+      toolbar?.setSaveStatus('failed')
+      showDeletedElsewhereBanner()
+      return
     }
+    // 這次寫進 storage 的是不是「與 canonical 不同的 live 快照」
+    liveSnapshotPersisted = Boolean(restoreLiveEdit)
+    dirty = false
+    lastSavedUpdatedAt = stamp
+    toolbar?.setSaveStatus('saved')
+    hideSaveBanner('save-error')
   } catch (error) {
     toolbar?.setSaveStatus('failed')
     // 部分寫入：文件本體已落盤，先把版本戳校正到已生效的值，
@@ -364,6 +375,7 @@ function saveNow(force = false) {
     if (error?.name === 'MindflowSaveConflictError') {
       // 另一個視窗已寫入較新版本：停止自動存檔，讓使用者決定，不做任何靜默覆蓋
       saveBlocked = true
+      showBlockedBanner = showConflictBanner
       showConflictBanner()
       return
     }
@@ -377,11 +389,73 @@ function saveNow(force = false) {
   }
 }
 
+// 以我為準覆蓋前，先把儲存區裡對方的版本另存成衝突副本，覆蓋不再讓任何一邊的內容消失。
+function overwriteWithMine() {
+  let copy = null
+  try {
+    copy = preserveConflictCopy(doc.id)
+  } catch (error) {
+    // 另存失敗（例如儲存空間已滿）就不覆蓋：寧可維持衝突橫幅，也不能默默丟掉對方的版本。
+    console.error('MindFlow 保留衝突副本失敗', error)
+    showSaveBanner('save-error', '⚠ 無法先保留對方的版本（儲存空間可能已滿），為避免遺失資料已取消覆蓋。請先匯出備份或清理文件後再試。', '#dc2626')
+    return
+  }
+  saveBlocked = false
+  lastSavedUpdatedAt = null
+  dirty = true
+  saveNow()
+  if (copy) showEditorToast(`對方的版本已另存為「${copy.title}」，可在首頁找到。`)
+}
+
+function showEditorToast(message) {
+  let toast = document.querySelector('[data-editor-toast]')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.className = 'feature-toast'
+    toast.dataset.editorToast = 'true'
+    toast.setAttribute('role', 'status')
+    toast.setAttribute('aria-live', 'polite')
+    document.body.append(toast)
+  }
+  toast.textContent = message
+  toast.hidden = false
+  window.clearTimeout(showEditorToast.timer)
+  showEditorToast.timer = window.setTimeout(() => { toast.hidden = true }, 6000)
+}
+
 function showConflictBanner() {
   showSaveBanner('save-error', '⚠ 這份文件已被另一個視窗改過，為避免互相覆蓋已暫停儲存。', '#dc2626', [
     { label: '載入對方版本', onClick: () => window.location.reload() },
-    { label: '以我為準覆蓋', onClick: () => { saveBlocked = false; lastSavedUpdatedAt = null; dirty = true; saveNow() } }
+    { label: '以我為準覆蓋', onClick: overwriteWithMine }
   ])
+}
+
+function showDeletedElsewhereBanner() {
+  showSaveBanner('save-error', '⚠ 這份文件已在另一台裝置或另一個視窗刪除，變更無法存回原文件。', '#dc2626', [
+    { label: '另存為新文件', onClick: saveAsNewDocument }
+  ])
+}
+
+// 原文件已不存在：把畫面上的內容（含進行中的文字編輯）以新 id 另存，再開啟新文件。
+function saveAsNewDocument() {
+  if (edit?.session && !edit.session.finishing) edit.commit()
+  const restoreLiveEdit = applyLiveEditToDoc()
+  let copy = null
+  try {
+    copy = importDocumentCopy(doc, doc.title)
+  } catch (error) {
+    console.error('MindFlow 另存新文件失敗', error)
+    showSaveBanner('save-error', '⚠ 無法另存為新文件（儲存空間可能已滿）。內容仍在這個畫面，請先匯出備份或清理文件後再試。', '#dc2626', [
+      { label: '重試', onClick: saveAsNewDocument }
+    ])
+    return
+  } finally {
+    restoreLiveEdit?.()
+  }
+  // 內容已在新文件裡：這一頁不再有待存的修改，離開時也不會再試著寫回已刪除的原文件
+  dirty = false
+  hideSaveBanner('save-error')
+  window.location.replace(`editor.html?id=${encodeURIComponent(copy.id)}`)
 }
 
 // ── 頂部持續性警示橫幅（儲存失敗／多分頁衝突用，不自動消失）──
@@ -440,6 +514,19 @@ function bindZoomControls() {
 }
 
 window.addEventListener('beforeunload', () => saveNow(true))
+// Android：返回鍵先結束文字編輯、再回首頁；App 進背景時立即存檔並推送同步（不等 45 秒）
+initializeMobileApp({
+  page: 'editor',
+  saveNow: () => saveNow(true),
+  // 存檔被衝突擋住或寫入失敗時 dirty 仍為 true：不能離開，否則記憶體裡的修改會遺失。
+  canLeave: () => !saveBlocked && !dirty,
+  getSyncApi: getMobileSyncApi,
+  onBack() {
+    if (!edit.isEditing) return false
+    edit.commit()
+    return true
+  }
+})
 window.addEventListener('mindflow:sync-applied', event => {
   if (!syncEventAffectsDocument(event, doc.id)) return
   window.clearTimeout(syncReloadTimer)
@@ -475,6 +562,13 @@ function blockSyncReloadForLocalEdits() {
       window.clearTimeout(saveTimer)
       saveTimer = null
       saveBlocked = true
+      // 同步是把這份文件整個刪掉（別台永久刪除）而不是改了它：「載入對方版本」只會開出空白文件、丟掉這裡的修改
+      if (localStorage.getItem(`${DOC_KEY_PREFIX}${doc.id}`) === null) {
+        showBlockedBanner = showDeletedElsewhereBanner
+        showDeletedElsewhereBanner()
+        return
+      }
+      showBlockedBanner = showConflictBanner
       showConflictBanner()
     }
   })

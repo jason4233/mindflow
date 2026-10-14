@@ -1,25 +1,80 @@
 apply plugin: 'com.android.application'
 
+// ---------------------------------------------------------------------------
+// MindFlow release versioning and signing.
+//
+// Everything below is driven by environment variables so that no version
+// number or secret ever has to be committed:
+//   MINDFLOW_VERSION_CODE   positive integer (CI: 10000 + github.run_number), default 1
+//   MINDFLOW_VERSION_NAME   display version (CI: 1.1.<run_number>), default "1.0-dev"
+//   MINDFLOW_KEYSTORE_PATH, MINDFLOW_KEYSTORE_PASSWORD,
+//   MINDFLOW_KEY_ALIAS, MINDFLOW_KEY_PASSWORD
+//                           all four set -> release APK is signed with that key;
+//                           otherwise the release APK stays unsigned (CI then
+//                           falls back to a throwaway key, see android.yml).
+// Secret values are only ever handed to the signing config; they are never logged.
+// See docs/android-release-signing.md.
+// ---------------------------------------------------------------------------
+def envValue = { String name ->
+    String value = System.getenv(name)
+    return (value == null || value.trim().isEmpty()) ? null : value
+}
+
+// Google Play rejects versionCode values above 2100000000; keep the same ceiling for sideloads.
+def mindflowVersionCodeText = (envValue('MINDFLOW_VERSION_CODE') ?: '1').trim()
+if (!(mindflowVersionCodeText ==~ /[1-9][0-9]{0,9}/) || mindflowVersionCodeText.toLong() > 2100000000L) {
+    throw new GradleException("MINDFLOW_VERSION_CODE must be an integer between 1 and 2100000000 (got '${mindflowVersionCodeText}')")
+}
+def mindflowVersionCode = mindflowVersionCodeText.toInteger()
+def mindflowVersionName = (envValue('MINDFLOW_VERSION_NAME') ?: '1.0-dev').trim()
+
+def releaseSigningVariables = ['MINDFLOW_KEYSTORE_PATH', 'MINDFLOW_KEYSTORE_PASSWORD', 'MINDFLOW_KEY_ALIAS', 'MINDFLOW_KEY_PASSWORD']
+def missingReleaseSigningVariables = releaseSigningVariables.findAll { envValue(it) == null }
+def hasReleaseSigning = missingReleaseSigningVariables.isEmpty()
+if (hasReleaseSigning) {
+    def releaseKeystore = file(envValue('MINDFLOW_KEYSTORE_PATH'))
+    if (!releaseKeystore.isFile()) {
+        throw new GradleException("MINDFLOW_KEYSTORE_PATH does not point to a readable keystore file")
+    }
+    logger.lifecycle("MindFlow: release APK will be signed with the keystore from MINDFLOW_KEYSTORE_PATH")
+} else if (missingReleaseSigningVariables.size() < releaseSigningVariables.size()) {
+    // Only variable NAMES are printed here, never their values.
+    logger.warn("MindFlow: release signing disabled, missing ${missingReleaseSigningVariables.join(', ')}; the release APK will be unsigned")
+}
+
 android {
-    namespace "com.mindflow.app"
-    compileSdk rootProject.ext.compileSdkVersion
+    namespace = "com.mindflow.app"
+    compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.mindflow.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode mindflowVersionCode
+        versionName mindflowVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(envValue('MINDFLOW_KEYSTORE_PATH'))
+                storePassword envValue('MINDFLOW_KEYSTORE_PASSWORD')
+                keyAlias envValue('MINDFLOW_KEY_ALIAS')
+                keyPassword envValue('MINDFLOW_KEY_PASSWORD')
+            }
         }
     }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.release
+            }
         }
     }
 }

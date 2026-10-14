@@ -72,6 +72,27 @@ test('every module reachable from main.mjs is included in the packaged runtime',
   }
 })
 
+// 還沒接進 main.mjs 的打包模組（例如 qr-encode.mjs）不在上面的閉包裡，它們的相對 import 一樣要能在 packaged app 解析。
+test('every packaged module resolves its relative imports inside the packaged runtime', async () => {
+  const packaged = new Set(packageJson.build.files)
+  const externalResources = new Map(
+    (packageJson.build.extraResources || [])
+      .filter(resource => typeof resource === 'object' && resource.from && resource.to)
+      .map(resource => [resource.from.replaceAll('\\', '/'), resource.to.replaceAll('\\', '/')])
+  )
+
+  assert.ok(packaged.has('qr-encode.mjs'), 'qr-encode.mjs should be packaged for the pairing QR')
+  for (const entry of packageJson.build.files.filter(file => file.endsWith('.mjs'))) {
+    for (const file of await relativeImportClosure(entry)) {
+      if (file.startsWith('../')) {
+        assert.equal(externalResources.get(file), file.slice(3), `${file} (from ${entry}) is missing its exact extraResources mapping`)
+      } else {
+        assert.ok(packaged.has(file), `${file} (from ${entry}) is missing from build.files`)
+      }
+    }
+  }
+})
+
 test('packages the complete sync runtime including the sandbox preload bridge', () => {
   const packaged = new Set(packageJson.build.files)
   for (const file of [
