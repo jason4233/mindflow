@@ -7,7 +7,8 @@ import {
 } from './sync-mobile.mjs'
 import { getCapacitorPlugin } from './capacitor-plugins.mjs'
 import { startMobileBackups } from './mobile-backup.mjs'
-import { mountMobileBackupSection, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
+import { mountMobileBackupSection, mountMobileUpdateSection, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
+import { startUpdateCheck } from './mobile-update.mjs'
 import { importDocumentCopy } from './store.js'
 
 const STATUS_COPY = {
@@ -22,6 +23,7 @@ const boundTriggers = new WeakSet()
 let controller = null
 let mobileSyncApi = null
 let mobileBackups = null
+let mobileUpdates = null
 
 export function describeSyncStatus(status = {}, environment = true) {
   const syncAvailable = environment === true || environment === 'electron' || environment === 'capacitor'
@@ -104,7 +106,11 @@ function createSyncSettingsController() {
 
   desktopPanel.hidden = !syncAvailable
   webPanel.hidden = syncAvailable
-  if (environment.kind === 'capacitor') mountMobileBackupSection(dialog.querySelector('[data-sync-form]'), { store: mobileBackups?.store })
+  if (environment.kind === 'capacitor') {
+    const form = dialog.querySelector('[data-sync-form]')
+    mountMobileBackupSection(form, { store: mobileBackups?.store })
+    mountMobileUpdateSection(form, { checker: mobileUpdates?.checker })
+  }
 
   dialog.querySelector('[data-sync-close]').addEventListener('click', () => dialog.close())
   dialog.addEventListener('click', event => {
@@ -419,6 +425,8 @@ if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis
   mobileBackups = startMobileBackups({ windowRef: globalThis.window, importCopy: importDocumentCopy })
   void mobileBackups?.ready.then(() => showRestoredNoticeIfNeeded())
   resolveSyncEnvironment(globalThis.window)
+  // 首頁才有放提示的位置；編輯器裡只更新節流紀錄。
+  mobileUpdates = startUpdateCheck({ windowRef: globalThis.window })
 }
 
 /** 手機版的同步 API（尚未設定或不在原生 App 裡時為 null）；返回鍵／進背景時用來立即推送。 */

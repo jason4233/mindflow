@@ -138,3 +138,62 @@ export function mountMobileBackupSection(container, {
 
   return section
 }
+
+/** 設定對話框裡的「App 版本／檢查更新」列。 */
+export function mountMobileUpdateSection(container, {
+  checker,
+  documentRef = globalThis.document,
+  openUrl = url => { globalThis.window.location.href = url }
+} = {}) {
+  if (!container || !checker) return null
+  const existing = container.querySelector('[data-mobile-update]')
+  if (existing) return existing
+  const section = documentRef.createElement('section')
+  section.className = 'mobile-backup-section'
+  section.dataset.mobileUpdate = 'true'
+  section.innerHTML = `
+    <h3>App 版本</h3>
+    <p class="sync-field-hint" data-update-current>讀取中…</p>
+    <div class="mobile-backup-actions">
+      <button type="button" data-update-check>檢查更新</button>
+      <button type="button" data-update-download hidden>下載新版</button>
+    </div>
+    <p class="sync-feedback" data-update-feedback role="status" aria-live="polite"></p>`
+  container.append(section)
+  const current = section.querySelector('[data-update-current]')
+  const feedback = section.querySelector('[data-update-feedback]')
+  const checkButton = section.querySelector('[data-update-check]')
+  const downloadButton = section.querySelector('[data-update-download]')
+  let downloadUrl = null
+
+  void checker.currentVersion().then(version => {
+    current.textContent = version.versionCode === null
+      ? '無法讀取目前版本。'
+      : `目前版本 ${version.versionName || '?'}（版號 ${version.versionCode}）`
+  }).catch(() => { current.textContent = '無法讀取目前版本。' })
+
+  downloadButton.addEventListener('click', () => { if (downloadUrl) openUrl(downloadUrl) })
+  checkButton.addEventListener('click', async () => {
+    checkButton.disabled = true
+    feedback.textContent = '檢查中…'
+    feedback.dataset.kind = 'progress'
+    try {
+      const result = await checker.check({ force: true })
+      downloadButton.hidden = result.status !== 'update'
+      downloadUrl = result.status === 'update' ? result.latest.url : null
+      if (result.status === 'update') {
+        feedback.textContent = `有新版（版號 ${result.latest.versionCode}）。下載後點開 APK 覆蓋安裝，資料會保留。`
+        feedback.dataset.kind = 'warning'
+      } else if (result.status === 'error') {
+        feedback.textContent = '無法連到 GitHub 檢查更新，請確認網路後再試。'
+        feedback.dataset.kind = 'error'
+      } else {
+        feedback.textContent = '已經是最新版。'
+        feedback.dataset.kind = 'success'
+      }
+    } finally {
+      checkButton.disabled = false
+    }
+  })
+  return section
+}

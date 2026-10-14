@@ -815,6 +815,33 @@ body.is-focus-mode .canvas { cursor: default; }
 }
 .feature-dialog .sync-settings-actions .is-primary { border-color: #f17e2e; color: #fff; background: #f17e2e; }
 
+/* 手機 App：首頁的新版提示 */
+.update-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  color: #7c3f14;
+  background: #fff8f1;
+  font-size: 13px;
+}
+.update-banner p { flex: 1 1 220px; margin: 0; line-height: 1.5; }
+.update-banner button {
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  color: #9a4c17;
+  background: #fff;
+  font-weight: 650;
+  cursor: pointer;
+}
+.update-banner button.is-primary { border-color: #f17e2e; color: #fff; background: #f17e2e; }
+
 /* 手機 App 專屬：備份、配對等工具區塊 */
 .mobile-backup-section {
   display: grid;
