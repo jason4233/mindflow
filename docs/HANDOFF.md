@@ -25,11 +25,11 @@
 |---|---|---|
 | `claude/android-sync-plan` | jason4233/mindflow#2（draft） | STAGE ① 計畫，已完成 |
 | `claude/m1-android-foundation` | jason4233/mindflow#3（draft） | M1 完成，CI 全綠；**複審發現待修**（見第 3 節） |
-| `claude/m1-rereview-wip` | 無 | M1 複審修正的半成品，**未測試**（見 3.2） |
+| `claude/m1-rereview-wip` | jason4233/mindflow#5（draft，勿合併） | M1 複審修正的半成品，**未測試**（見 3.2）；修完併回 M1 分支後關閉 |
 | `claude/m2a-sync-engine-v2` | jason4233/mindflow#4（draft，base 是 M1 分支） | M2a 實作與驗證完成；**對抗式審查尚未完成**（被中斷，要重跑） |
-| `claude/m2b-node-merge` | 無 | M2b 合併核心初稿（`js/sync/merge-doc.mjs`），**未測試** |
+| `claude/m2b-node-merge` | jason4233/mindflow#6（draft，勿合併） | M2b 合併核心初稿（`js/sync/merge-doc.mjs`），**未測試** |
 
-這個 session 已**取消訂閱** PR #3、#4 的 GitHub 事件，接手的 session 請自己訂閱。
+這個 session 已**取消訂閱**所有 PR 的 GitHub 事件，接手的 session 請自己訂閱需要的 PR。
 
 ## 3. M1（PR #3）
 
@@ -77,7 +77,7 @@
      - `createLocalStorageKv` 的 `mfsync.*` key 不能進備份或同步。
   3. 修完後把 PR #4 從「[審查中]」改成可交審。
 
-## 5. M2b（`claude/m2b-node-merge`，未開 PR）
+## 5. M2b（`claude/m2b-node-merge`，PR #6）
 
 - 已有：`js/sync/merge-doc.mjs` 初稿，內容見該 commit 說明，**沒有任何測試**。
 - 待做（計畫 3.7）：
