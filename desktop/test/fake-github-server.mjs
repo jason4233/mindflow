@@ -51,6 +51,7 @@ export class FakeGitHubServer {
     this.rateRemaining = rateRemaining
     this.requests = []
     this.offline = false
+    this.isPrivate = true
     this.updateRefFailuresRemaining = 0
     this.server = null
     this.apiBase = null
@@ -153,7 +154,7 @@ export class FakeGitHubServer {
       this.#sendJson(request, response, 200, {
         name: this.repo,
         full_name: `${this.owner}/${this.repo}`,
-        private: true,
+        private: this.isPrivate,
         default_branch: this.branch,
         permissions: { admin: true, push: true, pull: true }
       })
@@ -314,6 +315,11 @@ export class FakeGitHubServer {
       }
       if (!this.refs.has(refName) || !this.commits.has(body.sha)) {
         this.#sendJson(request, response, 422, { message: 'invalid reference update' })
+        return
+      }
+      // 與 GitHub 相同：force:false 時新 commit 必須是目前分支頭的後代（這裡檢查直接 parent）。
+      if (body.force !== true && !this.commits.get(body.sha).parents.includes(this.refs.get(refName))) {
+        this.#sendJson(request, response, 422, { message: 'Update is not a fast forward' })
         return
       }
       this.refs.set(refName, body.sha)

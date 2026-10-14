@@ -145,7 +145,7 @@ test('manual restore adds copies only, skips identical documents and documents f
   edited.title = '現在的版本'
   saveDocument(edited, { expectedUpdatedAt: loadDocument(edited.id).updatedAt })
   const future = JSON.parse(backup.entries[`mindflow.doc.${kept.id}`])
-  backup.entries['mindflow.doc.from-future'] = JSON.stringify({ ...future, id: 'from-future', schemaVersion: 2, title: '未來格式' })
+  backup.entries['mindflow.doc.from-future'] = JSON.stringify({ ...future, id: 'from-future', schemaVersion: 3, title: '未來格式' })
 
   const copies = []
   const result = store.restoreAsCopies(backup, { onCopy: doc => copies.push(doc) })

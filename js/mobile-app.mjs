@@ -2,8 +2,7 @@
  * Android App 的生命週期：返回鍵、進背景時立即存檔＋推送同步。
  * 只在原生 Capacitor 裡啟用；網頁版與電腦版呼叫後直接回傳 null。
  */
-import { getCapacitorPlugin } from './capacitor-plugins.mjs'
-import { isNativeCapacitor } from './sync-mobile.mjs'
+import { getCapacitorPlugin, isNativeCapacitor } from './capacitor-plugins.mjs'
 
 export const EXIT_CONFIRM_WINDOW_MS = 2_000
 

@@ -21,12 +21,7 @@ import {
   APP_START_URL,
   createProtocolHandler
 } from './protocol.mjs'
-import {
-  createRendererStorageAdapter,
-  createStorageQueue,
-  createSyncEngine,
-  registerSyncIpc
-} from './sync-engine.mjs'
+import { registerSyncBridgeIpc } from './sync-bridge.mjs'
 import {
   getDecryptedToken,
   loadSyncSettings
@@ -54,12 +49,14 @@ protocol.registerSchemesAsPrivileged([{
   }
 }])
 
+const CLOSE_FLUSH_TIMEOUT_MS = 10_000
+
 let mainWindow = null
 let backupTimer = null
-const storageQueue = createStorageQueue()
-let syncEngine = null
 let syncIpcRegistration = null
 let pairingIpcRegistration = null
+// 備份一次只跑一個（計時器、關窗可能同時觸發）。
+let backupChain = Promise.resolve()
 let allowWindowClose = false
 let closeInProgress = false
 
@@ -156,10 +153,23 @@ async function migrateLegacyStorageIfEmpty(window, userDataPaths) {
 }
 
 function enqueueBackup(window, userDataPath, { flush = false, reason = 'interval' } = {}) {
-  return storageQueue.run(async () => {
-      const entries = await captureMindflowStorage(window, { flush })
-      return writeMindflowBackup({ userDataPath, entries, reason })
+  const run = backupChain.then(async () => {
+    const entries = await captureMindflowStorage(window, { flush })
+    return writeMindflowBackup({ userDataPath, entries, reason })
   })
+  backupChain = run.catch(() => {})
+  return run
+}
+
+// M2a 起同步引擎在 renderer：關窗前請它把等待中的修改推上去（有逾時，不能讓視窗關不掉）。
+function flushRendererSync(window) {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve()
+  let timer
+  const timeout = new Promise(resolve => { timer = setTimeout(resolve, CLOSE_FLUSH_TIMEOUT_MS) })
+  const flush = window.webContents
+    .executeJavaScript('window.__mindflowSyncFlush ? window.__mindflowSyncFlush() : null', true)
+    .catch(error => console.error('MindFlow close flush failed:', error?.message || error))
+  return Promise.race([flush, timeout]).finally(() => clearTimeout(timer))
 }
 
 function urlProtocol(url) {
@@ -191,7 +201,7 @@ function bindNavigationGuards(window) {
   })
 }
 
-function bindCloseFlush(window, userDataPath, engine) {
+function bindCloseFlush(window, userDataPath) {
   window.on('close', event => {
     if (allowWindowClose) return
     event.preventDefault()
@@ -200,10 +210,10 @@ function bindCloseFlush(window, userDataPath, engine) {
     clearInterval(backupTimer)
     backupTimer = null
 
-    void engine.flush({
-      beforeSync: () => enqueueBackup(window, userDataPath, { flush: true, reason: 'window-close' })
-    })
-      .catch(error => console.error('MindFlow close flush failed:', error))
+    // 先讓編輯器存檔並寫備份（flush 會觸發 beforeunload），再請 renderer 的同步引擎推送。
+    void enqueueBackup(window, userDataPath, { flush: true, reason: 'window-close' })
+      .catch(error => console.error('MindFlow close backup failed:', error))
+      .then(() => flushRendererSync(window))
       .finally(() => {
         allowWindowClose = true
         if (!window.isDestroyed()) window.close()
@@ -243,32 +253,15 @@ async function launch() {
     join(app.getPath('appData'), 'mindflow-desktop'),
     join(app.getPath('appData'), 'MindFlow')
   ]
-  const rendererStorage = createRendererStorageAdapter(mainWindow)
-  const savedSyncSettings = loadSyncSettings(userDataPath)
-  let token = ''
-  try {
-    token = getDecryptedToken(savedSyncSettings) || ''
-  } catch (error) {
-    // 加密金鑰不可用時不做任何 fallback；也不把密文或 token 寫入 log。
-    console.error('MindFlow secure sync token is unavailable:', error?.message || 'secure storage unavailable')
-  }
-  syncEngine = createSyncEngine({
-    userDataPath,
-    storageQueue,
-    cfg: {
-      enabled: savedSyncSettings.enabled,
-      repo: savedSyncSettings.repo,
-      branch: savedSyncSettings.branch,
-      token
-    },
-    readEntries: options => rendererStorage.readEntries(options),
-    applyWrites: writes => rendererStorage.applyWrites(writes)
-  })
-  syncIpcRegistration = registerSyncIpc({
+  let markStartupReady
+  const startupReady = new Promise(resolve => { markStartupReady = resolve })
+  // 同步引擎在 renderer；main 只保管加密的 PAT、代理 GitHub 請求，並在啟動救援完成後才放行同步。
+  syncIpcRegistration = registerSyncBridgeIpc({
     ipcMain,
-    engine: syncEngine,
-    webContents: mainWindow.webContents,
-    userDataPath
+    userDataPath,
+    startupReady,
+    // 只在開發模式允許指向本機的假 GitHub 伺服器做端到端測試；安裝版一律是 api.github.com。
+    ...(!app.isPackaged && process.env.MINDFLOW_GITHUB_API_BASE ? { apiBase: process.env.MINDFLOW_GITHUB_API_BASE } : {})
   })
   // 配對 QR 在 main process 讀出並解密 PAT、直接畫在獨立視窗；renderer 只會收到 { ok }。
   pairingIpcRegistration = registerPairingIpc({
@@ -280,8 +273,7 @@ async function launch() {
       return { repo: settings.repo, branch: settings.branch, token: getDecryptedToken(settings) || '' }
     }
   })
-  bindCloseFlush(mainWindow, userDataPath, syncEngine)
-  mainWindow.on('focus', () => syncEngine?.handleFocus())
+  bindCloseFlush(mainWindow, userDataPath)
   mainWindow.once('closed', () => {
     clearInterval(backupTimer)
     backupTimer = null
@@ -289,8 +281,6 @@ async function launch() {
     syncIpcRegistration = null
     pairingIpcRegistration?.dispose()
     pairingIpcRegistration = null
-    void syncEngine?.dispose()
-    syncEngine = null
     mainWindow = null
     app.quit()
   })
@@ -317,8 +307,8 @@ async function launch() {
       .catch(error => console.error('MindFlow interval backup failed:', error))
   }, BACKUP_INTERVAL_MS)
 
-  // startup sync 必須在 legacy migration 與 backup restore 都完成後才可讀 renderer。
-  syncEngine.start({ startup: true })
+  // renderer 的同步引擎等這一刻才開始：legacy migration 與 backup restore 都完成後才可讀本機。
+  markStartupReady()
   void initUpdater(mainWindow).catch(() => {})
 }
 

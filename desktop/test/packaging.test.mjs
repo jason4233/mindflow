@@ -93,11 +93,10 @@ test('every packaged module resolves its relative imports inside the packaged ru
   }
 })
 
-test('packages the complete sync runtime including the sandbox preload bridge', () => {
+test('packages the main-process sync bridge and the sandbox preload (the engine itself runs in the renderer from app/js)', () => {
   const packaged = new Set(packageJson.build.files)
   for (const file of [
-    'sync-engine.mjs',
-    'sync-github.mjs',
+    'sync-bridge.mjs',
     'sync-plan.mjs',
     'sync-settings.mjs',
     'preload.cjs'
