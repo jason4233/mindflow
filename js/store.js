@@ -335,9 +335,22 @@ export function renameDocument(id, title) {
 export function duplicateDocument(id) {
   const source = loadDocument(id)
   if (!source) return null
+  return createDocumentCopy(source, `${source.title}（副本）`)
+}
+
+// 「以我為準覆蓋」之前，先把儲存區裡對方的版本另存成衝突副本：永不靜默丟資料（同步不變式 3）。
+export function preserveConflictCopy(id, { now = new Date() } = {}) {
+  const source = loadDocument(id)
+  if (!source) return null
+  const pad = value => String(value).padStart(2, '0')
+  const stamp = `${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+  return createDocumentCopy(source, `${source.title}（衝突副本・覆蓋前保留 ${stamp}）`)
+}
+
+function createDocumentCopy(source, title) {
   const copy = structuredCloneSafe(source)
   copy.id = createId('doc')
-  copy.title = `${source.title}（副本）`
+  copy.title = title
   const now = new Date().toISOString()
   copy.createdAt = now
   copy.updatedAt = now

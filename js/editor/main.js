@@ -1,7 +1,7 @@
 /**
  * 編輯器組裝入口：載入文件、串接 command、佈局、渲染與全部互動控制器。
  */
-import { DOC_KEY_PREFIX, createDocument, loadDocument, recoverDocument, saveDocument } from '../store.js'
+import { DOC_KEY_PREFIX, createDocument, loadDocument, preserveConflictCopy, recoverDocument, saveDocument } from '../store.js'
 import { strings } from '../strings.js'
 import { protectSyncAppliedReload } from '../settings.js'
 import { createMeasureFn, render } from './render.js'
@@ -377,10 +377,44 @@ function saveNow(force = false) {
   }
 }
 
+// 以我為準覆蓋前，先把儲存區裡對方的版本另存成衝突副本，覆蓋不再讓任何一邊的內容消失。
+function overwriteWithMine() {
+  let copy = null
+  try {
+    copy = preserveConflictCopy(doc.id)
+  } catch (error) {
+    // 另存失敗（例如儲存空間已滿）就不覆蓋：寧可維持衝突橫幅，也不能默默丟掉對方的版本。
+    console.error('MindFlow 保留衝突副本失敗', error)
+    showSaveBanner('save-error', '⚠ 無法先保留對方的版本（儲存空間可能已滿），為避免遺失資料已取消覆蓋。請先匯出備份或清理文件後再試。', '#dc2626')
+    return
+  }
+  saveBlocked = false
+  lastSavedUpdatedAt = null
+  dirty = true
+  saveNow()
+  if (copy) showEditorToast(`對方的版本已另存為「${copy.title}」，可在首頁找到。`)
+}
+
+function showEditorToast(message) {
+  let toast = document.querySelector('[data-editor-toast]')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.className = 'feature-toast'
+    toast.dataset.editorToast = 'true'
+    toast.setAttribute('role', 'status')
+    toast.setAttribute('aria-live', 'polite')
+    document.body.append(toast)
+  }
+  toast.textContent = message
+  toast.hidden = false
+  window.clearTimeout(showEditorToast.timer)
+  showEditorToast.timer = window.setTimeout(() => { toast.hidden = true }, 6000)
+}
+
 function showConflictBanner() {
   showSaveBanner('save-error', '⚠ 這份文件已被另一個視窗改過，為避免互相覆蓋已暫停儲存。', '#dc2626', [
     { label: '載入對方版本', onClick: () => window.location.reload() },
-    { label: '以我為準覆蓋', onClick: () => { saveBlocked = false; lastSavedUpdatedAt = null; dirty = true; saveNow() } }
+    { label: '以我為準覆蓋', onClick: overwriteWithMine }
   ])
 }
 
