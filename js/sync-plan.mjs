@@ -1,7 +1,8 @@
-export const MANIFEST_SCHEMA_VERSION = 1
-// 本版能安全讀寫的文件格式。M2a 起雲端會出現 schemaVersion 2；
-// 舊版的欄位白名單會把新欄位（衝突紀錄、HLC）刪掉再推回去，所以看到更新的版本一律停止同步。
-export const SUPPORTED_DOC_SCHEMA_VERSION = 1
+// M2a 起雲端寫出 schemaVersion 2（文件加 HLC、圖片抽成資產）；v1 仍可讀。
+export const MANIFEST_SCHEMA_VERSION = 2
+// 本版能安全讀寫的最新格式。舊版的欄位白名單會把新欄位刪掉再推回去，所以看到更新的版本一律停止同步。
+export const SUPPORTED_DOC_SCHEMA_VERSION = 2
+const HLC_PATTERN = /^\d{13}-[0-9a-f]{4}-[A-Za-z0-9._-]{1,64}$/u
 export const SCHEMA_TOO_NEW_MESSAGE = '雲端的同步資料是較新版本的 MindFlow 寫入的，這個版本無法安全同步（會刪掉新格式的資料），所以已暫停同步。請先更新 MindFlow：電腦版會自動更新，手機版請安裝最新的 APK。本機的心智圖不受影響。'
 
 export class SyncSchemaError extends Error {
@@ -148,6 +149,10 @@ export function buildLocalState(entries) {
   return result
 }
 
+function validHlc(value) {
+  return typeof value === 'string' && HLC_PATTERN.test(value)
+}
+
 function manifestMeta(source) {
   const meta = isObject(source) ? source : {}
   const state = meta.state === 'trashed' ? 'trashed' : 'active'
@@ -160,6 +165,9 @@ function manifestMeta(source) {
   if (state === 'trashed') {
     normalized.deletedAt = validDate(meta.deletedAt) ? meta.deletedAt : normalized.updatedAt
   }
+  // v2：這個版本的 HLC（衝突勝負）與寫入它的裝置。v1 沒有這兩個欄位。
+  if (validHlc(meta.hlc)) normalized.hlc = meta.hlc
+  if (typeof meta.writer === 'string' && meta.writer) normalized.writer = meta.writer
   return normalized
 }
 
@@ -311,7 +319,18 @@ function withState(contentMeta, stateMeta) {
     state: stateMeta.state
   }
   if (stateMeta.state === 'trashed') merged.deletedAt = stateMeta.deletedAt || stateMeta.updatedAt
+  // HLC 與 writer 屬於內容版本，跟著內容勝方走。
+  if (contentMeta.hlc) merged.hlc = contentMeta.hlc
+  if (contentMeta.writer) merged.writer = contentMeta.writer
   return merged
+}
+
+// 兩邊都有 HLC（v2）就比 HLC：不受手機與電腦時鐘誤差影響；否則退回比 updatedAt（v1 資料）。
+function chooseContentSide(localDoc, remoteDoc, machineId, remoteWriter) {
+  if (validHlc(localDoc.hlc) && validHlc(remoteDoc.hlc) && localDoc.hlc !== remoteDoc.hlc) {
+    return localDoc.hlc > remoteDoc.hlc ? 'local' : 'remote'
+  }
+  return chooseSide(localDoc.updatedAt, remoteDoc.updatedAt, machineId, remoteWriter)
 }
 
 function sortedObject(source) {
@@ -456,7 +475,7 @@ export function computeSyncPlan({ local, remoteManifest, base, machineId, now })
       contentSide = 'remote'
       pullDocs.add(id)
     } else if (localChanged && remoteChanged) {
-      contentSide = chooseSide(localDoc.updatedAt, remoteDoc.updatedAt, machineId, remote.lastWriter)
+      contentSide = chooseContentSide(localDoc, remoteDoc, machineId, remote.lastWriter)
       const loserCopyFrom = contentSide === 'local' ? 'remote' : 'local'
       conflicts.push({ id, winner: contentSide, loserCopyFrom })
       if (contentSide === 'local') pushDocs.add(id)

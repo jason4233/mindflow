@@ -59,3 +59,46 @@ export async function openIndexedDbKv({ indexedDB = globalThis.indexedDB, name =
     close: () => db.close()
   })
 }
+
+/**
+ * IndexedDB 不可用時的退路：狀態、時鐘等小資料存 localStorage（前綴不以 `mindflow.` 開頭，
+ * 所以不會進手機／電腦的檔案備份，也不會被同步），圖片快取只放記憶體（需要時重新下載）。
+ */
+export function createLocalStorageKv(storage, { prefix = 'mfsync.' } = {}) {
+  const assets = createMemoryKv()
+  const isAsset = key => key.startsWith('asset:')
+  return Object.freeze({
+    async get(key) {
+      if (isAsset(key)) return assets.get(key)
+      const raw = storage.getItem(`${prefix}${key}`)
+      if (raw === null) return undefined
+      try { return JSON.parse(raw) } catch { return undefined }
+    },
+    async set(key, value) {
+      if (isAsset(key)) return assets.set(key, value)
+      storage.setItem(`${prefix}${key}`, JSON.stringify(value))
+    },
+    async delete(key) {
+      if (isAsset(key)) return assets.delete(key)
+      storage.removeItem(`${prefix}${key}`)
+    },
+    async keys(keyPrefix = '') {
+      const keys = await assets.keys(keyPrefix)
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index)
+        if (key?.startsWith(prefix) && key.slice(prefix.length).startsWith(keyPrefix)) keys.push(key.slice(prefix.length))
+      }
+      return keys.sort()
+    }
+  })
+}
+
+/** 同步用的 KV：先試 IndexedDB，失敗退回 localStorage（呼叫可同步拿到物件，實際開啟在背景）。 */
+export function openSyncKv({ indexedDB = globalThis.indexedDB, storage = globalThis.localStorage, onFallback = () => {} } = {}) {
+  const opened = openIndexedDbKv({ indexedDB }).catch(error => {
+    onFallback(error)
+    return createLocalStorageKv(storage)
+  })
+  const call = method => async (...args) => (await opened)[method](...args)
+  return Object.freeze({ get: call('get'), set: call('set'), delete: call('delete'), keys: call('keys'), opened })
+}
