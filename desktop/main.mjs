@@ -12,6 +12,8 @@ import {
   markRestorePending,
   preserveFailedRestoreSource,
   readLatestMindflowBackup,
+  recoveryFailedDetail,
+  rendererRecoveryCheckScript,
   rendererRestoreScript,
   restoreScriptOutcome,
   writeMindflowBackup
@@ -89,6 +91,12 @@ async function captureMindflowStorage(window, { flush = false } = {}) {
   return window.webContents.executeJavaScript(rendererStorageScript({ flush }), true)
 }
 
+// 開機救援判定本機是不是空的：讀回內容的同一段 renderer 執行裡，讀不到索引就先清掉識別碼（見 rendererRecoveryCheckScript）。
+async function captureForRecovery(window) {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return {}
+  return window.webContents.executeJavaScript(rendererRecoveryCheckScript({ storeEpoch: newStoreEpoch() }), true)
+}
+
 // 備份還原與舊資料搬入共用：寫入前先換掉本機儲存區識別碼，讓同步不信任較新的 base（見 rendererRestoreScript）。
 async function restoreRendererStorage(window, entries) {
   return restoreScriptOutcome(await window.webContents.executeJavaScript(rendererRestoreScript(entries, { storeEpoch: newStoreEpoch() }), true))
@@ -131,22 +139,20 @@ async function showRendererToast(window, message) {
 // preservedBackupPath：字串＝另存成功的位置；null＝備份還原失敗且另存也失敗；undefined＝舊資料搬入失敗（來源沒被動到）
 async function showRecoveryFailedDialog(window, { preservedBackupPath, rollbackIncomplete = false } = {}) {
   if (!window || window.isDestroyed()) return
-  const where = preservedBackupPath
-    ? `還沒救回的那份備份已另存在：\n${preservedBackupPath}`
-    : preservedBackupPath === null
-      ? `備份檔仍在：\n${join(app.getPath('userData'), 'backups')}\n（另存失敗，空間恢復前會暫停本機備份的輪替，避免把它擠掉）`
-      : '舊版 MindFlow 的資料沒有被動到。'
-  const partial = rollbackIncomplete ? '\n撤回沒有完全成功：首頁可能只出現部分文件，其餘仍在上面的備份裡。' : ''
   await dialog.showMessageBox(window, {
     type: 'warning',
     title: 'MindFlow',
     message: '本機資料不見了，但自動還原失敗',
-    detail: `可能是儲存空間不足。已寫入的部分已撤回。${partial}\n${where}\n請清出空間後重新開啟 MindFlow，會再自動還原一次；若同步已先把雲端的文件拉回來，只存在備份裡的文件需要從上面的位置找回。`
+    detail: recoveryFailedDetail({
+      preservedBackupPath,
+      backupsDirectory: join(app.getPath('userData'), 'backups'),
+      rollbackIncomplete
+    })
   }).catch(() => {})
 }
 
 async function restoreLatestBackupIfEmpty(window, userDataPath) {
-  const current = await captureMindflowStorage(window)
+  const current = await captureForRecovery(window)
   // 索引消失或損毀、且文件掉光才發動救援；偏好設定殘留不阻止還原，
   // 但使用者刻意清空（合法空索引）不得被自動復活。
   if (hasIntentionalMindflowState(current)) return false
@@ -177,7 +183,7 @@ async function restoreLatestBackupIfEmpty(window, userDataPath) {
 }
 
 async function migrateLegacyStorageIfEmpty(window, userDataPaths) {
-  const current = await captureMindflowStorage(window)
+  const current = await captureForRecovery(window)
   if (hasIntentionalMindflowState(current)) return 0
 
   const origins = await discoverLegacyOrigins(userDataPaths)

@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { afterEach, test } from 'node:test'
 import vm from 'node:vm'
 
-import { normalizeMindflowEntries, rendererRestoreScript } from '../backup-store.mjs'
+import {
+  hasIntentionalMindflowState,
+  normalizeMindflowEntries,
+  rendererRecoveryCheckScript,
+  rendererRestoreScript,
+  restoreScriptOutcome
+} from '../backup-store.mjs'
 import { CONFLICT_COPY_CANDIDATES, buildConflictCopy } from '../sync-plan.mjs'
 
 const servers = new Set()
@@ -1172,6 +1178,200 @@ test('Sol 2-#3：完整的永久刪除（索引也已移除）照常傳出去', 
   pair.a.storage.purgeDoc('gone')
   await pair.a.syncNow()
   assert.equal(typeof remoteManifest(pair.server).tombstones.gone, 'string')
+})
+
+test('M1_NOTES 6-#13：開機自動還原寫到一半失敗、撤回只成功一部分 → 沒還原到的文件不能被當成本機刪除推上雲端', async () => {
+  const pair = await createPair()
+  for (const id of ['A', 'B', 'C']) {
+    pair.a.storage.putDoc({ id, title: `${id} 雲端健康`, createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  }
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  const backupEntries = normalizeMindflowEntries(pair.a.storage.snapshot())
+
+  // renderer 的文件與索引不見，本機儲存區識別碼還在（和 sync-state.json 相符）
+  const epoch = pair.a.storage.snapshot()['mindflow.sync.storeEpoch']
+  assert.equal(epoch, (await savedSyncState(pair.a)).storeEpoch)
+  const entries = new Map([['mindflow.sync.storeEpoch', epoch]])
+  pair.a.storage.entries = entries
+
+  // main 用正式的還原腳本寫回，依序寫識別碼、A、B、C…：寫到 C 時空間不足；撤回時 A 刪不掉，其餘（含識別碼）都撤回成功
+  let writes = 0
+  const localStorage = {
+    get length() { return entries.size },
+    key: index => [...entries.keys()][index] ?? null,
+    getItem: key => entries.get(String(key)) ?? null,
+    setItem(key, value) {
+      writes += 1
+      if (writes === 4) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+      entries.set(String(key), String(value))
+    },
+    removeItem(key) {
+      if (key === 'mindflow.doc.A') throw new Error('storage unavailable')
+      entries.delete(String(key))
+    }
+  }
+  const result = vm.runInNewContext(rendererRestoreScript(backupEntries, { storeEpoch: 'restore-epoch' }), { localStorage })
+  assert.throws(() => restoreScriptOutcome(result), error => error.rollbackIncomplete === true, '情境：撤回沒有完全成功')
+  assert.ok(pair.a.storage.doc('A'), '情境：A 殘留在本機')
+  assert.equal(pair.a.storage.doc('B'), null)
+  assert.equal(entries.has('mindflow.docs.index'), false)
+
+  pair.clockA.set('2026-08-30T02:00:00.000Z')
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+
+  const manifest = remoteManifest(pair.server)
+  assert.deepEqual(manifest.tombstones, {}, '沒有任何文件被記成刪除')
+  assert.deepEqual(Object.keys(manifest.docs).sort(), ['A', 'B', 'C'], '雲端的 B、C 還在')
+  for (const instance of [pair.a, pair.b]) {
+    for (const id of ['B', 'C']) assert.equal(instance.storage.doc(id)?.title, `${id} 雲端健康`, `${instance.name} 上 ${id} 還在`)
+  }
+})
+
+test('M1_NOTES 6-#13 補完：開機自動還原失敗、完整回滾後，離線時先建了新文件 D → 恢復連線同步也不能把雲端的 A、B、C 記成刪除', async () => {
+  const pair = await createPair()
+  for (const id of ['A', 'B', 'C']) {
+    pair.a.storage.putDoc({ id, title: `${id} 雲端健康`, createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  }
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  const backupEntries = normalizeMindflowEntries(pair.a.storage.snapshot())
+
+  // renderer 的文件與索引不見，本機儲存區識別碼還在（和 sync-state.json 相符）
+  const epoch = pair.a.storage.snapshot()['mindflow.sync.storeEpoch']
+  assert.equal(epoch, (await savedSyncState(pair.a)).storeEpoch)
+  const entries = new Map([['mindflow.sync.storeEpoch', epoch]])
+  pair.a.storage.entries = entries
+
+  // main 用正式的還原腳本寫回：寫到 C 時空間不足；回滾全部成功
+  let writes = 0
+  const localStorage = {
+    get length() { return entries.size },
+    key: index => [...entries.keys()][index] ?? null,
+    getItem: key => entries.get(String(key)) ?? null,
+    setItem(key, value) {
+      writes += 1
+      if (writes === 4) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+      entries.set(String(key), String(value))
+    },
+    removeItem(key) { entries.delete(String(key)) }
+  }
+  const result = vm.runInNewContext(rendererRestoreScript(backupEntries, { storeEpoch: 'restore-epoch' }), { localStorage })
+  assert.throws(() => restoreScriptOutcome(result), error => error.rollbackIncomplete === false, '情境：還原失敗、回滾全部成功')
+  assert.equal(entries.has('mindflow.docs.index'), false, '情境：沒有留下半套內容')
+
+  // 使用者先建了一份新文件 D（renderer 建立新的索引）
+  entries.set('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+  pair.a.storage.putDoc({ id: 'D', title: 'D 離線新建', createdAt: '2026-08-30T02:00:00.000Z', updatedAt: '2026-08-30T02:00:00.000Z' })
+
+  // 恢復連線後同步
+  pair.clockA.set('2026-08-30T02:05:00.000Z')
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+
+  const manifest = remoteManifest(pair.server)
+  assert.deepEqual(manifest.tombstones, {}, '沒有任何文件被記成刪除')
+  assert.deepEqual(Object.keys(manifest.docs).sort(), ['A', 'B', 'C', 'D'], '雲端的 A、B、C 還在，D 推上去')
+  for (const instance of [pair.a, pair.b]) {
+    assert.deepEqual(instance.storage.activeDocs().map(doc => doc.id).sort(), ['A', 'B', 'C', 'D'], `${instance.name} 上四份都在`)
+  }
+})
+
+// renderer 的 localStorage 替身：讀寫都落在同步實例的 entries 上
+function rendererLocalStorage(entries) {
+  return {
+    get length() { return entries.size },
+    key: index => [...entries.keys()][index] ?? null,
+    getItem: key => entries.get(String(key)) ?? null,
+    setItem: (key, value) => { entries.set(String(key), String(value)) },
+    removeItem: key => { entries.delete(String(key)) }
+  }
+}
+
+async function pairWithSyncedABC() {
+  const pair = await createPair()
+  for (const id of ['A', 'B', 'C']) {
+    pair.a.storage.putDoc({ id, title: `${id} 雲端健康`, createdAt: '2026-08-30T01:00:00.000Z', updatedAt: '2026-08-30T01:00:00.000Z' })
+  }
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  const epoch = pair.a.storage.snapshot()['mindflow.sync.storeEpoch']
+  assert.equal(epoch, (await savedSyncState(pair.a)).storeEpoch)
+  return { pair, epoch }
+}
+
+async function assertCloudKeptABC(pair, expectedIds) {
+  const manifest = remoteManifest(pair.server)
+  assert.deepEqual(manifest.tombstones, {}, '沒有任何文件被記成刪除')
+  assert.deepEqual(Object.keys(manifest.docs).sort(), expectedIds, '雲端的 A、B、C 還在')
+  for (const instance of [pair.a, pair.b]) {
+    assert.deepEqual(instance.storage.activeDocs().map(doc => doc.id).sort(), expectedIds, `${instance.name} 上都在`)
+  }
+}
+
+test('M1_NOTES 6-#13 根治：文件與索引不見、識別碼還在、沒有任何備份可還原 → main 判定空的入口先清掉舊識別碼；先建了新文件 D 再同步，也不能把雲端的 A、B、C 記成刪除', async () => {
+  const { pair, epoch } = await pairWithSyncedABC()
+  const entries = new Map([['mindflow.sync.storeEpoch', epoch]])
+  pair.a.storage.entries = entries
+
+  // main 的開機救援用這段腳本讀回本機內容、判定是不是空的；沒有舊資料也沒有備份，什麼都不還原
+  const current = vm.runInNewContext(rendererRecoveryCheckScript({ storeEpoch: 'recovery-epoch' }), { localStorage: rendererLocalStorage(entries) })
+  assert.equal(hasIntentionalMindflowState(current), false, '情境：本機是空的')
+
+  // 使用者先建了一份新文件 D，之後才同步
+  entries.set('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+  pair.a.storage.putDoc({ id: 'D', title: 'D 遺失後新建', createdAt: '2026-08-30T02:00:00.000Z', updatedAt: '2026-08-30T02:00:00.000Z' })
+  pair.clockA.set('2026-08-30T02:05:00.000Z')
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  await assertCloudKeptABC(pair, ['A', 'B', 'C', 'D'])
+})
+
+test('M1_NOTES 6-#13 根治：索引不見、只剩部分文件、識別碼還在 → renderer 頁面一載入（UI 開啟前）就清掉舊識別碼；main 檢查之前先建了 D 也不會把雲端文件記成刪除', async () => {
+  const { pair, epoch } = await pairWithSyncedABC()
+  const entries = new Map([
+    ['mindflow.sync.storeEpoch', epoch],
+    ['mindflow.doc.A', pair.a.storage.snapshot()['mindflow.doc.A']]
+  ])
+  pair.a.storage.entries = entries
+
+  // Electron 載入頁面：preload 已放好 window.mindflowSync，頁面的 settings.js 在綁定 UI 之前執行
+  const previousWindow = globalThis.window
+  globalThis.window = { mindflowSync: {}, localStorage: rendererLocalStorage(entries) }
+  try {
+    await import(`../../js/settings.js?renderer-load-${Date.now()}`)
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window
+    else globalThis.window = previousWindow
+  }
+
+  // main 的開機檢查之前，使用者就建了 D（App 寫出只有 D 的新索引，A 的內容還在）
+  entries.set('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+  pair.a.storage.putDoc({ id: 'D', title: 'D 遺失後新建', createdAt: '2026-08-30T02:00:00.000Z', updatedAt: '2026-08-30T02:00:00.000Z' })
+  pair.clockA.set('2026-08-30T02:05:00.000Z')
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  await assertCloudKeptABC(pair, ['A', 'B', 'C', 'D'])
+})
+
+test('M1_NOTES 6-#13 根治：升級前、沒有識別碼的 base，索引不見但文件內容都在 → main 判定空的入口寫入新識別碼；先建了 D 再同步，也不能把 A、B、C 記成刪除', async () => {
+  const { pair } = await pairWithSyncedABC()
+  await stripStoreEpoch(pair.a)
+  // 索引不見，A、B、C 的內容都還在（「每一份 base 文件的 key 都在」→ 升級前的 base 會被信任一次）
+  const entries = pair.a.storage.entries
+  entries.delete('mindflow.docs.index')
+
+  const current = vm.runInNewContext(rendererRecoveryCheckScript({ storeEpoch: 'recovery-epoch' }), { localStorage: rendererLocalStorage(entries) })
+  assert.equal(hasIntentionalMindflowState(current), true, '情境：本機還有文件，不還原、不搬入')
+
+  // 使用者先建了 D：App 寫出只有 D 的新索引，A、B、C 的內容沒被索引列到
+  entries.set('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+  pair.a.storage.putDoc({ id: 'D', title: 'D 遺失後新建', createdAt: '2026-08-30T02:00:00.000Z', updatedAt: '2026-08-30T02:00:00.000Z' })
+  pair.clockA.set('2026-08-30T02:05:00.000Z')
+  await pair.a.syncNow()
+  await pair.b.syncNow()
+  await assertCloudKeptABC(pair, ['A', 'B', 'C', 'D'])
 })
 
 test('Sol 2-LOW：開機救援還沒結束時，就算計時器已經裝好，輪詢也不能讀本機或打 GitHub', async () => {

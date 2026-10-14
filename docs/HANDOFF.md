@@ -43,18 +43,20 @@
 > - 下表 7 項都已處理並補上回歸測試，另外修了獨立審查抓到的 3 項，見 `docs/M1_NOTES.md` 7.1–7.3。
 > - GPT-6.1 Sol 跨體系外審又抓到 6 項（4 HIGH、2 MEDIUM），也已處理，每項都有紅燈與綠燈的測試，見 `docs/M1_NOTES.md` 7.4。
 > - Sol 第 2 輪複審抓到 3 HIGH、1 LOW，也已處理，見 `docs/M1_NOTES.md` 7.5。
-> - Sol 第 3 輪複審抓到手機來源備份保護的 2 個 HIGH，也已處理，見 `docs/M1_NOTES.md` 7.6；剩下的罕見邊角記在 M1_NOTES 第 6 節第 12–14 點。
+> - Sol 第 3 輪複審抓到手機來源備份保護的 2 個 HIGH，也已處理，見 `docs/M1_NOTES.md` 7.6；剩下的罕見邊角記在 M1_NOTES 第 6 節第 12、14 點。
+> - 合併前補修第 6 節第 13 點（還原失敗時，刪除可能傳到雲端），見 `docs/M1_NOTES.md` 7.7。Sol 外審指出第一版只補了一半（完整回滾後使用者先建新文件的情形），以及手機回滾旗標的 LOW，也已處理。
+> - 同一類（本機遺失＋識別碼殘留 → 雲端誤刪）還有「沒有備份可還原」「索引不見但還剩部分文件」等觸發條件，已在偵測到本機遺失的當下讓 base 作廢，整類根治，見 `docs/M1_NOTES.md` 7.7 的 08。
 > - 還沒做的是下面清單的第 3–5 步：推送、最後一次外審確認、改 PR #3 的標題。
 
-複審的重現腳本放在 scratch，已隨容器消失，以下是重點：
+複審的重現腳本放在 scratch，已隨容器消失，以下是重點。「建議修法」是複審當時的建議；和實作不同的列，已在同一格加註「實際做法」，以 `docs/M1_NOTES.md` 第 7 節為準。
 
 | 等級 | 發現 | 建議修法 |
 |---|---|---|
 | **HIGH** | 識別碼 `mindflow.sync.storeEpoch` 設定後就不再變。Chromium 會延遲約 5 秒才把 localStorage 寫到磁碟，同步狀態卻是立刻寫入：在這段時間被殺掉時，舊內容帶著「相符」的識別碼，新的 base 被信任 → 剛拉下來的文件被刪、遠端修改被回退；「編輯中滑掉 App」時最後的修改可能被舊版蓋回 | 這一輪只要寫了本機或推了雲端，就換一個新識別碼。`claude/m1-rereview-wip` 已做 `rotateStoreEpoch()`，但**有缺口**：只推送、本機沒寫入時換了識別碼，`localChanged` 卻仍是 false，引擎不會套用寫入，標記沒寫進 localStorage，狀態卻存了新識別碼 → 之後每次都變首次同步。要在 rotate 之後重算 `localChanged`。兩個引擎（`js/sync-mobile.mjs`、`desktop/sync-engine.mjs`）都要改，並補「推送後程式被殺、localStorage 回到舊內容」的回歸測試 |
-| MEDIUM | 升級後每台既有裝置被迫做一次聯集：舊 base 沒有識別碼 → 刪掉的文件復活、多出衝突副本 | WIP 的 `trustedBase()` 已改成「舊 base 沒有識別碼、本機也沒有標記」時信任一次。**還要**在備份還原與舊資料搬入時把 base 作廢：手機清 Preferences 的 `mindflow.sync.mobile.state`；電腦清 userData 的 `sync-state.json` 裡的 base |
+| MEDIUM | 升級後每台既有裝置被迫做一次聯集：舊 base 沒有識別碼 → 刪掉的文件復活、多出衝突副本 | WIP 的 `trustedBase()` 已改成「舊 base 沒有識別碼、本機也沒有標記」時信任一次。**還要**在備份還原與舊資料搬入時把 base 作廢：手機清 Preferences 的 `mindflow.sync.mobile.state`；電腦清 userData 的 `sync-state.json` 裡的 base。**實際做法**：不清同步狀態的 base（也保留裝置 id）；還原與搬入寫入內容之前先寫一個新的隨機識別碼，base 因識別碼對不上而不被信任（M1-A11）；升級前 base 的信任條件改成每一份文件本機都還在（M1-A15） |
 | MEDIUM | base 不可信、而本機套用一直失敗（例如空間滿）時，每次重試都推一份新的衝突副本 | WIP 已讓衝突副本 id 不含時間（`buildConflictCopy`）。要補測試，也要檢查 `desktop/test`、`tests/` 裡有沒有斷言舊 id 格式的測試 |
 | MEDIUM | 正式簽章之後又出現拋棄式簽章的建置時，`android.yml` 會刪掉最後一個正式簽章的帶版號 APK，並用裝不上去的 APK 蓋掉 `MindFlow.apk` | throwaway 模式下，如果 latest 已有 `MindFlow-<n>.apk`，就整個跳過發佈並發出 warning；否則只上傳 `MindFlow.apk`，不跑清理迴圈。同步更新 `mobile/test/android-workflow.test.mjs` |
-| LOW | 還原與舊資料搬入不會移除既有的標記 | 寫入還原內容前先 `removeItem('mindflow.sync.storeEpoch')`，三處都要：`js/mobile-backup.mjs`、`desktop/main.mjs` 的 restore 與 legacy migration |
+| LOW | 還原與舊資料搬入不會移除既有的標記 | 寫入還原內容前先 `removeItem('mindflow.sync.storeEpoch')`，三處都要：`js/mobile-backup.mjs`、`desktop/main.mjs` 的 restore 與 legacy migration。**實際做法**：還原與搬入改成寫一個新的隨機識別碼（只移除的話，升級前沒有識別碼的 base 會被信任一次，M1-A11），還原失敗也保留它（M1-A20）。08 起，本機一讀不到索引就在偵測的當下 `removeItem` 識別碼、再盡量寫新值（M1-A21）：手機在頁面載入與開機還原檢查，電腦在頁面載入與 main 判定空的兩個入口 |
 | LOW | `LOCAL_CHANGE_REASONS` 裡的 `'config'` 會多跑一次同步 | 移除（`setConfig` 本來就會等進行中的同步） |
 | LOW | 文件在別台被永久刪除後，編輯器的 `saveDocument` 回傳 false：`dirty` 一直是 true 又沒有橫幅，返回鍵會永遠拒絕離開 | `saveNow` 在 `stamp === false` 時設 `saveBlocked` 並顯示橫幅「這份文件已在另一台裝置刪除［另存為新文件］」（用 `importDocumentCopy`） |
 
@@ -77,7 +79,7 @@
      - `js/sync/reconcile.mjs`：識別碼同樣輪換，條件是「寫了本機、推了雲端或 base 前進（`baseAdvances`）」；先 rotate，再用 `writesChangeEntries` 算 `localChanged` 與兩份 CAS 期望值；套用寫入時識別碼最後寫。M2a 的 base 在 IndexedDB（立刻落盤），localStorage 仍延遲，HIGH 的形態完全相同。
      - 衝突副本：`addConflictCopy` 改走 `buildConflictCopy(..., { attempt })` 的候選序列，沿用條件是本機、雲端每一份都原封不動、不在回收筒、沒有 tombstone，要一起搬。
      - 衝突副本的退路 id 也要過候選檢查，不通過就中止這一輪。
-     - 電腦版 renderer 化之後，還原腳本的「寫入前重新確認空庫＋失敗回滾（結構化回報）」、同步的 `startGate`（等開機救援，輪詢也要等）、還原失敗時暫停備份輪替（`restore-pending.json`）都要保留。
+     - 電腦版 renderer 化之後，還原腳本的「寫入前重新確認空庫＋失敗回滾（結構化回報；新識別碼寫成功後，任何失敗都不恢復舊識別碼）」、判定本機是不是空的時在同一段 renderer 執行裡讀不到索引就換掉識別碼（`rendererRecoveryCheckScript`）、頁面載入時的同一個檢查（`js/settings.js` 呼叫 `forgetStoreEpochIfStorageLost`）、同步的 `startGate`（等開機救援，輪詢也要等）、還原失敗時暫停備份輪替（`restore-pending.json`）都要保留。
      - 「索引列著、內容不見就隔離」在共用的 `buildLocalState`，合併 M1 分支後會自動帶過來。
      - `js/sync/engine.mjs` 移除 `'config'`。
      - 還原時寫新的隨機標記（標記仍在 localStorage 的 `mindflow.sync.storeEpoch`，M1 的還原路徑對 M2a 一樣有效）。

@@ -56,7 +56,8 @@ export function rendererRestoreScript(entries, { storeEpoch }) {
       localStorage.setItem(key, value);
     };
     try {
-      write(${JSON.stringify(STORE_EPOCH_KEY)}, ${JSON.stringify(storeEpoch)});
+      // 識別碼不列入回滾（見下方 catch），直接寫
+      localStorage.setItem(${JSON.stringify(STORE_EPOCH_KEY)}, ${JSON.stringify(storeEpoch)});
       let count = 0;
       for (const [key, value] of Object.entries(entries)) {
         if (key.startsWith('mindflow.') && !key.startsWith('mindflow.sync.') && typeof value === 'string') {
@@ -68,6 +69,9 @@ export function rendererRestoreScript(entries, { storeEpoch }) {
     } catch (error) {
       // 寫到一半失敗（多半是空間不足）：回滾已寫的，儲存區維持「空的」，下次開啟才會再自動還原。
       // 回滾本身失敗不能吞掉：標在錯誤上，呼叫端才知道本機留著半套內容。
+      // 識別碼不撤回，完整回滾也一樣：舊識別碼配上 sync-state.json 會讓舊 base 被信任，
+      // 之後本機少掉的 base 文件（有內容撤回失敗，或回滾後使用者先建了新文件）會被當成本機刪除推上雲端。
+      // 寫新識別碼本身失敗時什麼都還沒寫、值也沒變過，不必寫回。
       let rollbackIncomplete = false;
       for (const item of written.reverse()) {
         try {
@@ -86,6 +90,58 @@ export function rendererRestoreScript(entries, { storeEpoch }) {
       };
     }
   })()`
+}
+
+/**
+ * 開機救援判定「本機是不是空的」時在 renderer 跑的腳本：讀回 mindflow.* 的內容；讀不到文件索引（不存在或損壞）
+ * 就在同一段執行裡先清掉本機儲存區識別碼（規則同手機的 forgetStoreEpochIfStorageLost）。
+ * 同步過的儲存區一定有索引，讀不到就是本機資料遺失；識別碼留著，同步會信任 sync-state.json 的舊 base，
+ * 把本機少掉的文件當成本機刪除推上雲端（沒有備份、還原失敗或使用者先建了新文件都一樣）。
+ * 讀回與清除之間不能隔著 await。回傳的是清除之後的內容。
+ * 先 removeItem（不受空間限制），再盡量寫入 storeEpoch 這個新的隨機值：只移除的話，升級前沒有識別碼的 base
+ * 在「本機也沒有標記」時，只要 base 的文件 key 都還在仍會被信任一次（M1-A15）。
+ */
+export function rendererRecoveryCheckScript({ storeEpoch }) {
+  if (typeof storeEpoch !== 'string' || !storeEpoch) throw new TypeError('storeEpoch is required')
+  return `(() => {
+    const indexKey = ${JSON.stringify(DOCUMENT_INDEX_KEY)};
+    let readable = false;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(indexKey));
+      readable = Boolean(parsed && typeof parsed === 'object');
+    } catch {}
+    if (!readable) {
+      try { localStorage.removeItem(${JSON.stringify(STORE_EPOCH_KEY)}); } catch {}
+      try { localStorage.setItem(${JSON.stringify(STORE_EPOCH_KEY)}, ${JSON.stringify(storeEpoch)}); } catch {}
+    }
+    const entries = {};
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (typeof key === 'string' && key.startsWith('mindflow.')) entries[key] = localStorage.getItem(key);
+    }
+    return entries;
+  })()`
+}
+
+/**
+ * 開機救援失敗對話框的說明。preservedBackupPath：字串＝另存成功的位置；null＝備份還原失敗且另存也失敗；
+ * undefined＝舊資料搬入失敗（來源沒被動到）。
+ */
+export function recoveryFailedDetail({ preservedBackupPath, backupsDirectory, rollbackIncomplete = false } = {}) {
+  const legacy = preservedBackupPath === undefined
+  const where = preservedBackupPath
+    ? `還沒救回的那份備份已另存在：\n${preservedBackupPath}`
+    : preservedBackupPath === null
+      ? `備份檔仍在：\n${backupsDirectory}\n（另存失敗，空間恢復前會暫停本機備份的輪替，避免把它擠掉）`
+      : '舊版 MindFlow 的資料沒有被動到。'
+  if (!rollbackIncomplete) {
+    return `可能是儲存空間不足。已寫入的部分已撤回。\n${where}\n請清出空間後重新開啟 MindFlow，會再自動還原一次；若同步已先把雲端的文件拉回來，只存在備份裡的文件需要從上面的位置找回。`
+  }
+  // 撤回沒完成：本機留著部分文件，下次開啟的空庫檢查不會通過，不會再自動還原或搬入
+  const rest = legacy
+    ? '其餘文件仍在舊版 MindFlow 的資料裡。'
+    : '已同步到雲端的文件，同步時會從雲端拉回；只存在備份裡的文件在上面的檔案裡，請保留這個檔案，不要刪除。'
+  return `可能是儲存空間不足。撤回沒有完全成功：首頁可能只出現部分文件。\n${where}\n本機已留著部分文件，重新開啟 MindFlow 也不會再自動${legacy ? '搬入' : '還原'}。${rest}`
 }
 
 /** 把還原腳本的結構化失敗結果轉回錯誤（帶著 rollbackIncomplete）；成功或取消時原樣回傳筆數。 */

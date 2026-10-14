@@ -130,10 +130,23 @@ test('Sol 2-#2：還原寫到一半失敗、回滾也失敗 → 錯誤要明確�
 test('Sol #6：還原寫到一半失敗（空間不足）→ 把已寫的回滾，不留下「看起來不是空的」半套內容', () => {
   const target = fakeLocalStorage({ 'mindflow.sync.storeEpoch': 'epoch-before', 'mindflow.ui.theme': 'dark' }, { failOnWrite: 3 })
   assert.throws(() => runRestoreLikeMain(restoreEntries, target.api), /Quota/)
-  assert.equal(target.store.get('mindflow.sync.storeEpoch'), 'epoch-before', '識別碼也回到原值')
+  // 新識別碼寫成功之後的任何還原失敗都保留新識別碼（M1-A20）：舊的配上 sync-state.json 會讓舊 base 被信任
+  assert.equal(target.store.get('mindflow.sync.storeEpoch'), 'fresh', '完整回滾也不恢復舊識別碼')
   assert.equal(target.store.has('mindflow.docs.index'), false)
   assert.equal(target.store.has('mindflow.doc.doc-1'), false)
   assert.equal(target.store.get('mindflow.ui.theme'), 'dark')
+})
+
+test('M1_NOTES 6-#13 補完：空間全滿、連新識別碼都沒寫成功 → 什麼都沒寫進去，識別碼維持原值，也不誤報「回滾沒完成」', () => {
+  const target = fakeLocalStorage({ 'mindflow.sync.storeEpoch': 'epoch-before' })
+  target.api.setItem = () => { throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' }) }
+  assert.throws(
+    () => runRestoreLikeMain(restoreEntries, target.api),
+    error => /Quota/.test(error.message) && error.rollbackIncomplete !== true,
+    '什麼都沒改過，不能說撤回沒完成'
+  )
+  assert.deepEqual([...target.store.keys()], ['mindflow.sync.storeEpoch'])
+  assert.equal(target.store.get('mindflow.sync.storeEpoch'), 'epoch-before')
 })
 
 function documentIndex(sequence) {

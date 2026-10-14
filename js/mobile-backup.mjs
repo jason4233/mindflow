@@ -4,6 +4,7 @@
  * 備份格式與電腦版 desktop/backup-store.mjs 相同（version 1 + entries）。
  */
 import {
+  DOCUMENT_INDEX_KEY,
   DOCUMENT_KEY_PREFIX,
   hasIntentionalMindflowState,
   hasMindflowDocuments,
@@ -97,6 +98,46 @@ function missingFile(error) {
 
 function pad(value) {
   return String(value).padStart(2, '0')
+}
+
+/**
+ * 本機讀不到文件索引（不存在或損壞）時清掉本機儲存區識別碼；回傳是否讀不到索引。
+ * 同步過的儲存區一定有索引，讀不到就是本機資料遺失。識別碼留著的話，同步會信任舊 base，
+ * 把本機少掉的文件當成本機刪除推上雲端：不管有沒有備份可還原、還原成不成功、使用者有沒有先建了新文件。
+ * 清掉後下一次同步是首次同步（只做聯集）；之後還原或同步成功會再寫入新的識別碼。
+ * 要在偵測的當下、await 任何東西之前呼叫，免得中間使用者先建了文件。
+ * 先 removeItem（不受空間限制），再盡量寫一個新的隨機識別碼：只移除的話，升級前沒有識別碼的 base
+ * 在「本機也沒有標記」時，只要 base 的文件 key 都還在（例如索引不見、內容都在）仍會被信任一次（M1-A15）。
+ */
+export function forgetStoreEpochIfStorageLost(storage) {
+  let readable = false
+  try {
+    const parsed = JSON.parse(storage.getItem(DOCUMENT_INDEX_KEY))
+    readable = Boolean(parsed && typeof parsed === 'object')
+  } catch { /* 損壞的索引和不存在一樣 */ }
+  if (readable) return false
+  try {
+    storage.removeItem(STORE_EPOCH_KEY)
+  } catch (error) {
+    console.error('MindFlow could not clear the local store epoch', error)
+  }
+  try { storage.setItem(STORE_EPOCH_KEY, newStoreEpoch()) } catch { /* 空間不足：維持移除的狀態 */ }
+  return true
+}
+
+/**
+ * 自動還原失敗時要丟出的錯誤：回滾沒完成就標 rollbackIncomplete。丟出的值掛不上旗標時
+ * （原始值、null、不可擴充的物件）改丟一個帶 cause 的新 Error。回滾與來源保護都做完才呼叫。
+ */
+function restoreFailure(error, rollbackIncomplete) {
+  if (!rollbackIncomplete) return error
+  try {
+    error.rollbackIncomplete = true
+    if (error.rollbackIncomplete === true) return error
+  } catch { /* 掛不上旗標 */ }
+  const wrapped = new Error('MindFlow backup restore failed and the rollback was incomplete', { cause: error })
+  wrapped.rollbackIncomplete = true
+  return wrapped
 }
 
 export function formatBackupStamp(value) {
@@ -227,6 +268,8 @@ export function createMobileBackupStore({
    * 回傳 true 代表已寫回 localStorage，呼叫端應重新載入頁面。
    */
   async function restoreLatestIfEmpty() {
+    // 偵測的當下、await 之前：讀不到索引就先清掉識別碼（沒有備份、還原失敗或使用者先建文件時，同步都不信任舊 base）
+    forgetStoreEpochIfStorageLost(storage)
     if (hasIntentionalMindflowState(readStorageEntries(storage))) return false
     const backup = await readLatestBackup()
     if (!backup) return false
@@ -249,22 +292,27 @@ export function createMobileBackupStore({
       storage.setItem(key, value)
     }
     try {
-      write(STORE_EPOCH_KEY, newStoreEpoch())
+      // 識別碼不列入回滾（見下方 catch），直接寫
+      storage.setItem(STORE_EPOCH_KEY, newStoreEpoch())
       for (const [key, value] of Object.entries(backup.entries)) write(key, value)
     } catch (error) {
       // 寫到一半失敗（多半是空間不足）：回滾已寫的，儲存區維持「空的」，下次開啟才會再自動還原；
       // 半套內容會讓之後的檢查以為不需要還原，剩下的文件就再也不會自動救回。回滾本身失敗不能吞掉。
+      // 識別碼不撤回，完整回滾也一樣：舊識別碼配上 Preferences 裡的同步狀態會讓舊 base 被信任，
+      // 之後本機少掉的 base 文件（有內容撤回失敗，或回滾後使用者先建了新文件）會被當成本機刪除推上雲端。
+      // 寫新識別碼本身失敗時什麼都還沒寫、值也沒變過，不必寫回。
+      let rollbackIncomplete = false
       for (const item of written.reverse()) {
         try {
           if (item.previous === null) storage.removeItem(item.key)
           else storage.setItem(item.key, item.previous)
         } catch {
-          error.rollbackIncomplete = true
+          rollbackIncomplete = true
         }
       }
       // 這份備份另存到不會被輪替的位置（「從自動備份還原」也找得到）；另存成功才解除輪替暫停
       await ensureRestoreSourceProtected()
-      throw error
+      throw restoreFailure(error, rollbackIncomplete)
     }
     pendingRestoreSource = null
     await writePendingMarker(null).catch(() => {})

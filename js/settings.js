@@ -6,7 +6,7 @@ import {
   isNativeCapacitor
 } from './sync-mobile.mjs'
 import { getCapacitorPlugin } from './capacitor-plugins.mjs'
-import { startMobileBackups } from './mobile-backup.mjs'
+import { forgetStoreEpochIfStorageLost, startMobileBackups } from './mobile-backup.mjs'
 import { mountMobileBackupSection, mountMobileUpdateSection, scanPairingCode, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
 import { decodePairingPayload, isPairingPayload } from './pairing.mjs'
 import { startUpdateCheck } from './mobile-update.mjs'
@@ -500,6 +500,16 @@ function resolveSyncEnvironment(windowRef = globalThis.window) {
     return { kind, api: validSyncApi(mobileSyncApi) }
   }
   return { kind: 'web', api: null }
+}
+
+// 頁面一載入、使用者還不能建文件之前：本機讀不到索引就先清掉識別碼（電腦與手機都要，見 forgetStoreEpochIfStorageLost）。
+// 電腦的開機救援要等頁面載入完才檢查，中間使用者若先建了文件，就判斷不出本機曾經遺失。
+if (typeof globalThis.window !== 'undefined' && detectSyncEnvironment(globalThis.window) !== 'web') {
+  try {
+    forgetStoreEpochIfStorageLost(globalThis.window.localStorage)
+  } catch (error) {
+    console.error('MindFlow could not check the local store on load', error)
+  }
 }
 
 // settings.js 也由 editor 入口匯入；在 UI 尚未開啟前先啟動，才能保證 app 開啟即 pull。

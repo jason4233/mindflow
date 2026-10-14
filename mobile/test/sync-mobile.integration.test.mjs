@@ -483,6 +483,209 @@ test('審查 BLOCKER 2：資料遺失後、第一次同步前先新增了文件�
   }
 })
 
+test('M1_NOTES 6-#13（手機）：自動還原寫到一半失敗、撤回只成功一部分 → 沒還原到的文件不能被當成本機刪除推上雲端', async () => {
+  const { createMobileBackupStore } = await import('../../js/mobile-backup.mjs')
+  const env = await createDesktopAndMobile()
+  const files = new Map()
+  const missing = () => Object.assign(new Error('File does not exist.'), { code: 'OS-PLUG-FILE-0008' })
+  const filesystem = {
+    async writeFile({ path, data }) { files.set(path, data) },
+    async readFile({ path }) { if (!files.has(path)) throw missing(); return { data: files.get(path) } },
+    async stat({ path }) { if (!files.has(path)) throw missing(); return {} },
+    async copy({ from, to }) { files.set(to, files.get(from)) }
+  }
+  try {
+    for (const id of ['A', 'B', 'C']) seedDoc(env.mobileStorage, { id, title: `${id} 雲端健康`, at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    await createMobileBackupStore({ filesystem, storage: env.mobileStorage, importCopy: () => ({}) }).writeBackup()
+
+    // WebView 的文件與索引不見，本機儲存區識別碼還在（和 Preferences 裡的同步狀態相符）
+    const epoch = env.mobileStorage.getItem('mindflow.sync.storeEpoch')
+    assert.equal(typeof epoch, 'string')
+    env.mobileStorage.clear()
+    env.mobileStorage.setItem('mindflow.sync.storeEpoch', epoch)
+
+    // 自動還原依序寫識別碼、A、B、C…：寫到 C 時空間不足；撤回時 A 刪不掉，其餘都撤回成功
+    let writes = 0
+    const storage = new Proxy(env.mobileStorage, {
+      get(object, property) {
+        if (property === 'setItem') {
+          return (key, value) => {
+            // 只數文件內容的寫入：識別碼可能先被開機還原檢查換掉一次（M1-A21）
+            if (key !== 'mindflow.sync.storeEpoch') writes += 1
+            if (key !== 'mindflow.sync.storeEpoch' && writes === 3) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+            object.setItem(key, value)
+          }
+        }
+        if (property === 'removeItem') {
+          return key => {
+            if (key === 'mindflow.doc.A') throw new Error('storage unavailable')
+            object.removeItem(key)
+          }
+        }
+        const value = Reflect.get(object, property, object)
+        return typeof value === 'function' ? value.bind(object) : value
+      }
+    })
+    const error = await createMobileBackupStore({ filesystem, storage, importCopy: () => ({}) })
+      .restoreLatestIfEmpty()
+      .then(() => null, caught => caught)
+    assert.equal(error?.rollbackIncomplete, true, '情境：撤回沒有完全成功')
+    assert.ok(env.mobileStorage.getItem('mindflow.doc.A'), '情境：A 殘留在本機')
+    assert.equal(env.mobileStorage.getItem('mindflow.doc.B'), null)
+    assert.equal(env.mobileStorage.getItem('mindflow.docs.index'), null)
+
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-failed-restore' }), { ok: true })
+
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {}, '沒有任何文件被記成刪除')
+    assert.deepEqual(Object.keys(remote.manifest.docs).sort(), ['A', 'B', 'C'], '雲端的 B、C 還在')
+    for (const id of ['B', 'C']) {
+      assert.equal(JSON.parse(env.mobileStorage.getItem(`mindflow.doc.${id}`) ?? 'null')?.title, `${id} 雲端健康`, `${id} 從雲端拉回本機`)
+    }
+  } finally {
+    await env.close()
+  }
+})
+
+test('M1_NOTES 6-#13 補完（手機）：自動還原失敗、完整回滾後，離線時先建了新文件 D → 恢復連線同步也不能把雲端的 A、B、C 記成刪除', async () => {
+  const { createMobileBackupStore } = await import('../../js/mobile-backup.mjs')
+  const env = await createDesktopAndMobile()
+  const files = new Map()
+  const missing = () => Object.assign(new Error('File does not exist.'), { code: 'OS-PLUG-FILE-0008' })
+  const filesystem = {
+    async writeFile({ path, data }) { files.set(path, data) },
+    async readFile({ path }) { if (!files.has(path)) throw missing(); return { data: files.get(path) } },
+    async stat({ path }) { if (!files.has(path)) throw missing(); return {} },
+    async copy({ from, to }) { files.set(to, files.get(from)) }
+  }
+  try {
+    for (const id of ['A', 'B', 'C']) seedDoc(env.mobileStorage, { id, title: `${id} 雲端健康`, at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    await createMobileBackupStore({ filesystem, storage: env.mobileStorage, importCopy: () => ({}) }).writeBackup()
+
+    // WebView 的文件與索引不見，本機儲存區識別碼還在（和 Preferences 裡的同步狀態相符）
+    const epoch = env.mobileStorage.getItem('mindflow.sync.storeEpoch')
+    assert.equal(typeof epoch, 'string')
+    env.mobileStorage.clear()
+    env.mobileStorage.setItem('mindflow.sync.storeEpoch', epoch)
+
+    // 離線開機，自動還原寫到 C 時空間不足；回滾全部成功
+    let writes = 0
+    const storage = new Proxy(env.mobileStorage, {
+      get(object, property) {
+        if (property === 'setItem') {
+          return (key, value) => {
+            // 只數文件內容的寫入：識別碼可能先被開機還原檢查換掉一次（M1-A21）
+            if (key !== 'mindflow.sync.storeEpoch') writes += 1
+            if (key !== 'mindflow.sync.storeEpoch' && writes === 3) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+            object.setItem(key, value)
+          }
+        }
+        const value = Reflect.get(object, property, object)
+        return typeof value === 'function' ? value.bind(object) : value
+      }
+    })
+    const error = await createMobileBackupStore({ filesystem, storage, importCopy: () => ({}) })
+      .restoreLatestIfEmpty()
+      .then(() => null, caught => caught)
+    assert.ok(error, '情境：自動還原失敗')
+    assert.notEqual(error.rollbackIncomplete, true, '情境：回滾全部成功')
+    assert.equal(env.mobileStorage.getItem('mindflow.docs.index'), null, '情境：沒有留下半套內容')
+
+    // 使用者先建了一份新文件 D（App 建立新的索引）
+    env.mobileStorage.setItem('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    seedDoc(env.mobileStorage, { id: 'D', title: 'D 離線新建', at: env.clock.mobile })
+
+    // 恢復連線後同步
+    env.clock.mobile = '2026-09-01T10:05:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'back-online' }), { ok: true })
+
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {}, '沒有任何文件被記成刪除')
+    assert.deepEqual(Object.keys(remote.manifest.docs).sort(), ['A', 'B', 'C', 'D'], '雲端的 A、B、C 還在，D 推上去')
+    const local = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.id).sort()
+    assert.deepEqual(local, ['A', 'B', 'C', 'D'], 'A、B、C 從雲端拉回本機')
+  } finally {
+    await env.close()
+  }
+})
+
+function memoryFilesystem() {
+  const files = new Map()
+  const missing = () => Object.assign(new Error('File does not exist.'), { code: 'OS-PLUG-FILE-0008' })
+  return {
+    files,
+    async writeFile({ path, data }) { files.set(path, data) },
+    async readFile({ path }) { if (!files.has(path)) throw missing(); return { data: files.get(path) } },
+    async stat({ path }) { if (!files.has(path)) throw missing(); return {} },
+    async copy({ from, to }) { files.set(to, files.get(from)) }
+  }
+}
+
+test('M1_NOTES 6-#13 根治（手機）：文件與索引不見、識別碼還在、沒有任何備份可還原 → 先建了新文件 D 再同步，也不能把雲端的 A、B、C 記成刪除', async () => {
+  const { createMobileBackupStore } = await import('../../js/mobile-backup.mjs')
+  const env = await createDesktopAndMobile()
+  try {
+    for (const id of ['A', 'B', 'C']) seedDoc(env.mobileStorage, { id, title: `${id} 雲端健康`, at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+
+    // WebView 的文件與索引不見，本機儲存區識別碼還在（和 Preferences 裡的同步狀態相符）；App 裡沒有任何備份
+    const epoch = env.mobileStorage.getItem('mindflow.sync.storeEpoch')
+    assert.equal(typeof epoch, 'string')
+    env.mobileStorage.clear()
+    env.mobileStorage.setItem('mindflow.sync.storeEpoch', epoch)
+
+    // 開機時的還原檢查：沒有備份可還原
+    assert.equal(await createMobileBackupStore({ filesystem: memoryFilesystem(), storage: env.mobileStorage, importCopy: () => ({}) }).restoreLatestIfEmpty(), false)
+
+    // 使用者先建了一份新文件 D，之後才同步
+    env.mobileStorage.setItem('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    seedDoc(env.mobileStorage, { id: 'D', title: 'D 遺失後新建', at: env.clock.mobile })
+    env.clock.mobile = '2026-09-01T10:05:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-loss' }), { ok: true })
+
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {}, '沒有任何文件被記成刪除')
+    assert.deepEqual(Object.keys(remote.manifest.docs).sort(), ['A', 'B', 'C', 'D'], '雲端的 A、B、C 還在，D 推上去')
+    const local = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.id).sort()
+    assert.deepEqual(local, ['A', 'B', 'C', 'D'], 'A、B、C 從雲端拉回本機')
+  } finally {
+    await env.close()
+  }
+})
+
+test('M1_NOTES 6-#13 根治（手機）：索引不見、只剩部分文件（A）、識別碼還在 → 同步不能把沒留下來的 B、C 記成刪除', async () => {
+  const { createMobileBackupStore } = await import('../../js/mobile-backup.mjs')
+  const env = await createDesktopAndMobile()
+  try {
+    for (const id of ['A', 'B', 'C']) seedDoc(env.mobileStorage, { id, title: `${id} 雲端健康`, at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+
+    // 部分遺失：索引和 B、C 不見，A 的內容與識別碼還在
+    const kept = Object.fromEntries(['mindflow.sync.storeEpoch', 'mindflow.doc.A'].map(key => [key, env.mobileStorage.getItem(key)]))
+    env.mobileStorage.clear()
+    for (const [key, value] of Object.entries(kept)) env.mobileStorage.setItem(key, value)
+
+    // 開機時的還原檢查：本機還有文件，不自動還原
+    assert.equal(await createMobileBackupStore({ filesystem: memoryFilesystem(), storage: env.mobileStorage, importCopy: () => ({}) }).restoreLatestIfEmpty(), false)
+
+    env.clock.mobile = '2026-09-01T10:05:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-partial-loss' }), { ok: true })
+
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {}, '沒有任何文件被記成刪除')
+    assert.deepEqual(Object.keys(remote.manifest.docs).sort(), ['A', 'B', 'C'], '雲端的 B、C 還在')
+    const local = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.id).sort()
+    assert.deepEqual(local, ['A', 'B', 'C'], 'B、C 從雲端拉回本機')
+  } finally {
+    await env.close()
+  }
+})
+
 test('複審 HIGH（手機）：同步把遠端內容寫進本機後、localStorage 落盤前 App 被殺 → 重開後不刪雲端文件、不回退遠端修改', async () => {
   const env = await createDesktopAndMobile()
   try {

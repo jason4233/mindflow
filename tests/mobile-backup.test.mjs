@@ -22,6 +22,7 @@ const {
   consumeRestoreFailedNotice,
   consumeRestoredNotice,
   createMobileBackupStore,
+  forgetStoreEpochIfStorageLost,
   mobileBackupPaths,
   parseBackupPayload,
   startMobileBackups
@@ -214,14 +215,16 @@ test('parseBackupPayload rejects foreign or empty files', () => {
   assert.equal(parseBackupPayload(JSON.stringify({ version: 1, entries: { 'mindflow.ui.theme': 'dark' } })), null)
 })
 
+// 寫第 failOnWrite 個備份內容的 key 時丟出空間不足。識別碼的寫入不算：開機還原檢查可能先換掉識別碼（M1-A21），
+// 還原自己也會先寫識別碼，只數內容才不會因為多一次識別碼寫入而改變情境。
 function failingStorage(target, failOnWrite) {
   let count = 0
   return new Proxy(target, {
     get(object, property) {
       if (property === 'setItem') {
         return (key, value) => {
-          count += 1
-          if (count === failOnWrite) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
+          if (key !== 'mindflow.sync.storeEpoch') count += 1
+          if (key !== 'mindflow.sync.storeEpoch' && count === failOnWrite) throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' })
           object.setItem(key, value)
         }
       }
@@ -245,15 +248,117 @@ test('Sol #6：自動還原寫到一半失敗 → 回滾已寫的內容，儲存
   const target = new MemoryStorage()
   target.setItem('mindflow.sync.storeEpoch', 'epoch-before')
   target.setItem('mindflow.ui.theme', 'dark')
-  const store = createMobileBackupStore({ filesystem, storage: failingStorage(target, 3), importCopy: importDocumentCopy })
+  const store = createMobileBackupStore({ filesystem, storage: failingStorage(target, 2), importCopy: importDocumentCopy })
   await assert.rejects(store.restoreLatestIfEmpty(), /Quota/)
 
   const keys = Array.from({ length: target.length }, (_, index) => target.key(index)).sort()
   assert.deepEqual(keys, ['mindflow.sync.storeEpoch', 'mindflow.ui.theme'], '不能留下半套文件')
-  assert.equal(target.getItem('mindflow.sync.storeEpoch'), 'epoch-before')
+  // 新識別碼寫成功之後的任何還原失敗都保留新識別碼（M1-A20）：舊的配上同步狀態會讓舊 base 被信任
+  const marker = target.getItem('mindflow.sync.storeEpoch')
+  assert.equal(typeof marker, 'string')
+  assert.notEqual(marker, 'epoch-before', '完整回滾也不恢復舊識別碼')
   // 空間清出來之後（不再失敗）重新開啟：照常自動還原
   const retry = createMobileBackupStore({ filesystem, storage: target, importCopy: importDocumentCopy })
   assert.equal(await retry.restoreLatestIfEmpty(), true)
+})
+
+test('M1_NOTES 6-#13 根治（手機）：讀不到索引（不存在或損壞）就換掉舊識別碼（空間全滿時至少移除）；讀得到（包括刻意清空的空索引）就不動', () => {
+  const cases = [
+    ['全空', { 'mindflow.sync.storeEpoch': 'old', 'mindflow.ui.theme': 'dark' }, true],
+    ['索引不見、還剩文件', { 'mindflow.sync.storeEpoch': 'old', 'mindflow.doc.A': '{"id":"A"}' }, true],
+    ['索引損壞', { 'mindflow.sync.storeEpoch': 'old', 'mindflow.docs.index': '{broken' }, true],
+    ['刻意清空的空索引', { 'mindflow.sync.storeEpoch': 'old', 'mindflow.docs.index': JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }) }, false],
+    ['正常索引', { 'mindflow.sync.storeEpoch': 'old', 'mindflow.docs.index': JSON.stringify({ version: 2, docs: [{ id: 'A' }], trash: [], favorites: [] }), 'mindflow.doc.A': '{"id":"A"}' }, false]
+  ]
+  for (const [label, initial, lost] of cases) {
+    for (const full of [false, true]) {
+      const target = new MemoryStorage()
+      for (const [key, value] of Object.entries(initial)) target.setItem(key, value)
+      // 空間全滿：新的識別碼寫不進去
+      const storage = full
+        ? new Proxy(target, {
+          get(object, property) {
+            if (property === 'setItem') return () => { throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' }) }
+            const value = Reflect.get(object, property, object)
+            return typeof value === 'function' ? value.bind(object) : value
+          }
+        })
+        : target
+      const name = `${label}${full ? '（空間全滿）' : ''}`
+      assert.equal(forgetStoreEpochIfStorageLost(storage), lost, `${name}：回傳是否讀不到索引`)
+      const marker = target.getItem('mindflow.sync.storeEpoch')
+      if (!lost) assert.equal(marker, 'old', `${name}：識別碼不動`)
+      else if (full) assert.equal(marker, null, `${name}：至少已經移除`)
+      else assert.ok(typeof marker === 'string' && marker !== 'old', `${name}：換成新的識別碼`)
+      for (const key of Object.keys(initial).filter(key => key !== 'mindflow.sync.storeEpoch')) {
+        assert.equal(target.getItem(key), initial[key], `${name}：其他內容不動`)
+      }
+    }
+  }
+})
+
+test('M1_NOTES 6-#13 根治（手機）：開機的還原檢查沒有備份可還原時，也已經換掉識別碼', async () => {
+  const target = new MemoryStorage()
+  target.setItem('mindflow.sync.storeEpoch', 'old')
+  const store = createMobileBackupStore({ filesystem: new FakeFilesystem(), storage: target, importCopy: importDocumentCopy })
+  assert.equal(await store.restoreLatestIfEmpty(), false)
+  assert.notEqual(target.getItem('mindflow.sync.storeEpoch'), 'old')
+})
+
+test('M1_NOTES 6-#13 補完（手機）：空間全滿、連新識別碼都沒寫成功 → 什麼內容都沒寫進去，也不誤報「回滾沒完成」；舊識別碼已在開機檢查時移除', async () => {
+  const filesystem = await backupWithTwoDocuments()
+  const target = new MemoryStorage()
+  target.setItem('mindflow.sync.storeEpoch', 'epoch-before')
+  const full = new Proxy(target, {
+    get(object, property) {
+      if (property === 'setItem') return () => { throw Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' }) }
+      const value = Reflect.get(object, property, object)
+      return typeof value === 'function' ? value.bind(object) : value
+    }
+  })
+  const store = createMobileBackupStore({ filesystem, storage: full, importCopy: importDocumentCopy })
+  const error = await store.restoreLatestIfEmpty().then(() => assert.fail('應該失敗'), caught => caught)
+  assert.match(error.message, /Quota/)
+  assert.notEqual(error.rollbackIncomplete, true, '什麼內容都沒改過，不能說撤回沒完成')
+  // 還原這一步不碰識別碼（寫失敗時值沒變過）；但本機讀不到索引，開機檢查已先移除舊的（M1-A21），新的寫不進去
+  assert.equal(target.length, 0)
+  assert.equal(target.getItem('mindflow.sync.storeEpoch'), null)
+})
+
+test('M1_NOTES 6-#13 補完（手機）：丟出的不是一般錯誤物件（不可擴充的物件、null、字串）、回滾又有一個 key 刪不掉 → 其餘回滾與來源保護照樣做完，錯誤標出「回滾沒完成」', async () => {
+  for (const thrown of [Object.freeze({ name: 'QuotaExceededError', message: 'quota' }), null, 'quota']) {
+    const filesystem = await backupWithTwoDocuments()
+    const sourceText = filesystem.files.get(`DATA:${mobileBackupPaths()[0]}`)
+    const target = new MemoryStorage()
+    const keys = []
+    // 只數備份內容的 key（識別碼的寫入不算）：第 3 個寫入失敗；回滾時第 2 個刪不掉
+    const storage = new Proxy(target, {
+      get(object, property) {
+        if (property === 'setItem') {
+          return (key, value) => {
+            if (key !== 'mindflow.sync.storeEpoch') keys.push(key)
+            if (key !== 'mindflow.sync.storeEpoch' && keys.length === 3) throw thrown
+            object.setItem(key, value)
+          }
+        }
+        if (property === 'removeItem') {
+          return key => {
+            if (key === keys[1]) throw new Error('storage unavailable')
+            object.removeItem(key)
+          }
+        }
+        const value = Reflect.get(object, property, object)
+        return typeof value === 'function' ? value.bind(object) : value
+      }
+    })
+    const store = createMobileBackupStore({ filesystem, storage, importCopy: importDocumentCopy })
+    const error = await store.restoreLatestIfEmpty().then(() => assert.fail('應該失敗'), caught => caught)
+    const label = thrown === null ? 'null' : typeof thrown
+    assert.equal(error?.rollbackIncomplete, true, `${label}：錯誤要標出回滾沒完成`)
+    assert.equal(error.cause, thrown, `${label}：原本丟出的值留在 cause`)
+    assert.equal(target.getItem(keys[0]), null, `${label}：刪得掉的照樣回滾`)
+    assert.equal(filesystem.files.get('DATA:backups/restore-failed.json'), sourceText, `${label}：來源照樣另存`)
+  }
 })
 
 test('Sol #6：自動還原失敗和「不需要還原」是不同的結果：要留下提示，也不啟動會輪替掉備份的定期備份', async () => {
@@ -261,7 +366,7 @@ test('Sol #6：自動還原失敗和「不需要還原」是不同的結果：�
   const target = new MemoryStorage()
   const session = new MemoryStorage()
   const started = startMobileBackups({
-    windowRef: { localStorage: failingStorage(target, 2), sessionStorage: session },
+    windowRef: { localStorage: failingStorage(target, 1), sessionStorage: session },
     documentRef: new EventTarget(),
     filesystem,
     share: null,
@@ -313,7 +418,7 @@ test('Sol 2-#2（手機）：還原失敗、另存來源也失敗 → 定期備�
     return realWrite(args)
   }
   const target = new MemoryStorage()
-  const failing = createMobileBackupStore({ filesystem, storage: failingStorage(target, 2), importCopy: importDocumentCopy })
+  const failing = createMobileBackupStore({ filesystem, storage: failingStorage(target, 1), importCopy: importDocumentCopy })
   await assert.rejects(failing.restoreLatestIfEmpty(), /Quota/)
 
   // 同步拉回了一部分、使用者繼續用：在來源保護好之前，定期備份不能輪替
@@ -395,7 +500,7 @@ test('Sol 3-#2（手機）：之前保留過的檔案，不能被另一次還原
   const sourceText = filesystem.files.get(`DATA:${mobileBackupPaths()[0]}`)
   filesystem.files.set('DATA:backups/restore-failed.json', earlierPreserved)
   const target = new MemoryStorage()
-  const failing = createMobileBackupStore({ filesystem, storage: failingStorage(target, 2), importCopy: importDocumentCopy })
+  const failing = createMobileBackupStore({ filesystem, storage: failingStorage(target, 1), importCopy: importDocumentCopy })
   await assert.rejects(failing.restoreLatestIfEmpty(), /Quota/)
 
   assert.equal(filesystem.files.get('DATA:backups/restore-failed.json'), earlierPreserved, '舊的保留檔不能被覆蓋')
@@ -407,7 +512,7 @@ test('Sol 3-#2（手機）：之前保留過的檔案，不能被另一次還原
 test('Sol 2-#2（手機）：還原寫到一半失敗、回滾也失敗 → 錯誤要明確標出「回滾沒完成」', async () => {
   const filesystem = await backupWithTwoDocuments()
   const target = new MemoryStorage()
-  const storage = new Proxy(failingStorage(target, 3), {
+  const storage = new Proxy(failingStorage(target, 2), {
     get(object, property) {
       if (property === 'removeItem') return () => { throw new Error('storage unavailable') }
       return Reflect.get(object, property)
