@@ -885,3 +885,19 @@ test('changedSince 找出同步期間被改過、被新增或被刪掉的 key', 
   assert.deepEqual(changedSince(expected, key => current[key] ?? null), ['k2', 'k3'])
   assert.deepEqual(changedSince(expected, key => ({ k1: 'v1', k3: 'v3' })[key] ?? null), [])
 })
+
+test('M1 儲存區整個遺失（沒有索引也沒有文件）不會把雲端文件全部記成刪除', () => {
+  const docs = { a: meta('a', T1), b: meta('b', T2) }
+  const result = planFor(buildLocalState({}), manifest(docs), syncedBase(docs))
+  assert.deepEqual(result.pullDocs, ['a', 'b'])
+  assert.deepEqual(result.nextManifest.tombstones, {})
+  assert.deepEqual(Object.keys(result.nextManifest.docs).sort(), ['a', 'b'])
+})
+
+test('M1 刻意刪光（空索引仍在）照常記成刪除', () => {
+  const docs = { a: meta('a', T1) }
+  const emptyIndex = JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] })
+  const result = planFor(buildLocalState({ 'mindflow.docs.index': emptyIndex }), manifest(docs), syncedBase(docs))
+  assert.deepEqual(result.pullDocs, [])
+  assert.deepEqual(Object.keys(result.nextManifest.tombstones), ['a'])
+})

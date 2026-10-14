@@ -354,7 +354,12 @@ export function computeSyncPlan({ local, remoteManifest, base, machineId, now })
   assertSupportedManifest(remoteManifest)
   const localState = normalizeLocal(local)
   const remote = normalizeManifest(remoteManifest)
-  const initialSync = base === null || base === undefined
+  // 本機儲存區整個不見（沒有索引、也沒有任何文件或損壞文件）是資料遺失，不是使用者把文件刪光：
+  // 當成首次同步只把雲端拉回來，絕不把每一份文件都記成刪除推上雲端。刻意刪光時索引仍在（空索引）。
+  const storageLost = localState.rebuilt &&
+    Object.keys(localState.docs).length === 0 &&
+    localState.quarantinedIds.length === 0
+  const initialSync = storageLost || base === null || base === undefined
   const baseManifest = initialSync ? emptyManifest() : normalizeManifest(base?.manifest)
   const basePerDoc = !initialSync && isObject(base?.perDoc) ? base.perDoc : {}
   const nowIso = isoValue(now)
