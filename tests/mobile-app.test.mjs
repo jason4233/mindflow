@@ -43,7 +43,7 @@ function nativeWindow() {
   return windowRef
 }
 
-function setup({ page = 'editor', onBack, app = new FakeApp(), clock = { value: 0 } } = {}) {
+function setup({ page = 'editor', onBack, canLeave, app = new FakeApp(), clock = { value: 0 } } = {}) {
   const windowRef = nativeWindow()
   const documentRef = new FakeDocument()
   const log = []
@@ -57,6 +57,7 @@ function setup({ page = 'editor', onBack, app = new FakeApp(), clock = { value: 
     saveNow: () => log.push('save'),
     getSyncApi: () => ({ flush: reason => log.push(`flush:${reason}`) }),
     onBack,
+    canLeave,
     showToast: message => toasts.push(message)
   })
   return { controller, app, windowRef, documentRef, log, toasts, clock }
@@ -220,4 +221,17 @@ test('scanPairingCode: unsupported device, first-time module download, cancel, f
     status: 'ok',
     pairing: { repo: 'chenrui/mindflow-data', branch: 'sync', token }
   })
+})
+
+test('審查 HIGH 3：存檔被擋住（衝突橫幅或空間不足）時返回鍵不離開編輯器', async () => {
+  let blocked = true
+  const env = setup({ canLeave: () => !blocked })
+  await env.controller.ready
+  env.app.emit('backButton', {})
+  assert.deepEqual(env.log, ['save', 'flush:back-button'], '仍然先嘗試存檔與推送')
+  assert.equal(env.windowRef.location.href, 'editor.html?id=doc_1', '沒存好就不離開')
+  assert.match(env.toasts.at(-1), /沒有存好/)
+  blocked = false
+  env.app.emit('backButton', {})
+  assert.equal(env.windowRef.location.href, 'index.html')
 })

@@ -16,6 +16,7 @@ import {
   updateRef
 } from './sync-github.mjs'
 import {
+  STORE_EPOCH_KEY,
   SyncLocalChangedError,
   SyncSchemaError,
   buildConflictCopy,
@@ -24,6 +25,8 @@ import {
   computeLocalWrites,
   computeSyncPlan,
   emptyManifest,
+  newStoreEpoch,
+  trustedBase,
   writeExpectations
 } from './sync-plan.mjs'
 import {
@@ -81,7 +84,8 @@ function normalizeState(value, fallbackMachineId) {
       ? source.machineId
       : fallbackMachineId,
     etag: typeof source.etag === 'string' ? source.etag : null,
-    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null
+    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null,
+    storeEpoch: typeof source.storeEpoch === 'string' ? source.storeEpoch : null
   }
 }
 
@@ -530,9 +534,7 @@ class SyncEngine {
     const remoteManifest = manifestEntry
       ? JSON.parse(await getBlobRaw(this.cfg, manifestEntry.sha))
       : emptyManifest()
-    const base = previousState.lastSyncedCommitSha && previousState.baseManifest
-      ? { manifest: previousState.baseManifest, perDoc: previousState.perDoc }
-      : null
+    const base = trustedBase(previousState, entries)
     const plan = computeSyncPlan({
       local: localState,
       remoteManifest,
@@ -624,6 +626,8 @@ class SyncEngine {
         if (key !== INDEX_KEY && key.endsWith(`.${id}`)) removeKeys.add(key)
       }
     }
+    const storeEpoch = typeof entries[STORE_EPOCH_KEY] === 'string' && entries[STORE_EPOCH_KEY] ? entries[STORE_EPOCH_KEY] : newStoreEpoch()
+    if (entries[STORE_EPOCH_KEY] !== storeEpoch) setKeys[STORE_EPOCH_KEY] = storeEpoch
     const writes = { setKeys, removeKeys: [...removeKeys] }
     const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
       Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
@@ -682,7 +686,8 @@ class SyncEngine {
         perDoc: plan.nextPerDoc,
         machineId: previousState.machineId,
         etag: ref.etag,
-        lastSyncAt: syncNow.toISOString()
+        lastSyncAt: syncNow.toISOString(),
+        storeEpoch
       },
       quarantinedIds: plan.quarantinedIds
     }

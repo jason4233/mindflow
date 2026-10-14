@@ -6,13 +6,20 @@
   is still included. mindflow_secure.xml holds values encrypted with an Android
   Keystore key that is never backed up or transferred, so a restored copy would be
   undecryptable; it is excluded from both cloud backup and device-to-device transfer.
+  CapacitorStorage.xml (Capacitor Preferences) is excluded too: it holds the sync
+  settings, the sync base and the device id, and on the fallback path (no Keystore)
+  the PAT itself. A restored copy must never resurrect a token or an old sync base,
+  and two phones must not share one device id; after a restore the app simply asks
+  for pairing again and the first sync only merges.
   Keep this file in sync with backup_rules.xml (Android 11 and older).
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="mindflow_secure.xml" />
+        <exclude domain="sharedpref" path="CapacitorStorage.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="mindflow_secure.xml" />
+        <exclude domain="sharedpref" path="CapacitorStorage.xml" />
     </device-transfer>
 </data-extraction-rules>

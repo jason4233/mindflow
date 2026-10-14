@@ -66,4 +66,8 @@ test('Android workflow keeps secrets out of logs and PRs away from releases', as
   assert.match(publish, /"\$main_sha" != "\$GITHUB_SHA"/, 'latest must keep the stale-run guard')
   assert.match(publish, /gh release upload latest "\$stable" "\$versioned" --clobber/)
   assert.match(publish, /gh release delete-asset latest/)
+  // 拋棄式簽章的 APK 無法覆蓋安裝：只發 MindFlow.apk，不放帶版號的檔案，App 內就不會提示更新。
+  assert.match(publish, /if \[\[ "\$SIGNING_MODE" == "release" \]\]; then\s+gh release upload latest "\$stable" "\$versioned"/)
+  assert.match(publish, /else[\s\S]*?gh release upload latest "\$stable" --clobber/)
+  assert.match(workflow, /signing_mode: \$\{\{ steps\.signing\.outputs\.mode \}\}/)
 })

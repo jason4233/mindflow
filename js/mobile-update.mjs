@@ -118,7 +118,8 @@ export function showUpdateBanner(result, {
   banner.dataset.updateBanner = 'true'
   banner.setAttribute('role', 'status')
   const text = documentRef.createElement('p')
-  text.textContent = `有新版 MindFlow 可以安裝（版本 ${result.latest.versionCode}，目前 ${result.current.versionCode}）。下載後點開 APK 即可覆蓋安裝，資料會保留。`
+  // 只有正式簽章的 APK 會帶版號發佈（android.yml），通常可直接覆蓋安裝；換簽章的那一次例外，所以提醒先匯出備份。
+  text.textContent = `有新版 MindFlow 可以安裝（版本 ${result.latest.versionCode}，目前 ${result.current.versionCode}）。下載後點開 APK 覆蓋安裝；若手機說無法安裝，請先到同步設定「匯出備份」，不要直接解除安裝。`
   const download = documentRef.createElement('button')
   download.type = 'button'
   download.className = 'is-primary'
