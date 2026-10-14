@@ -1,5 +1,13 @@
 {
   "appId": "com.mindflow.app",
   "appName": "MindFlow",
-  "webDir": "www"
+  "webDir": "www",
+  "android": {
+    "minWebViewVersion": 108
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native"
+    }
+  }
 }
