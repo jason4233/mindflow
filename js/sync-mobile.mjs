@@ -14,6 +14,10 @@ export const MOBILE_SYNC_CONFIG_KEY = 'mindflow.sync.mobile.config'
 export const MOBILE_SYNC_TOKEN_KEY = 'mindflow.sync.mobile.token'
 export const MOBILE_SYNC_STATE_KEY = 'mindflow.sync.mobile.state'
 export const MOBILE_SYNC_CHANGE_DEBOUNCE_MS = 45_000
+export const MOBILE_SYNC_PULL_INTERVAL_MS = 5 * 60_000
+export const MOBILE_SYNC_RETRY_INITIAL_MS = 30_000
+export const MOBILE_SYNC_RETRY_MAX_MS = 5 * 60_000
+const DIAGNOSTIC_LIMIT = 30
 
 const DEFAULT_API_BASE = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
@@ -339,6 +343,8 @@ function createGitHubClient(fetchFn) {
     const apiBase = String(cfg.apiBase || DEFAULT_API_BASE).replace(/\/+$/u, '')
     const init = {
       method,
+      // WebView 的 HTTP 快取可能回舊的分支頭，讓兩台裝置互相看不到對方的推送。
+      cache: 'no-store',
       headers: {
         accept: 'application/vnd.github+json',
         authorization: `Bearer ${cfg.token}`,
@@ -668,28 +674,68 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
 
 export function createMobileSyncLifecycle({
   syncNow,
+  pollRemote,
   documentRef = globalThis.document,
+  windowRef = globalThis.window,
   observeLocalChanges,
   debounceMs = MOBILE_SYNC_CHANGE_DEBOUNCE_MS,
+  pullIntervalMs = MOBILE_SYNC_PULL_INTERVAL_MS,
   setTimeoutFn = globalThis.setTimeout,
-  clearTimeoutFn = globalThis.clearTimeout
+  clearTimeoutFn = globalThis.clearTimeout,
+  setIntervalFn = globalThis.setInterval,
+  clearIntervalFn = globalThis.clearInterval
 } = {}) {
   if (typeof syncNow !== 'function') throw new TypeError('syncNow is required')
   if (typeof observeLocalChanges !== 'function') throw new TypeError('observeLocalChanges is required')
   let started = false
   let changeTimer = null
+  let pullTimer = null
   let unsubscribe = null
+
+  const hidden = () => documentRef?.visibilityState === 'hidden'
+  const pull = () => (typeof pollRemote === 'function' ? pollRemote() : syncNow({ reason: 'poll' }))
+
+  // 只在前景輪詢：背景時 Android 會凍結 WebView，計時器也沒意義，回前景時會立即同步一次。
+  const startPolling = () => {
+    if (pullTimer || !(pullIntervalMs > 0) || typeof setIntervalFn !== 'function') return
+    pullTimer = setIntervalFn(() => Promise.resolve().then(pull).catch(() => {}), pullIntervalMs)
+    pullTimer?.unref?.()
+  }
+  const stopPolling = () => {
+    if (!pullTimer) return
+    clearIntervalFn?.(pullTimer)
+    pullTimer = null
+  }
+  const flushPendingChange = reason => {
+    if (!changeTimer) return
+    clearTimeoutFn(changeTimer)
+    changeTimer = null
+    void syncNow({ reason })
+  }
 
   const onLocalChange = () => {
     clearTimeoutFn(changeTimer)
+    changeTimer = null
+    // App 已進背景還在存檔（例如離開時的最後一次存檔）：不等 45 秒，趁 WebView 被凍結前直接推送。
+    if (hidden()) {
+      void syncNow({ reason: 'hidden-change' })
+      return
+    }
     changeTimer = setTimeoutFn(() => {
       changeTimer = null
       return syncNow({ reason: 'local-change' })
     }, debounceMs)
   }
   const onVisibilityChange = () => {
-    if (documentRef?.visibilityState === 'visible') void syncNow({ reason: 'visibility' })
+    if (documentRef?.visibilityState === 'visible') {
+      startPolling()
+      void syncNow({ reason: 'visibility' })
+    } else if (hidden()) {
+      stopPolling()
+      flushPendingChange('hidden')
+    }
   }
+  const onOnline = () => { void syncNow({ reason: 'online' }) }
 
   return Object.freeze({
     async start() {
@@ -697,16 +743,24 @@ export function createMobileSyncLifecycle({
       started = true
       unsubscribe = observeLocalChanges(onLocalChange)
       documentRef?.addEventListener?.('visibilitychange', onVisibilityChange)
+      windowRef?.addEventListener?.('online', onOnline)
+      if (!hidden()) startPolling()
       await syncNow({ reason: 'startup' })
+    },
+    /** 有尚未推送的本機修改就立刻推送（App 進背景、返回鍵離開時用）。 */
+    flush(reason = 'flush') {
+      flushPendingChange(reason)
     },
     stop() {
       if (!started) return
       started = false
       clearTimeoutFn(changeTimer)
       changeTimer = null
+      stopPolling()
       unsubscribe?.()
       unsubscribe = null
       documentRef?.removeEventListener?.('visibilitychange', onVisibilityChange)
+      windowRef?.removeEventListener?.('online', onOnline)
     }
   })
 }
@@ -746,8 +800,13 @@ export function createMobileSyncApi({
   dispatchSyncApplied,
   windowRef = globalThis.window,
   debounceMs = MOBILE_SYNC_CHANGE_DEBOUNCE_MS,
+  pullIntervalMs = MOBILE_SYNC_PULL_INTERVAL_MS,
+  retryInitialMs = MOBILE_SYNC_RETRY_INITIAL_MS,
+  retryMaxMs = MOBILE_SYNC_RETRY_MAX_MS,
   setTimeoutFn = globalThis.setTimeout,
-  clearTimeoutFn = globalThis.clearTimeout
+  clearTimeoutFn = globalThis.clearTimeout,
+  setIntervalFn = globalThis.setInterval,
+  clearIntervalFn = globalThis.clearInterval
 } = {}) {
   if (!storage || !hasMethods(storage, ['getItem', 'setItem', 'removeItem', 'key'])) {
     throw new TypeError('localStorage is required')
@@ -763,6 +822,9 @@ export function createMobileSyncApi({
   let runningSync = null
   let applyingRemote = false
   let disposed = false
+  let retryTimer = null
+  let retryDelayMs = retryInitialMs
+  const diagnostics = []
 
   const ready = preferenceStore.load().then(loaded => {
     config = { ...loaded.config, apiBase }
@@ -797,6 +859,57 @@ export function createMobileSyncApi({
     }
   }
 
+  // 同步診斷紀錄：只留最近幾筆、只在記憶體，錯誤訊息一律先遮掉權杖。
+  function recordDiagnostic(entry) {
+    diagnostics.push({ at: now().toISOString(), ...entry })
+    if (diagnostics.length > DIAGNOSTIC_LIMIT) diagnostics.splice(0, diagnostics.length - DIAGNOSTIC_LIMIT)
+  }
+
+  function cancelRetry() {
+    clearTimeoutFn(retryTimer)
+    retryTimer = null
+  }
+
+  function resetRetry() {
+    cancelRetry()
+    retryDelayMs = retryInitialMs
+  }
+
+  // 與電腦版相同的退避：30 秒起跳、每次加倍、最多 5 分鐘；網路恢復或回前景會提早觸發同步。
+  function scheduleRetry(error) {
+    // 雲端是較新格式、或權杖／repo 設定錯誤時，重試只會一直失敗：等使用者處理。
+    if (error instanceof SyncSchemaError) return
+    if (error instanceof MobileSyncHttpError && error.retryable === false && ![0, 409, 422].includes(error.status)) return
+    if (!lifecycleStarted || disposed || !isEnabled() || retryTimer) return
+    const delay = retryDelayMs
+    retryDelayMs = Math.min(retryMaxMs, delay * 2)
+    retryTimer = setTimeoutFn(() => {
+      retryTimer = null
+      void api.syncNow({ reason: 'retry' })
+    }, delay)
+  }
+
+  function reportFailure(error) {
+    const offline = error instanceof MobileSyncHttpError && error.status === 0
+    const message = safeErrorMessage(error, config.token)
+    setStatus({ state: offline ? 'offline' : 'error', lastError: message })
+    scheduleRetry(error)
+    return message
+  }
+
+  async function pollRemote() {
+    if (disposed || !isEnabled() || runningSync) return
+    try {
+      const result = await client.getRef(config, { etag: state.etag || undefined })
+      // 分支頭沒變而且上次同步成功就什麼都不做（304 不算 GitHub 的速率限額）；上次失敗則趁連得上補一次。
+      const recovering = status.state === 'offline' || status.state === 'error'
+      if (!result.notModified || recovering) await api.syncNow({ reason: result.notModified ? 'recover' : 'etag-pull' })
+    } catch (error) {
+      const message = reportFailure(error)
+      recordDiagnostic({ reason: 'poll', ok: false, error: message })
+    }
+  }
+
   function ensureLifecycle() {
     if (lifecycle) return lifecycle
     const observer = typeof observeLocalChanges === 'function'
@@ -804,10 +917,15 @@ export function createMobileSyncApi({
       : callback => observeMindflowStorage(storage, callback)
     lifecycle = createMobileSyncLifecycle({
       syncNow: options => api.syncNow(options),
+      pollRemote,
       documentRef,
+      windowRef,
       debounceMs,
+      pullIntervalMs,
       setTimeoutFn,
       clearTimeoutFn,
+      setIntervalFn,
+      clearIntervalFn,
       observeLocalChanges(callback) {
         return observer(() => {
           // 遠端套用會經同一個 Storage API；這批權威寫入不可再排成「本機存檔」。
@@ -907,6 +1025,7 @@ export function createMobileSyncApi({
         if (!isEnabled()) {
           lifecycle?.stop()
           lifecycleStarted = false
+          resetRetry()
           setStatus({ state: 'disabled', lastError: null, warning: null })
         } else {
           setStatus({ state: 'idle', lastError: null })
@@ -917,22 +1036,38 @@ export function createMobileSyncApi({
         return { ok: false, error: safeErrorMessage(error, suppliedToken) }
       }
     },
-    async syncNow(_options = {}) {
+    async syncNow(options = {}) {
       await ready
       if (disposed || !isEnabled()) {
         setStatus({ state: 'disabled', lastError: null })
         return { ok: false, error: 'Sync is disabled' }
       }
       if (runningSync) return runningSync
+      const reason = typeof options?.reason === 'string' ? options.reason : 'manual'
+      const startedAt = Date.now()
+      // 這次同步本身就是重試；排著的下一次重試由這次的結果決定要不要再排。
+      cancelRetry()
       runningSync = runSync()
-        .then(outcome => outcome.warning ? { ok: true, warning: outcome.warning } : { ok: true })
+        .then(outcome => {
+          resetRetry()
+          recordDiagnostic({ reason, ok: true, durationMs: Date.now() - startedAt, ...(outcome.warning ? { warning: outcome.warning } : {}) })
+          return outcome.warning ? { ok: true, warning: outcome.warning } : { ok: true }
+        })
         .catch(error => {
-          const offline = error instanceof MobileSyncHttpError && error.status === 0
-          setStatus({ state: offline ? 'offline' : 'error', lastError: safeErrorMessage(error, config.token) })
-          return { ok: false, error: safeErrorMessage(error, config.token) }
+          const message = reportFailure(error)
+          recordDiagnostic({ reason, ok: false, durationMs: Date.now() - startedAt, error: message })
+          return { ok: false, error: message }
         })
         .finally(() => { runningSync = null })
       return runningSync
+    },
+    /** 有尚未推送的本機修改就立刻推送；App 進背景或返回鍵離開時呼叫。 */
+    flush(reason = 'flush') {
+      lifecycle?.flush(reason)
+    },
+    async getDiagnostics() {
+      await ready
+      return diagnostics.map(entry => ({ ...entry }))
     },
     async getStatus() {
       await ready
@@ -947,6 +1082,7 @@ export function createMobileSyncApi({
       disposed = true
       lifecycle?.stop()
       lifecycleStarted = false
+      resetRetry()
       await runningSync?.catch(() => {})
       listeners.clear()
     }

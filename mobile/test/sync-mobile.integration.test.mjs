@@ -332,3 +332,65 @@ test('M1 版本閘門（手機）：雲端是較新格式 → 停止同步、顯
     await env.close()
   }
 })
+
+test('M1 前景輪詢（手機）：分支頭沒變只花一個 304 請求；電腦推送後下一次輪詢就拉回來', async () => {
+  const server = await startFakeGitHubServer({ owner: 'chenrui', repo: 'mindflow-data', branch: 'main' })
+  const userDataPath = await mkdtemp(join(tmpdir(), 'mindflow-m1-poll-'))
+  const token = 'github_pat_M1_POLL_SECRET'
+  const desktopStorage = new MemoryStorage()
+  const mobileStorage = new MemoryStorage()
+  const pollers = []
+  const documentRef = new EventTarget()
+  documentRef.visibilityState = 'visible'
+  const desktop = createSyncEngineForTest({
+    userDataPath,
+    machineId: 'desktop-poll',
+    now: () => new Date('2026-09-02T10:00:00.000Z'),
+    cfg: { apiBase: server.apiBase, token, repo: 'chenrui/mindflow-data', branch: 'main', enabled: true },
+    readEntries: async () => desktopStorage.snapshot(),
+    applyWrites: async writes => desktopStorage.applyWrites(writes)
+  })
+  const mobile = createMobileSyncApi({
+    preferences: new MemoryPreferences(),
+    storage: mobileStorage,
+    fetchFn: fetch,
+    apiBase: server.apiBase,
+    machineId: 'android-poll',
+    now: () => new Date('2026-09-02T10:00:00.000Z'),
+    autoStart: true,
+    documentRef,
+    windowRef: new EventTarget(),
+    observeLocalChanges: () => () => {},
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+    setIntervalFn: callback => { pollers.push(callback); return pollers.length },
+    clearIntervalFn: () => {},
+    dispatchSyncApplied() {}
+  })
+  try {
+    seedDoc(desktopStorage, { id: 'first', title: '第一份', at: '2026-09-02T09:00:00.000Z' })
+    assert.deepEqual(await desktop.syncNow({ reason: 'seed' }), { ok: true })
+    assert.deepEqual(await mobile.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token }), { ok: true })
+    assert.equal(JSON.parse(mobileStorage.getItem('mindflow.doc.first')).title, '第一份')
+    assert.equal(pollers.length, 1)
+
+    // 啟動同步之後第一次輪詢：上次存的 ETag 已是現在的分支頭 → 一個 304，不做完整同步
+    const before = server.requests.length
+    await pollers[0]()
+    const pollRequests = server.requests.slice(before)
+    assert.deepEqual(pollRequests.map(request => [request.method, request.status]), [['GET', 304]])
+
+    seedDoc(desktopStorage, { id: 'second', title: '電腦新增', at: '2026-09-02T09:30:00.000Z' })
+    assert.deepEqual(await desktop.syncNow({ reason: 'desktop-edit' }), { ok: true })
+    await pollers[0]()
+    assert.equal(JSON.parse(mobileStorage.getItem('mindflow.doc.second')).title, '電腦新增')
+    const diagnostics = await mobile.getDiagnostics()
+    assert.ok(diagnostics.some(entry => entry.reason === 'etag-pull' && entry.ok))
+    assert.equal(JSON.stringify(diagnostics).includes(token), false)
+  } finally {
+    await mobile.dispose()
+    await desktop.dispose()
+    await rm(userDataPath, { recursive: true, force: true })
+    await server.close()
+  }
+})
