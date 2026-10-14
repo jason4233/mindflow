@@ -109,7 +109,13 @@ export function registerPairingIpc({
       clearTimeoutFn(timer)
       if (current === window) current = null
     })
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(pairingWindowHtml({ payload, repo: pairing.repo }))}`)
+    try {
+      await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(pairingWindowHtml({ payload, repo: pairing.repo }))}`)
+    } catch {
+      // Electron 的載入錯誤訊息會帶出 data: URL 的開頭；不記錄、不回傳任何細節。
+      if (!window.isDestroyed()) window.close()
+      return { ok: false, error: '無法顯示配對 QR，請再試一次。' }
+    }
     return { ok: true }
   }
 

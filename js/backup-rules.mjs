@@ -51,7 +51,8 @@ export function normalizeMindflowEntries(entries) {
 
   return Object.fromEntries(
     Object.entries(entries)
-      .filter(([key, value]) => key.startsWith('mindflow.') && typeof value === 'string')
+      // mindflow.sync.*（例如本機儲存區識別碼）屬於同步內部狀態，不能被備份還原回來，否則識別不出「這是還原的資料」。
+      .filter(([key, value]) => key.startsWith('mindflow.') && !key.startsWith('mindflow.sync.') && typeof value === 'string')
       .sort(([left], [right]) => left.localeCompare(right))
   )
 }

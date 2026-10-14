@@ -111,8 +111,9 @@ test('successful sync persists only the frozen sync-state schema and never persi
   const stateText = await readFile(join(fixture.directory, 'sync-state.json'), 'utf8')
   const state = JSON.parse(stateText)
   assert.deepEqual(Object.keys(state).sort(), [
-    'baseManifest', 'etag', 'lastSyncAt', 'lastSyncedCommitSha', 'machineId', 'perDoc'
+    'baseManifest', 'etag', 'lastSyncAt', 'lastSyncedCommitSha', 'machineId', 'perDoc', 'storeEpoch'
   ])
+  assert.equal(typeof state.storeEpoch, 'string', '本機儲存區識別碼與 base 一起保存')
   assert.equal(state.lastSyncAt, '2026-08-30T05:00:00.000Z')
   assert.equal(state.machineId, 'unit-machine')
   assert.equal(state.baseManifest.docs.alpha.title, 'Alpha')

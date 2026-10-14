@@ -105,3 +105,16 @@ test('pairingWindowHtml escapes the repo name', () => {
   assert.equal(html.includes('<img src=x>'), false)
   assert.match(html, /&lt;img src=x&gt;/)
 })
+
+test('a failed load closes the window and returns no details (the error text would contain the data: URL)', async () => {
+  const env = setup()
+  const original = FakeWindow.prototype.loadURL
+  FakeWindow.prototype.loadURL = async function (url) { throw new Error(`ERR_ABORTED loading ${url.slice(0, 2048)}`) }
+  try {
+    const result = await env.invoke()
+    assert.deepEqual(result, { ok: false, error: '無法顯示配對 QR，請再試一次。' })
+    assert.equal(FakeWindow.created[0].destroyed, true)
+  } finally {
+    FakeWindow.prototype.loadURL = original
+  }
+})

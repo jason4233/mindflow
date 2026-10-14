@@ -51,6 +51,7 @@ jobs:
     outputs:
       version_code: ${{ steps.version.outputs.code }}
       artifact: ${{ steps.package.outputs.artifact }}
+      signing_mode: ${{ steps.signing.outputs.mode }}
 
     steps:
       - name: Check out repository
@@ -318,6 +319,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_CODE: ${{ needs.build.outputs.version_code }}
+          SIGNING_MODE: ${{ needs.build.outputs.signing_mode }}
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
@@ -345,13 +347,22 @@ jobs:
           fi
 
           # MindFlow.apk is the stable download link; MindFlow-<versionCode>.apk is what the app's
-          # update check looks for in the latest release.
-          gh release upload latest "$stable" "$versioned" --clobber --repo "$repo"
+          # update check looks for in the latest release. A throwaway-signed APK cannot be installed
+          # over the previous one, so it must never trigger the in-app "install the update" prompt:
+          # only release-signed builds get a versioned asset.
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            gh release upload latest "$stable" "$versioned" --clobber --repo "$repo"
+            keep="$versioned_name"
+          else
+            echo "::warning title=No in-app update prompt::This APK uses a throwaway signing key, so only MindFlow.apk is published and the app will not offer it as an update."
+            gh release upload latest "$stable" --clobber --repo "$repo"
+            keep=""
+          fi
 
-          # Keep exactly one versioned APK on latest (uploaded first, so there is never a gap).
+          # Keep at most one versioned APK on latest (uploaded first, so there is never a gap).
           gh release view latest --repo "$repo" --json assets --jq ".assets[].name" |
             while IFS= read -r asset; do
-              if [[ "$asset" =~ ^MindFlow-[0-9]+\.apk$ && "$asset" != "$versioned_name" ]]; then
+              if [[ "$asset" =~ ^MindFlow-[0-9]+\.apk$ && "$asset" != "$keep" ]]; then
                 echo "Removing outdated asset $asset"
                 gh release delete-asset latest "$asset" --yes --repo "$repo"
               fi

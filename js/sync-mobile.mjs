@@ -1,4 +1,5 @@
 import {
+  STORE_EPOCH_KEY,
   SyncLocalChangedError,
   SyncSchemaError,
   buildConflictCopy,
@@ -7,6 +8,8 @@ import {
   computeLocalWrites,
   computeSyncPlan,
   emptyManifest,
+  newStoreEpoch,
+  trustedBase,
   writeExpectations
 } from './sync-plan.mjs'
 
@@ -18,6 +21,7 @@ export const MOBILE_SYNC_PULL_INTERVAL_MS = 5 * 60_000
 export const MOBILE_SYNC_RETRY_INITIAL_MS = 30_000
 export const MOBILE_SYNC_RETRY_MAX_MS = 5 * 60_000
 const DIAGNOSTIC_LIMIT = 30
+const LOCAL_CHANGE_REASONS = new Set(['local-change', 'hidden-change', 'hidden', 'flush', 'back-button', 'app-pause', 'pagehide', 'exit', 'config'])
 
 const DEFAULT_API_BASE = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
@@ -128,7 +132,8 @@ function normalizeState(value, machineId) {
     perDoc: isObject(source.perDoc) ? source.perDoc : {},
     machineId: typeof source.machineId === 'string' && source.machineId ? source.machineId : machineId,
     etag: typeof source.etag === 'string' ? source.etag : null,
-    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null
+    lastSyncAt: typeof source.lastSyncAt === 'string' ? source.lastSyncAt : null,
+    storeEpoch: typeof source.storeEpoch === 'string' ? source.storeEpoch : null
   }
 }
 
@@ -381,6 +386,8 @@ function createPreferencesStore(preferences, machineIdOverride, secureStorage = 
           return
         } catch {
           // 安全儲存寫入失敗：退回 Preferences，不能讓使用者剛輸入的 PAT 消失。
+          // 安全儲存裡的舊值盡量清掉，否則下次啟動會被舊值蓋回去（或清除權杖後又復活）。
+          await secure.remove({ key: MOBILE_SYNC_TOKEN_KEY }).catch(() => {})
         }
       }
       tokenStorage = 'preferences'
@@ -584,9 +591,7 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
   const remoteManifest = manifestEntry
     ? JSON.parse(await client.getBlobRaw(cfg, manifestEntry.sha))
     : emptyManifest()
-  const base = state.lastSyncedCommitSha && state.baseManifest
-    ? { manifest: state.baseManifest, perDoc: state.perDoc }
-    : null
+  const base = trustedBase(state, entries)
   const plan = computeSyncPlan({
     local: localState,
     remoteManifest,
@@ -678,6 +683,8 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
       if (key !== INDEX_KEY && key.endsWith(`.${id}`)) removeKeys.add(key)
     }
   }
+  const storeEpoch = typeof entries[STORE_EPOCH_KEY] === 'string' && entries[STORE_EPOCH_KEY] ? entries[STORE_EPOCH_KEY] : newStoreEpoch()
+  if (entries[STORE_EPOCH_KEY] !== storeEpoch) setKeys[STORE_EPOCH_KEY] = storeEpoch
   const writes = { setKeys, removeKeys: [...removeKeys] }
   const localChanged = writes.removeKeys.some(key => Object.hasOwn(entries, key)) ||
     Object.entries(writes.setKeys).some(([key, value]) => entries[key] !== value)
@@ -729,7 +736,8 @@ async function reconcileAttempt({ cfg, state, storage, client, syncNow, pushedTh
       perDoc: plan.nextPerDoc,
       machineId: state.machineId,
       etag: ref.etag,
-      lastSyncAt: syncNow.toISOString()
+      lastSyncAt: syncNow.toISOString(),
+      storeEpoch
     },
     quarantinedIds: plan.quarantinedIds
   }
@@ -889,6 +897,8 @@ export function createMobileSyncApi({
   let disposed = false
   let retryTimer = null
   let retryDelayMs = retryInitialMs
+  let rerunRequested = false
+  let reconfiguring = Promise.resolve()
   const diagnostics = []
 
   // startGate：App 啟動時的備份還原檢查；完成前不讀本機狀態、不開始同步。
@@ -1093,17 +1103,25 @@ export function createMobileSyncApi({
       if (next.enabled && (!next.repo || !next.token)) {
         return { ok: false, error: 'Enabled sync requires a repository and token' }
       }
+      // 設定變更期間不准開始新的同步（計時器觸發的同步會用舊 repo 跑、把舊 base 寫回來）。
+      let finishReconfigure
+      const previousReconfigure = reconfiguring
+      reconfiguring = new Promise(resolve => { finishReconfigure = resolve })
+      await previousReconfigure
       try {
         // 換到別的 repo／分支：舊 repo 的 base 不能拿來跟新 repo 比（會誤判刪除），改當首次同步只做聯集。
         const targetChanged = Boolean(config.repo) && (next.repo !== config.repo || next.branch !== config.branch)
+        const credentialsChanged = targetChanged || Object.hasOwn(patch, 'token')
         // 進行中的同步結束時會寫回舊 repo 的狀態；先等它結束再重設，免得被蓋回去。
-        if (targetChanged) await runningSync?.catch(() => {})
-        await preferenceStore.saveConfig(next, { tokenChanged: Object.hasOwn(patch, 'token') })
+        await runningSync?.catch(() => {})
         if (targetChanged) {
+          // 先重設 base 再存新設定：中途失敗也不會讓新 repo 配上舊 base。
           state = normalizeState(null, state.machineId)
           await preferenceStore.saveState(state)
         }
+        await preferenceStore.saveConfig(next, { tokenChanged: Object.hasOwn(patch, 'token') })
         config = { ...next, apiBase }
+        finishReconfigure()
         if (!isEnabled()) {
           lifecycle?.stop()
           lifecycleStarted = false
@@ -1111,11 +1129,17 @@ export function createMobileSyncApi({
           setStatus({ state: 'disabled', lastError: null, warning: null })
         } else {
           setStatus({ state: 'idle', lastError: null })
-          if (autoStart) await api.start()
+          if (autoStart) {
+            // 已在運作時 start() 不會再同步一次：配對或換 repo 後要立刻同步，而不是等下一次輪詢。
+            if (lifecycleStarted && credentialsChanged) await api.syncNow({ reason: 'config' })
+            else await api.start()
+          }
         }
         return { ok: true }
       } catch (error) {
         return { ok: false, error: safeErrorMessage(error, suppliedToken) }
+      } finally {
+        finishReconfigure()
       }
     },
     async syncNow(options = {}) {
@@ -1124,7 +1148,14 @@ export function createMobileSyncApi({
         setStatus({ state: 'disabled', lastError: null })
         return { ok: false, error: 'Sync is disabled' }
       }
-      if (runningSync) return runningSync
+      await reconfiguring
+      if (disposed || !isEnabled()) return { ok: false, error: 'Sync is disabled' }
+      if (runningSync) {
+        // 因為本機剛有修改而要求的同步撞上正在跑的一輪：那一輪可能是修改之前讀的快照，
+        // 結束後再跑一次，否則「進背景立即推送」會默默沒推。
+        if (LOCAL_CHANGE_REASONS.has(options?.reason)) rerunRequested = true
+        return runningSync
+      }
       const reason = typeof options?.reason === 'string' ? options.reason : 'manual'
       const startedAt = Date.now()
       // 這次同步本身就是重試；排著的下一次重試由這次的結果決定要不要再排。
@@ -1140,7 +1171,14 @@ export function createMobileSyncApi({
           recordDiagnostic({ reason, ok: false, durationMs: Date.now() - startedAt, error: message })
           return { ok: false, error: message }
         })
-        .finally(() => { runningSync = null })
+        .finally(() => {
+          runningSync = null
+          if (rerunRequested && !disposed && isEnabled()) {
+            rerunRequested = false
+            void api.syncNow({ reason: 'rerun' })
+          }
+          rerunRequested = false
+        })
       return runningSync
     },
     /** 有尚未推送的本機修改就立刻推送；App 進背景或返回鍵離開時呼叫。 */

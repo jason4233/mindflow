@@ -479,6 +479,8 @@ window.addEventListener('beforeunload', () => saveNow(true))
 initializeMobileApp({
   page: 'editor',
   saveNow: () => saveNow(true),
+  // 存檔被衝突擋住或寫入失敗時 dirty 仍為 true：不能離開，否則記憶體裡的修改會遺失。
+  canLeave: () => !saveBlocked && !dirty,
   getSyncApi: getMobileSyncApi,
   onBack() {
     if (!edit.isEditing) return false

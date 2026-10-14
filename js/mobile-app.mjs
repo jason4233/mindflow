@@ -17,6 +17,8 @@ export const EXIT_CONFIRM_WINDOW_MS = 2_000
 export function initializeMobileApp({
   page,
   saveNow = () => {},
+  // 存檔後是否真的可以離開（例如衝突橫幅擋住存檔、或儲存空間已滿時不能離開，否則記憶體裡的修改會遺失）
+  canLeave = () => true,
   onBack = () => false,
   getSyncApi = () => null,
   windowRef = globalThis.window,
@@ -54,8 +56,12 @@ export function initializeMobileApp({
     if (closeTopDialog()) return
     if (onBack()) return
     if (page === 'editor') {
-      leaving = true
       persist('back-button')
+      if (!canLeave()) {
+        showToast('還有修改沒有存好，請先處理上方的提示再離開。')
+        return
+      }
+      leaving = true
       windowRef.location.href = 'index.html'
       return
     }

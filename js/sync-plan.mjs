@@ -25,6 +25,24 @@ export class SyncLocalChangedError extends Error {
   }
 }
 
+// 本機儲存區的識別碼：每次同步成功時同時存在同步狀態與 localStorage（不進備份、不同步）。
+// 兩邊對不上＝這份本機資料不是 base 當時的那一份（WebView 資料遺失、從備份還原、搬進舊資料），
+// 此時 base 不可信，必須當成首次同步（只做聯集），否則會把雲端文件當成「本機刪掉的」而刪光或回退。
+export const STORE_EPOCH_KEY = 'mindflow.sync.storeEpoch'
+
+export function newStoreEpoch() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+/** 只有 base 與本機儲存區是同一份（識別碼相符）時才回傳 base；否則回傳 null（首次同步）。 */
+export function trustedBase(state, entries) {
+  if (!state?.lastSyncedCommitSha || !state?.baseManifest) return null
+  const marker = isObject(entries) ? entries[STORE_EPOCH_KEY] : undefined
+  if (typeof state.storeEpoch !== 'string' || !state.storeEpoch || marker !== state.storeEpoch) return null
+  return { manifest: state.baseManifest, perDoc: isObject(state.perDoc) ? state.perDoc : {} }
+}
+
 const INDEX_KEY = 'mindflow.docs.index'
 const DOC_PREFIX = 'mindflow.doc.'
 const HISTORY_PREFIX = 'mindflow.history.'

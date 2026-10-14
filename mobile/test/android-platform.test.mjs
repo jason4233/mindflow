@@ -78,7 +78,7 @@ test('MindflowSecureStorage is a registered local plugin with the agreed contrac
   assert.match(plugin, /Pattern\.compile\("\[A-Za-z0-9\._-\]\{1,128\}"\)/)
 })
 
-test('Auto Backup keeps app data but excludes the undecryptable secure-storage file', async () => {
+test('Auto Backup keeps mind maps but excludes the undecryptable secure storage and the Preferences sync state', async () => {
   const manifest = await readPlatformFile('app/src/main/AndroidManifest.xml')
   const extractionRules = await readPlatformFile('app/src/main/res/xml/data_extraction_rules.xml')
   const backupRules = await readPlatformFile('app/src/main/res/xml/backup_rules.xml')
@@ -92,9 +92,11 @@ test('Auto Backup keeps app data but excludes the undecryptable secure-storage f
     const body = extractionRules.match(new RegExp(`<${section}>([\\s\\S]*?)</${section}>`))?.[1]
     assert.ok(body, `${section} rules must exist`)
     assert.match(body, secureExclude, `${section} must exclude mindflow_secure.xml`)
+    assert.match(body, /<exclude domain="sharedpref" path="CapacitorStorage\.xml" \/>/, `${section} must exclude Capacitor Preferences (sync base, device id, fallback PAT)`)
   }
   assert.match(backupRules, secureExclude)
-  // Exclude-only rules keep everything else (WebView localStorage, Preferences) in the backup.
+  assert.match(backupRules, /<exclude domain="sharedpref" path="CapacitorStorage\.xml" \/>/)
+  // Exclude-only rules keep everything else (WebView localStorage, files/) in the backup.
   assert.doesNotMatch(extractionRules, /<include\b/)
   assert.doesNotMatch(backupRules, /<include\b/)
 })

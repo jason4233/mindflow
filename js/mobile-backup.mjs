@@ -208,6 +208,8 @@ export function createMobileBackupStore({
     if (hasIntentionalMindflowState(readStorageEntries(storage))) return false
     const backup = await readLatestBackup()
     if (!backup) return false
+    // 讀備份的這段時間使用者可能已經新增了文件：寫入前再確認一次，免得備份的索引蓋掉新文件。
+    if (hasIntentionalMindflowState(readStorageEntries(storage))) return false
     for (const [key, value] of Object.entries(backup.entries)) storage.setItem(key, value)
     lastHash = contentHash(JSON.stringify(backup.entries))
     return true

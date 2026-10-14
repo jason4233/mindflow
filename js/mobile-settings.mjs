@@ -183,7 +183,7 @@ export function mountMobileUpdateSection(container, {
       downloadButton.hidden = result.status !== 'update'
       downloadUrl = result.status === 'update' ? result.latest.url : null
       if (result.status === 'update') {
-        feedback.textContent = `有新版（版號 ${result.latest.versionCode}）。下載後點開 APK 覆蓋安裝，資料會保留。`
+        feedback.textContent = `有新版（版號 ${result.latest.versionCode}）。下載後點開 APK 覆蓋安裝；若手機說無法安裝，請先「匯出備份」，不要直接解除安裝。`
         feedback.dataset.kind = 'warning'
       } else if (result.status === 'error') {
         feedback.textContent = '無法連到 GitHub 檢查更新，請確認網路後再試。'

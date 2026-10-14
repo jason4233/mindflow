@@ -12,6 +12,8 @@ import {
   assertSupportedManifest,
   buildConflictCopy,
   buildLocalState,
+  STORE_EPOCH_KEY,
+  trustedBase,
   changedSince,
   computeLocalWrites,
   computeSyncPlan,
@@ -900,4 +902,13 @@ test('M1 刻意刪光（空索引仍在）照常記成刪除', () => {
   const result = planFor(buildLocalState({ 'mindflow.docs.index': emptyIndex }), manifest(docs), syncedBase(docs))
   assert.deepEqual(result.pullDocs, [])
   assert.deepEqual(Object.keys(result.nextManifest.tombstones), ['a'])
+})
+
+test('M1 審查：base 只在本機儲存區識別碼相符時可信（遺失、還原、搬入舊資料都當首次同步）', () => {
+  const state = { lastSyncedCommitSha: 'c1', baseManifest: manifest({ a: meta('a') }), perDoc: { a: T1 }, storeEpoch: 'epoch-1' }
+  assert.deepEqual(trustedBase(state, { [STORE_EPOCH_KEY]: 'epoch-1' }), { manifest: state.baseManifest, perDoc: { a: T1 } })
+  assert.equal(trustedBase(state, {}), null, '識別碼不見（WebView 資料遺失或從備份還原）')
+  assert.equal(trustedBase(state, { [STORE_EPOCH_KEY]: 'other' }), null)
+  assert.equal(trustedBase({ ...state, storeEpoch: null }, { [STORE_EPOCH_KEY]: 'epoch-1' }), null, '舊版沒有識別碼的 base 先當首次同步一次')
+  assert.equal(trustedBase({ ...state, lastSyncedCommitSha: null }, { [STORE_EPOCH_KEY]: 'epoch-1' }), null)
 })

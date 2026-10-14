@@ -394,3 +394,139 @@ test('M1 前景輪詢（手機）：分支頭沒變只花一個 304 請求；電
     await server.close()
   }
 })
+
+function remoteState(server) {
+  const snapshot = server.snapshot()
+  const commit = snapshot.commits[snapshot.refs['heads/main']]
+  const tree = snapshot.trees[commit.tree]
+  const read = path => {
+    const entry = tree.find(item => item.path === path)
+    return entry ? JSON.parse(snapshot.blobs[entry.sha]) : null
+  }
+  return { manifest: read('manifest.json'), doc: id => read(`docs/${id}.json`), paths: tree.map(item => item.path) }
+}
+
+test('審查 BLOCKER 1：自動還原較舊的備份後，留著的同步 base 不能讓雲端文件被刪或回退', async () => {
+  const { createMobileBackupStore } = await import('../../js/mobile-backup.mjs')
+  const env = await createDesktopAndMobile()
+  const files = new Map()
+  const filesystem = {
+    async writeFile({ path, data }) { files.set(path, data) },
+    async readFile({ path }) { if (!files.has(path)) throw Object.assign(new Error('File does not exist.'), { code: 'OS-PLUG-FILE-0008' }); return { data: files.get(path) } },
+    async stat({ path }) { if (!files.has(path)) throw Object.assign(new Error('File does not exist.'), { code: 'OS-PLUG-FILE-0008' }); return {} },
+    async copy({ from, to }) { files.set(to, files.get(from)) }
+  }
+  try {
+    seedDoc(env.mobileStorage, { id: 'A', title: 'A v1', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    // 2 分鐘的備份拍到 A v1
+    const backups = createMobileBackupStore({ filesystem, storage: env.mobileStorage, importCopy: () => ({}) })
+    await backups.writeBackup()
+    assert.equal(JSON.parse(files.get('backups/mindflow-backup.json')).entries['mindflow.sync.storeEpoch'], undefined, '識別碼不進備份')
+    // 之後改了 A、新增 B，而且已經同步上雲端
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    env.mobileStorage.editDoc('A', { title: 'A v2（較新）', updatedAt: env.clock.mobile })
+    seedDoc(env.mobileStorage, { id: 'B', title: 'B 備份之後才建立', at: env.clock.mobile })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'edit' }), { ok: true })
+
+    // WebView 資料不見（Preferences 裡的 base 還在）→ 自動從備份還原 → 同步
+    env.mobileStorage.clear()
+    assert.equal(await createMobileBackupStore({ filesystem, storage: env.mobileStorage, importCopy: () => ({}) }).restoreLatestIfEmpty(), true)
+    env.clock.mobile = '2026-09-01T10:05:00.000Z'
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-restore' }), { ok: true })
+
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {}, '沒有任何文件被記成刪除')
+    assert.ok(remote.paths.includes('docs/B.json'), 'B 還在雲端')
+    assert.equal(remote.doc('A').title, 'A v2（較新）', 'A 沒有被回退成 v1')
+    const local = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.title)
+    assert.ok(local.includes('A v2（較新）') && local.includes('B 備份之後才建立'), JSON.stringify(local))
+  } finally {
+    await env.close()
+  }
+})
+
+test('審查 BLOCKER 2：資料遺失後、第一次同步前先新增了文件，也不能把雲端其他文件全刪掉', async () => {
+  const env = await createDesktopAndMobile()
+  try {
+    seedDoc(env.mobileStorage, { id: 'A', title: 'A', at: '2026-09-01T09:00:00.000Z' })
+    seedDoc(env.mobileStorage, { id: 'B', title: 'B', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    env.mobileStorage.clear()
+    env.mobileStorage.setItem('mindflow.docs.index', JSON.stringify({ version: 2, docs: [], trash: [], favorites: [] }))
+    env.clock.mobile = '2026-09-01T11:00:00.000Z'
+    seedDoc(env.mobileStorage, { id: 'C', title: '遺失後新建的', at: env.clock.mobile })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'after-loss' }), { ok: true })
+    const remote = remoteState(env.server)
+    assert.deepEqual(remote.manifest.tombstones, {})
+    assert.deepEqual(Object.keys(remote.manifest.docs).sort(), ['A', 'B', 'C'])
+    const local = JSON.parse(env.mobileStorage.getItem('mindflow.docs.index')).docs.map(item => item.id).sort()
+    assert.deepEqual(local, ['A', 'B', 'C'])
+  } finally {
+    await env.close()
+  }
+})
+
+test('審查 MEDIUM 4：同步進行中又有「本機修改要推送」的請求 → 這一輪結束後再跑一次，修改確實推上去', async () => {
+  let gate = null
+  const env = await createDesktopAndMobile({
+    async fetchFn(url, init = {}) {
+      if (gate && String(url).includes('/git/ref/')) {
+        const wait = gate
+        gate = null
+        await wait
+      }
+      return fetch(url, init)
+    }
+  })
+  try {
+    seedDoc(env.mobileStorage, { id: 'A', title: 'A v1', at: '2026-09-01T09:00:00.000Z' })
+    assert.deepEqual(await env.mobile.syncNow({ reason: 'seed' }), { ok: true })
+    let release
+    gate = new Promise(resolve => { release = resolve })
+    const running = env.mobile.syncNow({ reason: 'poll' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // 這一輪還卡在讀分支頭（快照會是修改之前的狀態）時，使用者在背景存了檔
+    env.clock.mobile = '2026-09-01T10:00:00.000Z'
+    env.mobileStorage.editDoc('A', { title: 'A v2 背景存檔', updatedAt: env.clock.mobile })
+    const joined = env.mobile.syncNow({ reason: 'hidden-change' })
+    release()
+    await running
+    await joined
+    await new Promise(resolve => setTimeout(resolve, 50))
+    for (let i = 0; i < 20 && remoteState(env.server).doc('A')?.title !== 'A v2 背景存檔'; i += 1) await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(remoteState(env.server).doc('A').title, 'A v2 背景存檔')
+  } finally {
+    await env.close()
+  }
+})
+
+test('審查 LOW 8：同步已在運作時重新配對（換 PAT／repo）會立刻同步，不是等下一次輪詢', async () => {
+  const server = await startFakeGitHubServer({ owner: 'chenrui', repo: 'mindflow-data', branch: 'main' })
+  const storage = new MemoryStorage()
+  const api = createMobileSyncApi({
+    preferences: new MemoryPreferences(),
+    storage,
+    fetchFn: fetch,
+    apiBase: server.apiBase,
+    machineId: 'android-pair',
+    autoStart: true,
+    documentRef: null,
+    windowRef: null,
+    observeLocalChanges: () => () => {},
+    setTimeoutFn: () => 0,
+    clearTimeoutFn: () => {},
+    setIntervalFn: () => 0,
+    clearIntervalFn: () => {},
+    dispatchSyncApplied() {}
+  })
+  try {
+    assert.deepEqual(await api.setConfig({ enabled: true, repo: 'chenrui/mindflow-data', token: 'github_pat_FIRST_PAIRING_TOKEN' }), { ok: true })
+    const before = server.requests.length
+    assert.deepEqual(await api.setConfig({ token: 'github_pat_SECOND_PAIRING_TOKEN' }), { ok: true })
+    assert.ok(server.requests.slice(before).some(request => request.path.includes('/git/ref/')), '重新配對後立刻同步')
+  } finally {
+    await api.dispose()
+    await server.close()
+  }
+})
