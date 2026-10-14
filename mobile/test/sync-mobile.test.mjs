@@ -129,32 +129,117 @@ test('native Capacitor registers Preferences without requiring a bundled bare-mo
   assert.deepEqual(registrations, ['Preferences'])
 })
 
-test('mobile config keeps the PAT only in Capacitor Preferences and exposes hasToken instead', async () => {
-  const preferences = new MemoryPreferences()
-  const storage = new MemoryStorage()
-  const api = createMobileSyncApi({
-    preferences,
-    storage,
+class FakeSecureStorage {
+  constructor({ available = true, failSet = false } = {}) {
+    this.values = new Map()
+    this.available = available
+    this.failSet = failSet
+  }
+
+  async isAvailable() {
+    return { available: this.available }
+  }
+
+  async get({ key }) {
+    return { value: this.values.get(key) ?? null }
+  }
+
+  async set({ key, value }) {
+    if (this.failSet) throw new Error('UNAVAILABLE')
+    this.values.set(key, String(value))
+  }
+
+  async remove({ key }) {
+    this.values.delete(key)
+  }
+}
+
+function disabledApi(options) {
+  return createMobileSyncApi({
+    storage: new MemoryStorage(),
     autoStart: false,
-    fetchFn: async () => { throw new Error('disabled sync must not fetch') }
+    fetchFn: async () => { throw new Error('disabled sync must not fetch') },
+    ...options
   })
+}
+
+test('mobile config keeps the PAT only in the Keystore-backed secure storage and exposes hasToken instead', async () => {
+  const preferences = new MemoryPreferences()
+  const secureStorage = new FakeSecureStorage()
+  const storage = new MemoryStorage()
+  const api = disabledApi({ preferences, secureStorage, storage })
   const token = 'github_pat_mobile_secret'
 
-  assert.deepEqual(await api.setConfig({
-    enabled: false,
-    repo: 'chenrui/mindflow-data',
-    token
-  }), { ok: true })
+  assert.deepEqual(await api.setConfig({ enabled: false, repo: 'chenrui/mindflow-data', token }), { ok: true })
   assert.deepEqual(await api.getConfig(), {
     enabled: false,
     repo: 'chenrui/mindflow-data',
-    hasToken: true
+    hasToken: true,
+    tokenStorage: 'secure'
   })
+  assert.equal(secureStorage.values.get(MOBILE_SYNC_TOKEN_KEY), token)
+  assert.equal(preferences.values.has(MOBILE_SYNC_TOKEN_KEY), false, 'Preferences 不留明文')
+  assert.equal(JSON.stringify([...preferences.values.values()]).includes(token), false)
+  assert.equal(JSON.stringify(storage.snapshot()).includes(token), false)
+  assert.equal(JSON.stringify(await api.getConfig()).includes(token), false)
 
+  // 清除權杖也要從安全儲存移除
+  assert.deepEqual(await api.setConfig({ enabled: false, token: '' }), { ok: true })
+  assert.equal(secureStorage.values.has(MOBILE_SYNC_TOKEN_KEY), false)
+  assert.equal((await api.getConfig()).hasToken, false)
+  await api.dispose()
+})
+
+test('a plaintext PAT left in Preferences by an older app is moved into secure storage and deleted', async () => {
+  const preferences = new MemoryPreferences()
+  const token = 'github_pat_legacy_plaintext'
+  preferences.values.set(MOBILE_SYNC_TOKEN_KEY, token)
+  preferences.values.set(MOBILE_SYNC_CONFIG_KEY, JSON.stringify({ enabled: false, repo: 'chenrui/mindflow-data' }))
+  const secureStorage = new FakeSecureStorage()
+  const api = disabledApi({ preferences, secureStorage })
+
+  assert.deepEqual(await api.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'secure' })
+  assert.equal(secureStorage.values.get(MOBILE_SYNC_TOKEN_KEY), token)
+  assert.equal(preferences.values.has(MOBILE_SYNC_TOKEN_KEY), false)
+  await api.dispose()
+})
+
+test('if secure storage cannot be written, the plaintext PAT is kept so sync keeps working', async () => {
+  const preferences = new MemoryPreferences()
+  const token = 'github_pat_keep_me'
+  preferences.values.set(MOBILE_SYNC_TOKEN_KEY, token)
+  const secureStorage = new FakeSecureStorage({ failSet: true })
+  const api = disabledApi({ preferences, secureStorage })
+  const config = await api.getConfig()
+  assert.equal(config.hasToken, true)
+  assert.equal(config.tokenStorage, 'preferences')
+  assert.equal(preferences.values.get(MOBILE_SYNC_TOKEN_KEY), token)
+
+  assert.deepEqual(await api.setConfig({ token: 'github_pat_new_one' }), { ok: true })
+  assert.equal(preferences.values.get(MOBILE_SYNC_TOKEN_KEY), 'github_pat_new_one', '新輸入的 PAT 不能因安全儲存失敗而消失')
+  await api.dispose()
+})
+
+test('without the secure storage plugin (older APK) the PAT stays in Preferences, never in localStorage or getConfig', async () => {
+  const preferences = new MemoryPreferences()
+  const storage = new MemoryStorage()
+  const api = disabledApi({ preferences, storage })
+  const token = 'github_pat_mobile_secret'
+  assert.deepEqual(await api.setConfig({ enabled: false, repo: 'chenrui/mindflow-data', token }), { ok: true })
+  assert.deepEqual(await api.getConfig(), { enabled: false, repo: 'chenrui/mindflow-data', hasToken: true, tokenStorage: 'preferences' })
   assert.equal(preferences.values.get(MOBILE_SYNC_TOKEN_KEY), token)
   assert.equal(preferences.values.get(MOBILE_SYNC_CONFIG_KEY)?.includes(token), false)
   assert.equal(JSON.stringify(storage.snapshot()).includes(token), false)
-  assert.equal(JSON.stringify(await api.getConfig()).includes(token), false)
+  await api.dispose()
+})
+
+test('a Keystore key lost after restore (secure get returns null) just asks for the PAT again', async () => {
+  const preferences = new MemoryPreferences()
+  preferences.values.set(MOBILE_SYNC_CONFIG_KEY, JSON.stringify({ enabled: true, repo: 'chenrui/mindflow-data' }))
+  const api = disabledApi({ preferences, secureStorage: new FakeSecureStorage() })
+  const config = await api.getConfig()
+  assert.equal(config.hasToken, false)
+  assert.equal(config.tokenStorage, 'secure')
   await api.dispose()
 })
 

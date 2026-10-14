@@ -5,6 +5,7 @@ import {
   getCapacitorPreferences,
   isNativeCapacitor
 } from './sync-mobile.mjs'
+import { getCapacitorPlugin } from './capacitor-plugins.mjs'
 import { startMobileBackups } from './mobile-backup.mjs'
 import { mountMobileBackupSection, showRestoredNoticeIfNeeded } from './mobile-settings.mjs'
 import { importDocumentCopy } from './store.js'
@@ -220,7 +221,7 @@ function createSyncSettingsController() {
       const nextConfig = await api.getConfig()
       config = normalizeConfig(nextConfig)
       status = normalizeStatus(await api.getStatus())
-      showFeedback(environment.kind === 'capacitor' ? '同步設定已存於手機 Preferences。' : '同步設定已安全儲存。', 'success')
+      showFeedback('同步設定已安全儲存。', 'success')
     } catch {
       showFeedback(`設定儲存失敗，請確認${clientLabel}仍在執行。`, 'error')
     } finally {
@@ -276,9 +277,10 @@ function createSyncSettingsController() {
         ? (environment.kind === 'capacitor' ? '已存於手機；留空則不變更' : '已安全儲存；留空則不變更')
         : 'github_pat_…'
       if (environment.kind === 'capacitor') {
+        const where = config.tokenStorage === 'secure' ? '以 Android Keystore 加密存在這支手機' : '存於手機的 App 設定（這版 App 沒有安全儲存，請更新）'
         tokenHint.textContent = config.hasToken
-          ? 'PAT 已存於手機的 Capacitor Preferences；若要更換，輸入新 token 後儲存。'
-          : '需要 repo Contents 讀寫權限；token 只存於手機的 Capacitor Preferences。'
+          ? `PAT 已${where}；若要更換，輸入新 token 後儲存。`
+          : `需要 repo Contents 讀寫權限；token 只會${where}。`
       } else {
         tokenHint.textContent = config.hasToken
           ? '已有加密 PAT。若要更換，輸入新 token 後儲存。'
@@ -397,6 +399,7 @@ function resolveSyncEnvironment(windowRef = globalThis.window) {
       if (preferences && windowRef?.localStorage) {
         mobileSyncApi = createMobileSyncApi({
           preferences,
+          secureStorage: getCapacitorPlugin('MindflowSecureStorage', ['get', 'set', 'remove'], windowRef),
           storage: windowRef.localStorage,
           fetchFn: windowRef.fetch?.bind(windowRef) || globalThis.fetch,
           documentRef: windowRef.document,
@@ -428,6 +431,7 @@ function normalizeConfig(value) {
     enabled: Boolean(value?.enabled),
     repo: typeof value?.repo === 'string' ? value.repo : '',
     hasToken: Boolean(value?.hasToken),
+    tokenStorage: value?.tokenStorage === 'secure' ? 'secure' : 'preferences',
     warning: typeof value?.warning === 'string' ? value.warning : null
   }
 }

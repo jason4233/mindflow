@@ -295,17 +295,74 @@ function parsePreferenceJson(value) {
   }
 }
 
-function createPreferencesStore(preferences, machineIdOverride) {
+function usableSecureStorage(secureStorage) {
+  return hasMethods(secureStorage, ['get', 'set', 'remove']) ? secureStorage : null
+}
+
+/**
+ * 設定與同步狀態存在 Capacitor Preferences；PAT 優先存進 Android Keystore 加密的 MindflowSecureStorage。
+ * 舊版留在 Preferences 的明文 PAT 會在第一次載入時搬進安全儲存並刪除明文；安全儲存不可用時才退回 Preferences。
+ */
+function createPreferencesStore(preferences, machineIdOverride, secureStorage = null) {
   if (!hasMethods(preferences, ['get', 'set'])) throw new TypeError('Capacitor Preferences is required')
   const fallbackMachineId = machineIdentity(machineIdOverride)
+  const secure = usableSecureStorage(secureStorage)
+  let tokenStorage = 'preferences'
+
+  async function removePlaintextToken() {
+    if (typeof preferences.remove === 'function') await preferences.remove({ key: MOBILE_SYNC_TOKEN_KEY })
+    else await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: '' })
+  }
+
+  async function secureAvailable() {
+    if (!secure) return false
+    try {
+      if (typeof secure.isAvailable !== 'function') return true
+      return (await secure.isAvailable())?.available === true
+    } catch {
+      return false
+    }
+  }
+
+  async function loadToken(plaintext) {
+    if (!(await secureAvailable())) return plaintext
+    try {
+      const stored = (await secure.get({ key: MOBILE_SYNC_TOKEN_KEY }))?.value
+      if (typeof stored === 'string' && stored) {
+        tokenStorage = 'secure'
+        // 已在安全儲存裡：殘留的明文（例如搬移到一半被中斷）一律清掉。
+        if (plaintext) await removePlaintextToken().catch(() => {})
+        return stored
+      }
+      if (!plaintext) {
+        tokenStorage = 'secure'
+        return ''
+      }
+      // 搬移：先寫進安全儲存並讀回確認，確認成功才刪明文，任何一步失敗都保留明文、照常同步。
+      await secure.set({ key: MOBILE_SYNC_TOKEN_KEY, value: plaintext })
+      const verified = (await secure.get({ key: MOBILE_SYNC_TOKEN_KEY }))?.value
+      if (verified !== plaintext) return plaintext
+      tokenStorage = 'secure'
+      await removePlaintextToken()
+      return plaintext
+    } catch {
+      tokenStorage = 'preferences'
+      return plaintext
+    }
+  }
+
   return Object.freeze({
+    get tokenStorage() {
+      return tokenStorage
+    },
     async load() {
       const [configResult, tokenResult, stateResult] = await Promise.all([
         preferences.get({ key: MOBILE_SYNC_CONFIG_KEY }),
         preferences.get({ key: MOBILE_SYNC_TOKEN_KEY }),
         preferences.get({ key: MOBILE_SYNC_STATE_KEY })
       ])
-      const config = normalizeConfig(parsePreferenceJson(configResult?.value), tokenResult?.value || '')
+      const token = await loadToken(tokenResult?.value || '')
+      const config = normalizeConfig(parsePreferenceJson(configResult?.value), token)
       const state = normalizeState(parsePreferenceJson(stateResult?.value), fallbackMachineId)
       return { config, state }
     },
@@ -314,15 +371,21 @@ function createPreferencesStore(preferences, machineIdOverride) {
         key: MOBILE_SYNC_CONFIG_KEY,
         value: JSON.stringify({ enabled: config.enabled, repo: config.repo, branch: config.branch })
       })
-      if (tokenChanged) {
-        if (config.token) {
-          await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: config.token })
-        } else if (typeof preferences.remove === 'function') {
-          await preferences.remove({ key: MOBILE_SYNC_TOKEN_KEY })
-        } else {
-          await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: '' })
+      if (!tokenChanged) return
+      if (await secureAvailable()) {
+        try {
+          if (config.token) await secure.set({ key: MOBILE_SYNC_TOKEN_KEY, value: config.token })
+          else await secure.remove({ key: MOBILE_SYNC_TOKEN_KEY })
+          tokenStorage = 'secure'
+          await removePlaintextToken()
+          return
+        } catch {
+          // 安全儲存寫入失敗：退回 Preferences，不能讓使用者剛輸入的 PAT 消失。
         }
       }
+      tokenStorage = 'preferences'
+      if (config.token) await preferences.set({ key: MOBILE_SYNC_TOKEN_KEY, value: config.token })
+      else await removePlaintextToken()
     },
     async saveState(state) {
       await preferences.set({ key: MOBILE_SYNC_STATE_KEY, value: JSON.stringify(normalizeState(state, state.machineId)) })
@@ -789,6 +852,7 @@ export function getCapacitorPreferences(windowRef = globalThis.window) {
 
 export function createMobileSyncApi({
   preferences,
+  secureStorage = null,
   storage = globalThis.localStorage,
   fetchFn = globalThis.fetch,
   apiBase = DEFAULT_API_BASE,
@@ -812,7 +876,7 @@ export function createMobileSyncApi({
   if (!storage || !hasMethods(storage, ['getItem', 'setItem', 'removeItem', 'key'])) {
     throw new TypeError('localStorage is required')
   }
-  const preferenceStore = createPreferencesStore(preferences, machineId)
+  const preferenceStore = createPreferencesStore(preferences, machineId, secureStorage)
   const client = createGitHubClient(fetchFn)
   const listeners = new Set()
   let config = normalizeConfig(null)
@@ -1005,7 +1069,12 @@ export function createMobileSyncApi({
     },
     async getConfig() {
       await ready
-      return { enabled: config.enabled, repo: config.repo, hasToken: Boolean(config.token) }
+      return {
+        enabled: config.enabled,
+        repo: config.repo,
+        hasToken: Boolean(config.token),
+        tokenStorage: preferenceStore.tokenStorage
+      }
     },
     async setConfig(patch = {}) {
       await ready
